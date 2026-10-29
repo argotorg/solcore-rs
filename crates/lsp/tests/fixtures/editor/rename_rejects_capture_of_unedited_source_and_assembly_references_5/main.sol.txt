@@ -1,1 +1,3 @@
+pragma solcore;
+
 function main(renamed: word) returns (word) { match (renamed) { case (value) { return renamed; } } }

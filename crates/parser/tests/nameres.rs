@@ -216,7 +216,7 @@ fn derive_targets_resolve_in_source_order_for_top_level_and_contract_adts() {
     let db = TestDb::default();
     let module = parse_module(
         &db,
-        "trait Eq<a> {}\n\
+        "pragma solcore;\ntrait Eq<a> {}\n\
          #[derive(Eq, Eq)] enum Top {}\n\
          contract C { #[derive(Eq)] enum Local {} }",
     );
@@ -249,7 +249,7 @@ fn derive_targets_report_unknown_and_wrong_kind_names() {
     let db = TestDb::default();
     let module = parse_module(
         &db,
-        "enum NotAClass {} #[derive(Missing, NotAClass)] enum Target {}",
+        "pragma solcore; enum NotAClass {} #[derive(Missing, NotAClass)] enum Target {}",
     );
     let resolution = resolve_module(&db, module);
     let undefined = resolution
@@ -273,7 +273,10 @@ fn derive_targets_report_unknown_and_wrong_kind_names() {
 #[test]
 fn qualified_derive_target_uses_the_exact_imported_class_path() {
     let db = TestDb::default();
-    let module = parse_module(&db, "trait Eq<a> {} #[derive(pkg.Eq)] enum Target {}");
+    let module = parse_module(
+        &db,
+        "pragma solcore; trait Eq<a> {} #[derive(pkg.Eq)] enum Target {}",
+    );
     let class = module
         .items(&db)
         .iter()
@@ -302,7 +305,7 @@ fn undefined_name_kind_distinguishes_bare_terms_from_path_lookups() {
     let (file, module) = parse_and_module(
         &db,
         "undefined_name_kinds",
-        "enum Local { Present }
+        "pragma solcore;\nenum Local { Present }
          function bare() returns (word) { return missing; }
          function qualified() returns (word) { return math.value(); }
          function ctorExpr() returns (word) { return Option.Some(0); }
@@ -362,7 +365,7 @@ fn missing_resolved_module_member_has_qualified_lookup_context() {
     let (file, module) = parse_and_module(
         &db,
         "missing_module_member",
-        "enum Local { Present }
+        "pragma solcore;\nenum Local { Present }
          function missing() returns (word) {
            let fromModule = math.value();
            return Local.absent;
@@ -410,7 +413,7 @@ fn missing_constructor_on_resolved_type_is_not_an_import_context() {
     let (file, module) = parse_and_module(
         &db,
         "missing_local_constructor",
-        "enum Option { None }
+        "pragma solcore;\nenum Option { None }
          function missing(value: Option) returns (word) {
            match (value) {
            case Option.Some { return 1; }
@@ -488,7 +491,7 @@ fn field_ufcs_resolves_a_unique_local_class_method() {
     let db = TestDb::default();
     let module = parse_module(
         &db,
-        "trait Combiner<self> {
+        "pragma solcore;\ntrait Combiner<self> {
            function combine(x: self, y: word) returns (word);
          }
          contract C {
@@ -527,14 +530,14 @@ fn field_ufcs_resolves_a_unique_imported_class_method() {
     let db = TestDb::default();
     let provider = parse_module(
         &db,
-        "trait RemoteOps<self> {
+        "pragma solcore;\ntrait RemoteOps<self> {
            function touch(x: self) returns (word);
          }",
     );
     let class = top_class_id(&db, provider, "RemoteOps");
     let module = parse_module(
         &db,
-        "contract C {
+        "pragma solcore;\ncontract C {
            value: word;
            function viaImport() returns (word) { return value.touch(); }
          }",
@@ -579,14 +582,14 @@ fn ufcs_reports_undefined_name_when_visible_methods_conflict() {
     let db = TestDb::default();
     let provider = parse_module(
         &db,
-        "trait RemoteOps<self> {
+        "pragma solcore;\ntrait RemoteOps<self> {
            function collide(x: self) returns (word);
          }",
     );
     let remote_class = top_class_id(&db, provider, "RemoteOps");
     let module = parse_module(
         &db,
-        "trait LocalOps<self> {
+        "pragma solcore;\ntrait LocalOps<self> {
            function collide(x: self) returns (word);
          }
          contract C {
@@ -671,7 +674,7 @@ fn value_ufcs_resolves_parameters_and_locals_while_preserving_qualified_calls() 
     let db = TestDb::default();
     let module = parse_module(
         &db,
-        "trait Combiner<self> {
+        "pragma solcore;\ntrait Combiner<self> {
            function combine(x: self, y: word) returns (word);
          }
          contract C {
@@ -815,7 +818,7 @@ fn let_initializer_resolves_before_binder_and_then_shadows() {
     let db = TestDb::default();
     let module = parse_module(
         &db,
-        "function f(x: word) returns (word) {
+        "pragma solcore;\nfunction f(x: word) returns (word) {
            let x = x;
            return x;
          }",
@@ -840,7 +843,7 @@ fn control_flow_scopes_restore_outer_bindings() {
     let db = TestDb::default();
     let module = parse_module(
         &db,
-        "function f(x: word) returns (word) {
+        "pragma solcore;\nfunction f(x: word) returns (word) {
            {
              let x = x;
            }
@@ -900,7 +903,7 @@ fn control_flow_locals_do_not_escape_or_cross_sibling_scopes() {
         "while (true) { let hidden = 1; break; } return hidden;",
     ] {
         let db = TestDb::default();
-        let source = format!("function f() returns (word) {{ {statements} }}");
+        let source = format!("pragma solcore; function f() returns (word) {{ {statements} }}");
         let (file, module) = parse_and_module(&db, "control_flow_scope", &source);
         assert!(parse_diagnostics(&db, file).is_empty(), "{source}");
         let resolution = resolve_module(&db, module);
@@ -915,7 +918,7 @@ fn control_flow_locals_do_not_escape_or_cross_sibling_scopes() {
 
 #[test]
 fn control_flow_binding_visibility_uses_each_lexical_extent() {
-    let source = "function f() returns (word) {
+    let source = "pragma solcore;\nfunction f() returns (word) {
         if (true) { let in_then = 1; in_then; }
         else { let in_else = 2; in_else; }
         for (let counter = 0; true; let in_post = counter) {
@@ -957,7 +960,7 @@ fn contract_fields_beat_top_level_functions_and_params_shadow_fields() {
     let db = TestDb::default();
     let module = parse_module(
         &db,
-        "function balance() returns (word) { return 0; }
+        "pragma solcore;\nfunction balance() returns (word) { return 0; }
          contract C {
            balance: word;
            function f() returns (word) { return balance; }
@@ -984,7 +987,7 @@ fn unqualified_call_callee_prefers_contract_function_over_same_name_field() {
     let db = TestDb::default();
     let module = parse_module(
         &db,
-        "contract C {
+        "pragma solcore;\ncontract C {
            balance: word;
            function balance() returns (word) { return 7; }
            function call() returns (word) { return balance(); }
@@ -1025,7 +1028,7 @@ fn qualified_ctor_class_method_and_dot_ctor_resolve_as_expected() {
     let db = TestDb::default();
     let module = parse_module(
         &db,
-        "enum Option { None, Some(word) }
+        "pragma solcore;\nenum Option { None, Some(word) }
          enum Foo { Foo(word) }
          trait Show<self> { function show(x: self) returns (word); }
          function good(x: word) returns (Option) { return Option.Some(x); }
@@ -1064,6 +1067,7 @@ fn self_qualified_contract_methods_do_not_shadow_same_named_local_adt_constructo
     let module = parse_module(
         &db,
         r#"
+pragma solcore;
 contract Option {
   enum Option<a> { None, Some(a) }
 
@@ -1118,7 +1122,7 @@ fn definite_same_name_constructor_beats_unknown_wildcard_import() {
     let db = TestDb::default();
     let module = parse_module(
         &db,
-        "enum Unit { Unit } function make() returns (Unit) { return Unit; }",
+        "pragma solcore; enum Unit { Unit } function make() returns (Unit) { return Unit; }",
     );
     let function = top_function(&db, module, "make");
     let body = function.body(&db).expect("body");

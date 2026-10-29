@@ -4,12 +4,12 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/parse/match_arm_arity/main.sol
 ---
 error[SC0001]: match has 2 scrutinees but this case has 1 patterns
- --> /main/main.sol:5:1
-  |
-4 |     match (x, y) {
-5 | / case Nat.Zero {
-6 | | return 0;
-7 | | }
-  | |_^
-8 |   case (Nat.Succ(a), Nat.Zero) {
-  |
+  --> /main/main.sol:7:1
+   |
+ 6 |     match (x, y) {
+ 7 | / case Nat.Zero {
+ 8 | | return 0;
+ 9 | | }
+   | |_^
+10 |   case (Nat.Succ(a), Nat.Zero) {
+   |

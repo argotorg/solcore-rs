@@ -1,3 +1,5 @@
+pragma solcore;
+
 contract RuntimeNames {
     enum string {
         RuntimeString(word)

@@ -1,3 +1,5 @@
+pragma solcore;
+
 // Mirrors historical corpus test/examples/cases/fallback-with-args.sol
 // (expected failure there): fallback must take no arguments.
 import * from std;

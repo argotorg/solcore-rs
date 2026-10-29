@@ -1,3 +1,5 @@
+pragma solcore;
+
 function foo() {
     let f: function (word) returns (word) = lam (x) {
         return x;

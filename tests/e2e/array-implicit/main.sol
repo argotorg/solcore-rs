@@ -1,3 +1,5 @@
+pragma solcore;
+
 // #[scenario("array_implicit")]
 // #[deploy(0x) -> success]
 // #[raw(0x, label = "suite `array_implicit` test #2") -> success(0x000000000000000000000000000000000000000000000000000000000000521c)]

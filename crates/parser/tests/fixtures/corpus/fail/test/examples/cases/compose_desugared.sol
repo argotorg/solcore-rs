@@ -1,3 +1,5 @@
+pragma solcore;
+
 function compose<a, b, c, d, e>(f: d, g: e) returns (t_closure1<a, b, c, d, e>) where d: invokable<b, c>, e: invokable<a, b> {
     return t_closure1(f, g);
 }

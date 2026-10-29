@@ -1,3 +1,5 @@
+pragma solcore;
+
 import provider;
 import * as RootProvider from lib.rootcheck.provider;
 

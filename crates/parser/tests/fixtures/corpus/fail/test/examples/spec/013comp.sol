@@ -1,3 +1,5 @@
+pragma solcore;
+
 contract Compose {
     function compose<a, b, c>(f: function (b) returns (c), g: function (a) returns (b)) public {
         return lam (x) {

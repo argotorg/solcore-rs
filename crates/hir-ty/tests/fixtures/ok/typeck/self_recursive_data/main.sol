@@ -1,3 +1,5 @@
+pragma solcore;
+
 enum A {
     A(A),
     Z

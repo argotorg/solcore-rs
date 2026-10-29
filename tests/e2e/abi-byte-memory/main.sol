@@ -1,3 +1,5 @@
+pragma solcore;
+
 //~ specialize: loader std-current
 //~ specialize: frontend clean
 //~ specialize: entry

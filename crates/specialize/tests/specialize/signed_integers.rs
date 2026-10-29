@@ -16,6 +16,7 @@ fn unary_minus_accepts_signed_minimum_literals_and_folds_checked_negation() {
         let min_hex = format!("0x8{}", "0".repeat(width / 4 - 1));
         let output = specialize_src_with_std(&format!(
             r#"
+pragma solcore;
 import * from std;
 import * from std.signed;
 function negate(comptime value: int{width}) returns (comptime<int{width}>) {{ return -value; }}
@@ -43,6 +44,7 @@ fn unary_minus_rejects_negating_signed_minimum_at_comptime() {
     for width in [8, 16, 32, 64, 128, 256] {
         let output = specialize_src_with_std(&format!(
             r#"
+pragma solcore;
 import * from std;
 import * from std.signed;
 function negate(comptime value: int{width}) returns (comptime<int{width}>) {{ return -value; }}
@@ -69,6 +71,7 @@ contract C {{
 fn unary_minus_keeps_explicit_word_and_raw_conversion_semantics() {
     let output = specialize_src_with_std(
         r#"
+pragma solcore;
 import * from std;
 function negate(comptime value: word) returns (comptime<word>) { return -value; }
 contract C {
@@ -94,6 +97,7 @@ fn negative_unsigned_literals_are_rejected() {
         for literal in ["-1", "-0x1"] {
             let output = specialize_src_with_std(&format!(
                 r#"
+pragma solcore;
 import * from std;
 import * from std.unsigned;
 contract C {{
@@ -154,6 +158,7 @@ fn signed_yul_opcodes_fold_with_evm_word_semantics() {
     for (expression, expected) in cases {
         let (_, output) = specialize_src(&format!(
             r#"
+pragma solcore;
 function calculate() returns (word) {{
     let result: word;
     assembly {{ result := eq({expression}, {expected}) }}
@@ -190,6 +195,7 @@ fn checked_signed_arithmetic_and_bitwise_operations_fold_at_comptime() {
         for (expression, a, b, expected) in cases {
             let output = specialize_src_with_std(&format!(
                 r#"
+pragma solcore;
 import * from std;
 import * from std.signed;
 function calculate(comptime a: int{width}, comptime b: int{width}) returns (comptime<int{width}>) {{
@@ -224,6 +230,7 @@ fn checked_signed_overflow_and_zero_divisors_remain_comptime_failures() {
         ] {
             let output = specialize_src_with_std(&format!(
                 r#"
+pragma solcore;
 import * from std;
 import * from std.signed;
 function calculate() returns (int{width}) {{

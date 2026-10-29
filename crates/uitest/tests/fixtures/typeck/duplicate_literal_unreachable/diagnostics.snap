@@ -4,13 +4,13 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/duplicate_literal_unreachable/main.sol
 ---
 warning[SC0303]: unreachable match arm
- --> /main/main.sol:6:9
-  |
-5 |           }
-6 | /         case 0 {
-7 | |             return 1;
-8 | |         }
-  | |_________^ this arm is unreachable
-9 |           default {
-  |
-  = note: this arm is covered by previous match arms
+  --> /main/main.sol:8:9
+   |
+ 7 |           }
+ 8 | /         case 0 {
+ 9 | |             return 1;
+10 | |         }
+   | |_________^ this arm is unreachable
+11 |           default {
+   |
+   = note: this arm is covered by previous match arms

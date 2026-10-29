@@ -1,3 +1,5 @@
+pragma solcore;
+
 import { eqWord } from std;
 import * from base;
 export { directB, genericB, explicitB, runtimeDirectB, runtimeGenericB };

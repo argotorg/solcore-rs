@@ -1,3 +1,5 @@
+pragma solcore;
+
 export { cycle };
 trait CycleParent<t> where t: CycleChild {
     function f(x: t) returns (word);

@@ -1,3 +1,4 @@
+pragma solcore;
 
 import {f} from util;  
 function f() returns (word) { return 1; }

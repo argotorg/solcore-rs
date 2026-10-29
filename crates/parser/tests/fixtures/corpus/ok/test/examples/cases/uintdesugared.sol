@@ -1,3 +1,5 @@
+pragma solcore;
+
 // Before desugaring:
 /*
 import IndexLib;

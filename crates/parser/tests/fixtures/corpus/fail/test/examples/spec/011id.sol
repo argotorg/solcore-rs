@@ -1,3 +1,5 @@
+pragma solcore;
+
 contract Id1 {
 
     enum Bool {

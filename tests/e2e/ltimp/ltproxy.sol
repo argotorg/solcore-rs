@@ -1,3 +1,5 @@
+pragma solcore;
+
 import { lt } from std;
 export { ltproxy };
 

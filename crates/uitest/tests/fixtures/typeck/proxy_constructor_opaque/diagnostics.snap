@@ -4,10 +4,10 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/proxy_constructor_opaque/main.sol
 ---
 error[SC0205]: undefined constructor: Proxy.Proxy
- --> /main/main.sol:4:12
+ --> /main/main.sol:6:12
   |
-3 | function value() returns (lib.Proxy<word>) {
-4 |     return @word;
+5 | function value() returns (lib.Proxy<word>) {
+6 |     return @word;
   |            ^^^^^ proxy constructor required here
-5 | }
+7 | }
   |

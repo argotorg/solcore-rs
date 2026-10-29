@@ -1,3 +1,5 @@
+pragma solcore;
+
 pragma no-patterson-condition Assign;
 
 enum storage<t> {

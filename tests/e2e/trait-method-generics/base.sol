@@ -1,3 +1,5 @@
+pragma solcore;
+
 import { Generic } from std.Generic;
 export { Local, Pick, Parent, Child, Derived(*), throughChild, apply, applyOne };
 trait Local<t> {

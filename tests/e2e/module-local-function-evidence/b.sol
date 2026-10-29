@@ -1,3 +1,5 @@
+pragma solcore;
+
 import * from base;
 export { b, bothB, valueB };
 impl C<word> {

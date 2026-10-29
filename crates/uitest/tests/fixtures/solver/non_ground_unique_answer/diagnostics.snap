@@ -4,12 +4,12 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/solver/non_ground_unique_answer/main.sol
 ---
 error[SC0208]: ambiguous trait constraint: word: Parent
-  --> /main/main.sol:12:12
+  --> /main/main.sol:14:12
    |
-11 | function trigger<unused>() returns (word) {
-12 |     return use(0);
+13 | function trigger<unused>() returns (word) {
+14 |     return use(0);
    |            ^^^^^^ ambiguous constraint here
-13 | }
+15 | }
    |
    = note: the matching proof leaves existential type variables unresolved
    = help: make the type more specific or remove overlapping impls

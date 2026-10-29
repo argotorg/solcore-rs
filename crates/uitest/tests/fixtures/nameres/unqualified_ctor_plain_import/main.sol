@@ -1,3 +1,5 @@
+pragma solcore;
+
 import lib;
 
 function unwrap(u: lib.wrapper) returns (word) {

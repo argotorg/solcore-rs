@@ -1,3 +1,5 @@
+pragma solcore;
+
 contract RGB {
     enum Color {
         R,

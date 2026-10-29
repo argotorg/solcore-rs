@@ -1,3 +1,5 @@
+pragma solcore;
+
 // Assigning an array literal to a storage array field is Solidity's
 // memory -> storage copy: it resizes the field and clears any abandoned tail.
 import * from std;

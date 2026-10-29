@@ -4,10 +4,10 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/nameres/unresolved_qualified/main.sol
 ---
 error[SC0101]: undefined name: missing
- --> /main/main.sol:4:17
+ --> /main/main.sol:6:17
   |
-3 | function main() returns (word) {
-4 |     return util.missing();
+5 | function main() returns (word) {
+6 |     return util.missing();
   |                 ^^^^^^^ unknown name
-5 | }
+7 | }
   |

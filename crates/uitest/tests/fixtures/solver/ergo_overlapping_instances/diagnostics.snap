@@ -8,15 +8,15 @@ error[SC0218]: Overlapping impls are not supported
                word: C
                overlaps with:
                word: C
-  --> /main/main.sol:11:6
+  --> /main/main.sol:13:6
    |
- 4 |
- 5 | impl C<word> {
+ 6 |
+ 7 | impl C<word> {
    |      ------- previous overlapping impl
- 6 |     function c(x: word) returns (word) {
+ 8 |     function c(x: word) returns (word) {
 ...
-10 |
-11 | impl C<word> {
+12 |
+13 | impl C<word> {
    |      ^^^^^^^ overlapping impl
-12 |     function c(x: word) returns (word) {
+14 |     function c(x: word) returns (word) {
    |

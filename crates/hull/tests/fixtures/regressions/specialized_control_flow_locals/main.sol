@@ -1,3 +1,5 @@
+pragma solcore;
+
 //~ hull: min-count 2 "let result"
 //~ hull: not-contains "$if_local"
 

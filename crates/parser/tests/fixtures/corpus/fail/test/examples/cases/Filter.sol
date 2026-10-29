@@ -1,3 +1,5 @@
+pragma solcore;
+
 enum List<a> {
     Nil,
     Cons(a, List<a>)

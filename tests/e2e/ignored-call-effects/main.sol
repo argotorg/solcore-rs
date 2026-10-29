@@ -1,3 +1,5 @@
+pragma solcore;
+
 function writeSlot() returns (word) {
     assembly {
         sstore(0, add(sload(0), 1))

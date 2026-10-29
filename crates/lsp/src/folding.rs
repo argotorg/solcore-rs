@@ -357,35 +357,35 @@ mod tests {
 
     #[test]
     fn folds_imports_comments_items_and_nested_blocks() {
-        let source = "// first\n// second\nimport alpha;\nimport beta;\n\n/* block\n   comment */\ncontract Box {\n  function get() returns (word) {\n    if (true) {\n      return 1;\n    }\n  }\n}\n";
+        let source = "pragma solcore;\n// first\n// second\nimport alpha;\nimport beta;\n\n/* block\n   comment */\ncontract Box {\n  function get() returns (word) {\n    if (true) {\n      return 1;\n    }\n  }\n}\n";
         let (world, uri) = world_with_main(source);
         let folds = handle_folding_range(&world, &uri).expect("folding ranges");
 
         assert!(folds.iter().any(|fold| {
             fold.kind == Some(FoldingRangeKind::Comment)
-                && fold.start_line == 0
-                && fold.end_line == 1
+                && fold.start_line == 1
+                && fold.end_line == 2
         }));
         assert!(folds.iter().any(|fold| {
             fold.kind == Some(FoldingRangeKind::Imports)
-                && fold.start_line == 2
-                && fold.end_line == 3
+                && fold.start_line == 3
+                && fold.end_line == 4
         }));
         assert!(
             folds
                 .iter()
-                .any(|fold| fold.start_line == 7 && fold.end_line == 13)
+                .any(|fold| fold.start_line == 8 && fold.end_line == 14)
         );
         assert!(
             folds
                 .iter()
-                .any(|fold| fold.start_line == 9 && fold.end_line == 11)
+                .any(|fold| fold.start_line == 10 && fold.end_line == 12)
         );
     }
 
     #[test]
     fn lexical_folding_ignores_delimiters_in_unicode_strings_and_comments() {
-        let source = "function main() returns (word) {\n  let label = \"😀 { not a block }\";\n  /* { ignored } */\n  {\n    return 1;\n  }\n}\n";
+        let source = "pragma solcore;\nfunction main() returns (word) {\n  let label = \"😀 { not a block }\";\n  /* { ignored } */\n  {\n    return 1;\n  }\n}\n";
         let (world, uri) = world_with_main(source);
         let folds = handle_folding_range(&world, &uri).expect("folding ranges");
 
@@ -395,31 +395,32 @@ mod tests {
                 .filter(|fold| fold.kind.is_none())
                 .map(|fold| (fold.start_line, fold.end_line))
                 .collect::<Vec<_>>(),
-            vec![(0, 6), (3, 5)]
+            vec![(1, 7), (4, 6)]
         );
     }
 
     #[test]
     fn malformed_source_still_returns_balanced_inner_blocks() {
-        let source = "function main() returns (word) {\n  {\n    return 1;\n  }\n";
+        let source = "pragma solcore;\nfunction main() returns (word) {\n  {\n    return 1;\n  }\n";
         let (world, uri) = world_with_main(source);
         let folds = handle_folding_range(&world, &uri).expect("folding ranges");
 
         assert!(
             folds
                 .iter()
-                .any(|fold| fold.start_line == 1 && fold.end_line == 3)
+                .any(|fold| fold.start_line == 2 && fold.end_line == 4)
         );
     }
 
     #[test]
     fn nested_blocks_with_the_same_line_extent_remain_distinct() {
-        let source = "function main() returns (word) { if (true) {\n  return 1;\n} }\n";
+        let source =
+            "pragma solcore;\nfunction main() returns (word) { if (true) {\n  return 1;\n} }\n";
         let (world, uri) = world_with_main(source);
         let folds = handle_folding_range(&world, &uri).expect("folding ranges");
         let structural = folds
             .iter()
-            .filter(|fold| fold.kind.is_none() && fold.start_line == 0 && fold.end_line == 2)
+            .filter(|fold| fold.kind.is_none() && fold.start_line == 1 && fold.end_line == 3)
             .collect::<Vec<_>>();
 
         assert_eq!(structural.len(), 2);

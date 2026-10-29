@@ -1,3 +1,5 @@
+pragma solcore;
+
 import { memory, address } from std;
 
 enum DynArray<t> {

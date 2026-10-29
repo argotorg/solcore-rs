@@ -1,1 +1,3 @@
+pragma solcore;
+
 type Original = word; function main(value: word) returns (word) { let local: Original = value; return local; }

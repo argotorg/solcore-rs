@@ -1,3 +1,5 @@
+pragma solcore;
+
 // import std.{Num,Add,Sub,Eq,Ord,Bounded,Typedef,le};
 import std;
 

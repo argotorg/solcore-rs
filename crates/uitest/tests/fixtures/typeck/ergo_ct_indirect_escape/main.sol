@@ -1,3 +1,5 @@
+pragma solcore;
+
 // Smuggle a runtime value into a comptime parameter through a function
 // value: bind the comptime function to a local, then call the local with
 // a runtime argument.  If the SAIL comptime check only looks at direct

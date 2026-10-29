@@ -1,3 +1,5 @@
+pragma solcore;
+
 // Integer literals in conditional expression branches.
 // The expected type is propagated to both branches of a Cond, so literals
 // in branches infer the correct type.

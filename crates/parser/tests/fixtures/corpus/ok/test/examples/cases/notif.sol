@@ -1,3 +1,5 @@
+pragma solcore;
+
 function not(x: bool) returns (bool) {
     if (x) {
         return false;

@@ -4,10 +4,10 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/nameres/ergo_undef_type/main.sol
 ---
 error[SC0103]: undefined type constructor: MissingType
- --> /main/main.sol:1:20
+ --> /main/main.sol:3:20
   |
-1 | function takeIt(x: MissingType) returns (word) {
+2 |
+3 | function takeIt(x: MissingType) returns (word) {
   |                    ^^^^^^^^^^^ undefined type constructor
-2 |     return 0;
-3 | }
+4 |     return 0;
   |

@@ -1,3 +1,5 @@
+pragma solcore;
+
 // Bug: specStmt (Let i mty (Just e)) always called `atCurrentSubst i` AFTER
 // `specExp`, causing `extSpSubst phi` (with original type-variable names) to
 // corrupt subsequent let bindings.  Concretely, `b_decoded : (uint256,uint256)`

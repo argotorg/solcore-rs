@@ -1,3 +1,5 @@
+pragma solcore;
+
 import { lt, Ord, Add, Sub, Bounded, Num, Eq, Typedef } from std;
 contract ContinueTest {
     function main() public returns (word) {

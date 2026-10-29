@@ -1,3 +1,5 @@
+pragma solcore;
+
 export { Phantom, run, apply, relay, genericValue };
 trait Phantom<t, r> {
     function pick(x: t) returns (word);

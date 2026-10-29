@@ -1,3 +1,5 @@
+pragma solcore;
+
 function clamp(lo: word, hi: word, v: word) returns (word) {
     return v;
 }

@@ -1,3 +1,5 @@
+pragma solcore;
+
 enum Nat { Zero, Succ(Nat) }
 
 function pick(x: Nat, y: Nat) returns (word) {

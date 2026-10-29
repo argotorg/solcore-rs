@@ -1,3 +1,5 @@
+pragma solcore;
+
 // Returns a function with CORRECT type annotations.
 // Validates the single-pass type checker: closure conversion must not hide
 // that the returned lambda really has type (word) -> word.

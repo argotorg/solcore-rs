@@ -4,11 +4,11 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/nameres/ergo_unqual_ctor_sc0106/main.sol
 ---
 error[SC0106]: unqualified constructor: On
-  --> /main/main.sol:22:17
+  --> /main/main.sol:24:17
    |
-21 | function main() returns (word) {
-22 |     return isOn(On);
+23 | function main() returns (word) {
+24 |     return isOn(On);
    |                 ^^ constructor must be qualified
-23 | }
+25 | }
    |
    = help: use `Light.On`

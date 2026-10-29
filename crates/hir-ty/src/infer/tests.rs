@@ -673,7 +673,7 @@ fn scheme_instantiation_reuses_one_fresh_var_per_binder() {
 #[test]
 fn structural_invokable_rules_preserve_comptime_transparency() {
     let db = TestDb::default();
-    let module = parse_module(&db, "");
+    let module = parse_module(&db, "pragma solcore;");
     let resolution = hir_nameres::resolve_module(&db, module);
     let env = trait_env(&db, module, &resolution);
     let params = vec![Ty::word(&db); 16];
@@ -693,7 +693,7 @@ fn structural_invokable_rules_preserve_comptime_transparency() {
 #[test]
 fn unit_arguments_support_nullary_and_unary_function_types() {
     let db = TestDb::default();
-    let module = parse_module(&db, "");
+    let module = parse_module(&db, "pragma solcore;");
     let resolution = hir_nameres::resolve_module(&db, module);
     let env = trait_env(&db, module, &resolution);
     for params in [vec![], vec![Ty::unit(&db)]] {

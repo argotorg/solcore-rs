@@ -1,3 +1,5 @@
+pragma solcore;
+
 contract CondExp {
     function main() public returns (word) {
         return

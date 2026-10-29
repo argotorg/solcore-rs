@@ -1,3 +1,5 @@
+pragma solcore;
+
 function T() returns (word) {
     return 0;
 }

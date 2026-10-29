@@ -4,17 +4,17 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/proxy_local_argument/main.sol
 ---
 error[SC0201]: argument type mismatch in call to `needsBool`
-  --> /main/main.sol:9:15
+  --> /main/main.sol:11:15
    |
- 4 |
- 5 | function needsBool(p: Proxy<bool>) {}
-   |                    - parameter `p` defined here
  6 |
- 7 | function value() {
- 8 |     let proxy = @word;
- 9 |     needsBool(proxy);
+ 7 | function needsBool(p: Proxy<bool>) {}
+   |                    - parameter `p` defined here
+ 8 |
+ 9 | function value() {
+10 |     let proxy = @word;
+11 |     needsBool(proxy);
    |               ^^^^^ argument has mismatched type
-10 | }
+12 | }
    |
    = note: expected `Proxy<bool>` because parameter `p` of `needsBool` has type `Proxy<bool>`
    = note: found type: word

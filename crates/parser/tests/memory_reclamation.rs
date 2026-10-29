@@ -70,7 +70,7 @@ impl hir::Db for TestDb {
 #[salsa::db]
 impl solcore_parser::Db for TestDb {}
 
-const SOURCE: &str = "function id(x: word) -> word { return x; }\n";
+const SOURCE: &str = "pragma solcore;\nfunction id(x: word) -> word { return x; }\n";
 
 fn parse_with_fresh_database() {
     let db = TestDb::default();

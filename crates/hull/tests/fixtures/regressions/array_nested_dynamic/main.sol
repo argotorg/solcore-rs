@@ -1,3 +1,5 @@
+pragma solcore;
+
 //~ hull: contains "LValueIdxAccess_lookup"
 //~ hull: contains "storeBytesFromMemory"
 //~ hull: contains "loadBytesFromStorage"

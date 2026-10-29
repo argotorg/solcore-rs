@@ -1,3 +1,5 @@
+pragma solcore;
+
 import reexport_ctor_mid;
 
 function main() returns (reexport_ctor_mid.Token) {

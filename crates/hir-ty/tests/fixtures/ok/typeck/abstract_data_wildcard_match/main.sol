@@ -1,3 +1,5 @@
+pragma solcore;
+
 enum Opaque {}
 
 function keep(value: Opaque) returns (Opaque) {

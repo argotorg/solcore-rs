@@ -1,3 +1,5 @@
+pragma solcore;
+
 import cycleA;
 
 function main() returns (word) {

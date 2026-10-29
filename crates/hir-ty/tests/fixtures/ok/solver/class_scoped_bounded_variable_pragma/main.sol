@@ -1,3 +1,5 @@
+pragma solcore;
+
 pragma no-bounded-variable-condition Container;
 
 enum Box<a> {

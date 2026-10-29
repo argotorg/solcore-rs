@@ -1,3 +1,5 @@
+pragma solcore;
+
 contract Compose {
     function id(x: word) public returns (word) {
         return x;

@@ -1,3 +1,5 @@
+pragma solcore;
+
 contract Add1 {
     function main() public returns (word) {
         let res: word;

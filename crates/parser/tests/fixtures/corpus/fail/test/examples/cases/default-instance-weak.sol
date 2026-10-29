@@ -1,3 +1,5 @@
+pragma solcore;
+
 trait Test<self, weak> {
     function f(x: self) returns (weak);
 }

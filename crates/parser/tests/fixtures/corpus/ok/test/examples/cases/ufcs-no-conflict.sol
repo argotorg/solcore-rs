@@ -1,3 +1,5 @@
+pragma solcore;
+
 import * from std;
 
 // Regression test: the UFCS (receiver-style) method-call rewriting in

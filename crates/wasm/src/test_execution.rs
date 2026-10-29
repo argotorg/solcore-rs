@@ -457,6 +457,7 @@ mod tests {
         }
     }
     const COUNTER: &str = r#"
+pragma solcore;
 import * from std;
 import * from std.dispatch;
 contract Counter {
@@ -514,6 +515,7 @@ contract Counter {
 
         let source = COUNTER.replace("contract Counter", "contract Zed")
             + &COUNTER
+                .replace("pragma solcore;\n", "")
                 .replace("import * from std;", "")
                 .replace("import * from std.dispatch;", "")
                 .replace("contract Counter", "contract Alpha");
@@ -533,6 +535,7 @@ contract Counter {
     #[test]
     fn failures_do_not_hide_subsequent_results_and_reverts_can_pass() {
         let source = r#"
+pragma solcore;
 import * from std; import * from std.dispatch;
 contract C {
     // #[(40, 2) -> 99]
@@ -566,10 +569,10 @@ contract C {
     }
     #[test]
     fn discovery_uses_attached_comments_and_reports_invalid_targets() {
-        let source = "// ordinary #[() -> 1]\n// #[() -> 1]\nfunction helper() returns (word) { return 1; }\n";
+        let source = "pragma solcore;\n// ordinary #[() -> 1]\n// #[() -> 1]\nfunction helper() returns (word) { return 1; }\n";
         let result = compile_impl(input(source, None));
         assert_eq!(result.tests.len(), 1);
-        assert_eq!(result.tests[0].line, 2);
+        assert_eq!(result.tests[0].line, 3);
         assert_eq!(result.tests[0].status, "error");
         let result = compile_impl(input(
             COUNTER.replace("#[() -> 7]", "#[broken]").as_str(),

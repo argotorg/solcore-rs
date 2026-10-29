@@ -1,3 +1,5 @@
+pragma solcore;
+
 trait Seed<a> {}
 trait Derived<a> {}
 

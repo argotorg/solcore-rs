@@ -1,3 +1,5 @@
+pragma solcore;
+
 function identity<a>(value: a) returns (a) {
     return value;
 }

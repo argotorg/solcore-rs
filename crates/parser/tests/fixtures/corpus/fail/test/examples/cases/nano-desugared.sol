@@ -1,3 +1,5 @@
+pragma solcore;
+
 function addW(x: word, y: word) returns (word) {
     let res: word;
     assembly {

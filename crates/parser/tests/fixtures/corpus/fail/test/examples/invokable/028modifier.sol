@@ -1,3 +1,5 @@
+pragma solcore;
+
 function add1(x: Word) returns (Word) {
     return addW(x, 1);
 }

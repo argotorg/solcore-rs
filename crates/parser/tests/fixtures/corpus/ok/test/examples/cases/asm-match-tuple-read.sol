@@ -1,3 +1,5 @@
+pragma solcore;
+
 contract C {
     function main() returns (word) {
         let res: word;

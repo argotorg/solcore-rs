@@ -1,1 +1,3 @@
+pragma solcore;
+
 function main(input: word) returns (word) { match (input) { case renamed { assembly { renamed := add(renamed, 1) } return renamed; } } }

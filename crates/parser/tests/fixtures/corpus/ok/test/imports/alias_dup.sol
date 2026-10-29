@@ -1,3 +1,5 @@
+pragma solcore;
+
 import * as M from ambA;
 import * as M from ambB;
 

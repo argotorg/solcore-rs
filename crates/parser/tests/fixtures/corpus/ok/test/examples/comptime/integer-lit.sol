@@ -1,3 +1,5 @@
+pragma solcore;
+
 // Bare integer literals at `integer` sites, without explicit wordToInteger.
 // The type checker infers the literal type from the expected type at each site:
 //   let x : comptime integer = 10    -- expected type is integer

@@ -1,3 +1,5 @@
+pragma solcore;
+
 contract C {
     seed: (word, bool) = ((true) ? (1, true) : (2, false));
 

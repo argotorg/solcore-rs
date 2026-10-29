@@ -4,29 +4,30 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/nameres/ergo_dup_data_class/main.sol
 ---
 error[SC0108]: duplicate declaration `Shape` in type namespace
- --> /main/main.sol:5:6
+ --> /main/main.sol:7:6
   |
-1 | enum Shape {
+2 |
+3 | enum Shape {
   |      ----- previous declaration
-2 |     Circle(word)
-3 | }
-4 |
-5 | enum Shape {
+4 |     Circle(word)
+5 | }
+6 |
+7 | enum Shape {
   |      ^^^^^ duplicate declaration
-6 |     Square(word)
+8 |     Square(word)
   |
 ---
 
 error[SC0108]: duplicate declaration `Render` in type namespace
-  --> /main/main.sol:13:7
+  --> /main/main.sol:15:7
    |
- 8 |
- 9 | trait Render<a> {
+10 |
+11 | trait Render<a> {
    |       ------ previous declaration
-10 |     function render(x: a) returns (word);
-11 | }
-12 |
-13 | trait Render<a> {
+12 |     function render(x: a) returns (word);
+13 | }
+14 |
+15 | trait Render<a> {
    |       ^^^^^^ duplicate declaration
-14 |     function paint(x: a) returns (word);
+16 |     function paint(x: a) returns (word);
    |

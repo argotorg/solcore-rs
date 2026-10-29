@@ -1,3 +1,5 @@
+pragma solcore;
+
 // Bare integer literals with integer class instances from std.
 // The type checker infers the literal type from context: the integer:Ord/Add/Sub
 // instances constrain unresolved literals to `integer`.

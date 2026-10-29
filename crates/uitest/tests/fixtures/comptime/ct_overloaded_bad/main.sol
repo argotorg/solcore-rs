@@ -1,3 +1,5 @@
+pragma solcore;
+
 /* Negative: Scale instance whose 'scale' reads from storage — not comptime.
    Despite the comptime annotations on the method signature, the word
    instance body uses sload (mutable storage state), making the result

@@ -1,1 +1,3 @@
+pragma solcore;
+
 enum Original<a> { Value(a) } function id(value: Original<word>) returns (Original<word>) { return value; }

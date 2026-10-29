@@ -1,3 +1,5 @@
+pragma solcore;
+
 import * from abi;
 import { Box } from types;
 import { keepCompetitorReachable } from competitor;

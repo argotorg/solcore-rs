@@ -27,11 +27,20 @@ impl solcore_parser::Db for TestDb {}
 fn compound_assignment_chains_do_not_overflow_before_lowering() {
     let depth = 4096;
     for source in [
-        format!("function main() {{ a{} += 1; }}", ".x".repeat(depth)),
-        format!("function main() {{ {}a += 1; }}", "a + ".repeat(depth)),
-        format!("function main() {{ {}a ~=; }}", "~".repeat(depth)),
         format!(
-            "function main() {{ for (; true; a{} <<= 1) {{}} }}",
+            "pragma solcore; function main() {{ a{} += 1; }}",
+            ".x".repeat(depth)
+        ),
+        format!(
+            "pragma solcore; function main() {{ {}a += 1; }}",
+            "a + ".repeat(depth)
+        ),
+        format!(
+            "pragma solcore; function main() {{ {}a ~=; }}",
+            "~".repeat(depth)
+        ),
+        format!(
+            "pragma solcore; function main() {{ for (; true; a{} <<= 1) {{}} }}",
             ".x".repeat(depth)
         ),
     ] {
@@ -54,7 +63,10 @@ fn compound_assignment_chains_do_not_overflow_before_lowering() {
 
 #[test]
 fn malformed_long_expression_is_safe_to_drop_during_recovery() {
-    let source = format!("function main() {{ let a = 1{} }}", " + 1".repeat(16384));
+    let source = format!(
+        "pragma solcore; function main() {{ let a = 1{} }}",
+        " + 1".repeat(16384)
+    );
     assert!(solcore_parser::format::format_source(&source, &Default::default()).is_err());
     let db = TestDb::default();
     let file = SourceFile::new(

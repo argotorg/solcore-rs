@@ -1,3 +1,5 @@
+pragma solcore;
+
 // test complex match example from the blog post
 // simplified to use word instead of uint256
 

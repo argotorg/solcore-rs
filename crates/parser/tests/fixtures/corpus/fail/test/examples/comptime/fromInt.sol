@@ -1,3 +1,5 @@
+pragma solcore;
+
 /* Handling numeric literals
 
 Eventually we may want to have a comptime integer type (unlimited precision)

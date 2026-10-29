@@ -1,3 +1,5 @@
+pragma solcore;
+
 trait C1<a> {}
 trait C2<a> {}
 

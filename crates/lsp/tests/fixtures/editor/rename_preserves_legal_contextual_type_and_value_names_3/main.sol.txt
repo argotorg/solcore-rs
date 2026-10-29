@@ -1,1 +1,3 @@
+pragma solcore;
+
 function Original() returns (word) { return 7; } function main() returns (word) { return Original(); }

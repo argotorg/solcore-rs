@@ -1,3 +1,5 @@
+pragma solcore;
+
 import { storage, array, uint256, Typedef, CanStore } from std;
 
 contract C {

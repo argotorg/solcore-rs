@@ -4,53 +4,53 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/mismatch_direction_constructors/main.sol
 ---
 error[SC0201]: type mismatch: expected bool, found Box
-  --> /main/main.sol:9:12
+  --> /main/main.sol:11:12
    |
- 8 | function constructor_return() returns (bool) {
- 9 |     return Box(1);
+10 | function constructor_return() returns (bool) {
+11 |     return Box(1);
    |            ^^^^^^ expression has mismatched type
-10 | }
+12 | }
    |
    = note: expected type: bool
    = note: found type: Box
 ---
 
 error[SC0201]: type mismatch: expected bool, found Box
-  --> /main/main.sol:13:19
+  --> /main/main.sol:15:19
    |
-12 | function constructor_binding() {
-13 |     let x: bool = Box(1);
+14 | function constructor_binding() {
+15 |     let x: bool = Box(1);
    |                   ^^^^^^ expression has mismatched type
-14 | }
+16 | }
    |
    = note: expected type: bool
    = note: found type: Box
 ---
 
 error[SC0201]: type mismatch: expected bool, found Empty
-  --> /main/main.sol:17:19
+  --> /main/main.sol:19:19
    |
-16 | function nullary_constructor() {
-17 |     let x: bool = Empty();
+18 | function nullary_constructor() {
+19 |     let x: bool = Empty();
    |                   ^^^^^^^ expression has mismatched type
-18 | }
+20 | }
    |
    = note: expected type: bool
    = note: found type: Empty
 ---
 
 error[SC0201]: argument type mismatch in call to `Box`
-  --> /main/main.sol:21:22
+  --> /main/main.sol:23:22
    |
- 1 | enum Box {
- 2 |     Box(word)
+ 3 | enum Box {
+ 4 |     Box(word)
    |         ---- parameter 1 defined here
- 3 | }
+ 5 | }
 ...
-20 | function constructor_argument() {
-21 |     let x: Box = Box(true);
+22 | function constructor_argument() {
+23 |     let x: Box = Box(true);
    |                      ^^^^ argument has mismatched type
-22 | }
+24 | }
    |
    = note: expected `word` because parameter 1 of `Box` has type `word`
    = note: found type: bool

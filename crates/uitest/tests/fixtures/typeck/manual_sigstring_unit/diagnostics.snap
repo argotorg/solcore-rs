@@ -8,17 +8,17 @@ error[SC0218]: Overlapping impls are not supported
                (): SigString
                overlaps with:
                (): SigString
-  --> /main/main.sol:4:6
+  --> /main/main.sol:6:6
    |
- 3 |
- 4 | impl SigString<()> {
+ 5 |
+ 6 | impl SigString<()> {
    |      ^^^^^^^^^^^^^ overlapping impl
- 5 |     function sigStr(p: Proxy<()>) returns (string) {
+ 7 |     function sigStr(p: Proxy<()>) returns (string) {
    |
-  ::: /std/dispatch.sol:95
+  ::: /std/dispatch.sol:97
    |
-95 | }
-96 | impl SigString<()> {
+97 | }
+98 | impl SigString<()> {
    |      ------------- previous overlapping impl
-97 |     function sigStr(x: Proxy<()>) returns (string) {
+99 |     function sigStr(x: Proxy<()>) returns (string) {
    |

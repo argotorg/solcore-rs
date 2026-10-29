@@ -208,14 +208,15 @@ mod tests {
 
     #[test]
     fn clean_program_has_no_diagnostics() {
-        let (world, uri) = world_with_main("function main() returns (word) {\n  return 1;\n}\n");
+        let (world, uri) =
+            world_with_main("pragma solcore;\nfunction main() returns (word) {\n  return 1;\n}\n");
 
         assert!(compute_diagnostics(&world, &uri).is_empty());
     }
 
     #[test]
     fn type_error_maps_to_lsp_error_with_range() {
-        let source = "function f() returns (word) {\n  return true;\n}\n";
+        let source = "pragma solcore;\nfunction f() returns (word) {\n  return true;\n}\n";
         let (world, uri) = world_with_main(source);
 
         let diagnostics = compute_diagnostics(&world, &uri);
@@ -236,8 +237,8 @@ mod tests {
         let mut world = WorldState::new();
         let main_uri = Url::parse("file:///main/main.sol").expect("main uri");
         let math_uri = Url::parse("file:///main/math.sol").expect("math uri");
-        let main = "import {double} from math;\n\nfunction main() returns (word) {\n  return double(21);\n}\n";
-        let math = "function double(x: word) returns (word) {\n  let res: word;\n  assembly {\n    res := add(x, x)\n  }\n  return res;\n}\n\nexport { double };\n";
+        let main = "pragma solcore;\nimport {double} from math;\n\nfunction main() returns (word) {\n  return double(21);\n}\n";
+        let math = "pragma solcore;\nfunction double(x: word) returns (word) {\n  let res: word;\n  assembly {\n    res := add(x, x)\n  }\n  return res;\n}\n\nexport { double };\n";
 
         assert!(world.open_document(main_uri.clone(), main.to_owned()));
         let _ = compute_diagnostics(&world, &main_uri);
@@ -252,8 +253,8 @@ mod tests {
         let mut world = WorldState::new();
         let math_uri = Url::parse("file:///main/math.sol").expect("math uri");
         let main_uri = Url::parse("file:///main/main.sol").expect("main uri");
-        let math = "function double(x: word) returns (word) { return x; }\n\nexport { double };\n";
-        let main = "import {double} from math;\n\nfunction main() returns (word) {\n  return double(21);\n}\n";
+        let math = "pragma solcore;\nfunction double(x: word) returns (word) { return x; }\n\nexport { double };\n";
+        let main = "pragma solcore;\nimport {double} from math;\n\nfunction main() returns (word) {\n  return double(21);\n}\n";
 
         assert!(world.open_document(math_uri, math.to_owned()));
         assert!(world.open_document(main_uri.clone(), main.to_owned()));
@@ -268,9 +269,9 @@ mod tests {
         let entry_uri = Url::parse("file:///main/entry.sol").expect("entry uri");
         let main_uri = Url::parse("file:///main/main.sol").expect("main uri");
         let math_uri = Url::parse("file:///main/math.sol").expect("math uri");
-        let entry = "function entry() returns (word) { return 0; }\n";
-        let main = "import {double} from math;\n\nfunction main() returns (word) {\n  return double(21);\n}\n";
-        let math = "function double(x: word) returns (word) { return x; }\n\nexport { double };\n";
+        let entry = "pragma solcore;\nfunction entry() returns (word) { return 0; }\n";
+        let main = "pragma solcore;\nimport {double} from math;\n\nfunction main() returns (word) {\n  return double(21);\n}\n";
+        let math = "pragma solcore;\nfunction double(x: word) returns (word) { return x; }\n\nexport { double };\n";
 
         assert!(world.open_document(entry_uri, entry.to_owned()));
         assert!(world.open_document(main_uri.clone(), main.to_owned()));
@@ -299,10 +300,9 @@ mod tests {
         let main_uri = Url::parse("file:///main/main.sol").expect("main uri");
         let math_uri = Url::parse("file:///main/math.sol").expect("math uri");
         let shadow_uri = Url::parse("file:///main/math.txt").expect("shadow uri");
-        let entry = "function entry() returns (word) { return 0; }\n";
-        let main =
-            "import {double} from math;\nfunction main() returns (word) { return double(21); }\n";
-        let math = "function double(x: word) returns (word) { return x; }\nexport { double };\n";
+        let entry = "pragma solcore;\nfunction entry() returns (word) { return 0; }\n";
+        let main = "pragma solcore;\nimport {double} from math;\nfunction main() returns (word) { return double(21); }\n";
+        let math = "pragma solcore;\nfunction double(x: word) returns (word) { return x; }\nexport { double };\n";
 
         assert!(world.open_document(entry_uri, entry.to_owned()));
         assert!(world.open_document(main_uri.clone(), main.to_owned()));
@@ -327,7 +327,8 @@ mod tests {
         let result = std::thread::Builder::new()
             .stack_size(1024 * 1024)
             .spawn(|| {
-                let mut source = "function main() returns (word) { return ".to_owned();
+                let mut source =
+                    "pragma solcore; function main() returns (word) { return ".to_owned();
                 source.push_str(&"true ? 0 : ".repeat(130));
                 source.push_str("0; }\n");
                 let (world, uri) = world_with_main(&source);
@@ -353,11 +354,11 @@ mod tests {
         let entry_uri = Url::parse("file:///main/entry.sol").expect("entry uri");
         let main_uri = Url::parse("file:///main/main.sol").expect("main uri");
         let math_uri = Url::parse("file:///main/math.sol").expect("math uri");
-        let entry = "function entry() returns (word) { return 0; }\n";
-        let main = "import {double} from math;\n\nfunction main() returns (word) {\n  return double(21);\n}\n";
-        let math_no_export = "function double(x: word) returns (word) { return x; }\n";
-        let math_with_export =
-            "function double(x: word) returns (word) { return x; }\n\nexport { double };\n";
+        let entry = "pragma solcore;\nfunction entry() returns (word) { return 0; }\n";
+        let main = "pragma solcore;\nimport {double} from math;\n\nfunction main() returns (word) {\n  return double(21);\n}\n";
+        let math_no_export =
+            "pragma solcore;\nfunction double(x: word) returns (word) { return x; }\n";
+        let math_with_export = "pragma solcore;\nfunction double(x: word) returns (word) { return x; }\n\nexport { double };\n";
 
         assert!(world.open_document(entry_uri, entry.to_owned()));
         assert!(world.open_document(main_uri.clone(), main.to_owned()));
@@ -390,10 +391,10 @@ mod tests {
         let mut world = WorldState::new();
         let main_uri = Url::parse("file:///main/main.sol").expect("main uri");
         let math_uri = Url::parse("file:///main/math.sol").expect("math uri");
-        let main = "import {double} from math;\n\nfunction main() returns (word) {\n  return double(21);\n}\n";
-        let math_no_export = "function double(x: word) returns (word) { return x; }\n";
-        let math_with_export =
-            "function double(x: word) returns (word) { return x; }\n\nexport { double };\n";
+        let main = "pragma solcore;\nimport {double} from math;\n\nfunction main() returns (word) {\n  return double(21);\n}\n";
+        let math_no_export =
+            "pragma solcore;\nfunction double(x: word) returns (word) { return x; }\n";
+        let math_with_export = "pragma solcore;\nfunction double(x: word) returns (word) { return x; }\n\nexport { double };\n";
 
         assert!(world.open_document(main_uri.clone(), main.to_owned()));
         assert!(world.open_document(math_uri.clone(), math_no_export.to_owned()));
@@ -407,7 +408,7 @@ mod tests {
         let warm = compute_diagnostics(&world, &main_uri);
         assert!(
             !has_unknown_import_item(&warm),
-            "export added: UnknownImportItem must clear, got {warm:#?}"
+            "pragma solcore; export added: UnknownImportItem must clear, got {warm:#?}"
         );
         assert_no_module_not_found(&warm);
         assert_no_unknown_import_item(&warm);
@@ -421,11 +422,11 @@ mod tests {
         let entry_uri = Url::parse("file:///main/entry.sol").expect("entry uri");
         let main_uri = Url::parse("file:///main/main.sol").expect("main uri");
         let math_uri = Url::parse("file:///main/math.sol").expect("math uri");
-        let entry = "function entry() returns (word) { return 0; }\n";
-        let main = "import {double} from math;\n\nfunction main() returns (word) {\n  return double(21);\n}\n";
-        let math_no_export = "function double(x: word) returns (word) { return x; }\n";
-        let math_with_export =
-            "function double(x: word) returns (word) { return x; }\n\nexport { double };\n";
+        let entry = "pragma solcore;\nfunction entry() returns (word) { return 0; }\n";
+        let main = "pragma solcore;\nimport {double} from math;\n\nfunction main() returns (word) {\n  return double(21);\n}\n";
+        let math_no_export =
+            "pragma solcore;\nfunction double(x: word) returns (word) { return x; }\n";
+        let math_with_export = "pragma solcore;\nfunction double(x: word) returns (word) { return x; }\n\nexport { double };\n";
 
         assert!(world.open_document(entry_uri, entry.to_owned()));
         assert!(world.open_document(main_uri.clone(), main.to_owned()));
@@ -436,7 +437,7 @@ mod tests {
         let warm = compute_diagnostics(&world, &main_uri);
         assert!(
             !has_unknown_import_item(&warm),
-            "export added (entry drift): UnknownImportItem must clear, got {warm:#?}"
+            "pragma solcore; export added (entry drift): UnknownImportItem must clear, got {warm:#?}"
         );
         assert_no_module_not_found(&warm);
         assert_no_unknown_import_item(&warm);

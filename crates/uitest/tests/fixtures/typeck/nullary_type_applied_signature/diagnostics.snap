@@ -4,12 +4,12 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/nullary_type_applied_signature/main.sol
 ---
 error[SC0299]: Invalid number of type arguments!
- --> /main/main.sol:5:15
+ --> /main/main.sol:7:15
   |
-4 |
-5 | function f(x: M<word>) returns (word) {
+6 |
+7 | function f(x: M<word>) returns (word) {
   |               ^^^^^^^ diagnostic reported here
-6 |     return 0;
+8 |     return 0;
   |
   = note: Type M is expected to have 0 type arguments
   = note: but, type M<word> has 1 arguments

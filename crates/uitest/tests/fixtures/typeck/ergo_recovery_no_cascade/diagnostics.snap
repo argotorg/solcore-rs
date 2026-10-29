@@ -4,17 +4,17 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/ergo_recovery_no_cascade/main.sol
 ---
 error[SC0201]: argument type mismatch in call to `first`
-  --> /main/main.sol:10:19
+  --> /main/main.sol:12:19
    |
- 1 | function first(p: (word, word)) returns (word) {
+ 2 |
+ 3 | function first(p: (word, word)) returns (word) {
    |                - parameter `p` defined here
- 2 |     match (p) {
- 3 |         case (a, b) {
+ 4 |     match (p) {
 ...
- 9 | function f() returns (word) {
-10 |     let x = first(true);
+11 | function f() returns (word) {
+12 |     let x = first(true);
    |                   ^^^^ argument has mismatched type
-11 |     return x;
+13 |     return x;
    |
    = note: expected `(word, word)` because parameter `p` of `first` has type `(word, word)`
    = note: found type: bool
@@ -22,12 +22,12 @@ error[SC0201]: argument type mismatch in call to `first`
 ---
 
 error[SC0201]: type mismatch: expected bool, found numeric
-  --> /main/main.sol:15:12
+  --> /main/main.sol:17:12
    |
-14 | function g() returns (bool) {
-15 |     return 42;
+16 | function g() returns (bool) {
+17 |     return 42;
    |            ^^ expression has mismatched type
-16 | }
+18 | }
    |
    = note: expected type: bool
    = note: found type: numeric

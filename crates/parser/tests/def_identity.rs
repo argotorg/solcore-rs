@@ -107,7 +107,7 @@ fn same_named_contract_methods_have_container_relative_def_ids() {
     let file = source_file(
         &db,
         "contract-methods",
-        "contract A {\n  function f() {}\n}\n\ncontract B {\n  function f() {}\n}\n",
+        "pragma solcore;\ncontract A {\n  function f() {}\n}\n\ncontract B {\n  function f() {}\n}\n",
     );
 
     let methods = defs_by_name(&db, file, DefKind::Function, "f");
@@ -122,7 +122,7 @@ fn instances_of_same_class_on_different_heads_have_distinct_def_ids() {
     let file = source_file(
         &db,
         "instance-heads",
-        "trait StorageType<self> {}\n\n\
+        "pragma solcore;\ntrait StorageType<self> {}\n\n\
          impl StorageType<word> {\n  function rep(x:word) returns (word) { return x; }\n}\n\n\
          impl StorageType<uint> {\n  function rep(x:uint) returns (uint) { return x; }\n}\n",
     );
@@ -145,7 +145,7 @@ fn instances_with_same_subject_and_different_class_args_have_distinct_def_ids() 
     let file = source_file(
         &db,
         "instance-class-args",
-        "trait Carrier<self, arg> {}\n\n\
+        "pragma solcore;\ntrait Carrier<self, arg> {}\n\n\
          impl Carrier<word, uint> {}\n\n\
          impl Carrier<word, bool> {}\n",
     );
@@ -165,7 +165,11 @@ fn instances_with_same_subject_and_different_class_args_have_distinct_def_ids() 
 #[test]
 fn imports_have_structural_def_ids() {
     let db = TestDb::default();
-    let file = source_file(&db, "imports-distinct", "import A;\nimport B;\n");
+    let file = source_file(
+        &db,
+        "imports-distinct",
+        "pragma solcore;\nimport A;\nimport B;\n",
+    );
 
     let import_a = defs_by_fingerprint(&db, file, DefKind::Import, "A");
     let import_b = defs_by_fingerprint(&db, file, DefKind::Import, "B");
@@ -177,7 +181,11 @@ fn imports_have_structural_def_ids() {
 #[test]
 fn inserting_import_above_keeps_existing_import_identities_stable() {
     let mut db = TestDb::default();
-    let file = source_file(&db, "imports-stable", "import A;\nimport B;\n");
+    let file = source_file(
+        &db,
+        "imports-stable",
+        "pragma solcore;\nimport A;\nimport B;\n",
+    );
 
     let before_a = {
         let imports = defs_by_fingerprint(&db, file, DefKind::Import, "A");
@@ -190,8 +198,9 @@ fn inserting_import_above_keeps_existing_import_identities_stable() {
         def_identity(&db, imports[0])
     };
 
-    file.set_content(&mut db)
-        .to(Some("import C;\nimport A;\nimport B;\n".to_owned()));
+    file.set_content(&mut db).to(Some(
+        "pragma solcore;\nimport C;\nimport A;\nimport B;\n".to_owned(),
+    ));
 
     let after_a = {
         let imports = defs_by_fingerprint(&db, file, DefKind::Import, "A");
@@ -214,7 +223,7 @@ fn import_selector_fingerprints_are_structural_and_order_independent() {
     let file = source_file(
         &db,
         "imports-selector-fingerprints",
-        "import {x as y, (^^)} from A hiding {z, w};\n\
+        "pragma solcore;\nimport {x as y, (^^)} from A hiding {z, w};\n\
          import {(^^), x as y} from A hiding {w, z};\n\
          import {x} from A;\n\
          import {x as y} from A;\n\
@@ -243,7 +252,7 @@ fn import_selector_fingerprints_are_structural_and_order_independent() {
 #[test]
 fn inserting_preceding_lambda_keeps_existing_lambda_body_identities_stable() {
     let mut db = TestDb::default();
-    let before_src = "function f(z: word) returns (word) {
+    let before_src = "pragma solcore;\nfunction f(z: word) returns (word) {
         let n = lam (x: word) { return x; };
         let m = lam (y: word) { return y; };
         return m(n(z));
@@ -254,7 +263,7 @@ fn inserting_preceding_lambda_keeps_existing_lambda_body_identities_stable() {
     assert_eq!(before.len(), 2);
 
     file.set_content(&mut db).to(Some(
-        "function f(z: word) returns (word) {
+        "pragma solcore;\nfunction f(z: word) returns (word) {
             let ignored = lam (q: word) { return q + 1; };
             let n = lam (x: word) { return x; };
             let m = lam (y: word) { return y; };
@@ -280,7 +289,7 @@ fn inserting_preceding_lambda_keeps_existing_lambda_body_identities_stable() {
 #[test]
 fn lambda_body_edit_keeps_lambda_body_identity_stable() {
     let mut db = TestDb::default();
-    let before_src = "function f(z: word) returns (word) {
+    let before_src = "pragma solcore;\nfunction f(z: word) returns (word) {
         let n = lam (x: word) { return x + 1; };
         return n(z);
     }";
@@ -290,7 +299,7 @@ fn lambda_body_edit_keeps_lambda_body_identity_stable() {
     assert_eq!(before.len(), 1);
 
     file.set_content(&mut db).to(Some(
-        "function f(z: word) returns (word) {
+        "pragma solcore;\nfunction f(z: word) returns (word) {
             let n = lam (x: word) { return x + 2; };
             return n(z);
         }"
@@ -305,7 +314,11 @@ fn lambda_body_edit_keeps_lambda_body_identity_stable() {
 #[test]
 fn inserting_unrelated_item_above_def_keeps_identity_stable() {
     let mut db = TestDb::default();
-    let file = source_file(&db, "stable-def", "\nfunction target() {}\n");
+    let file = source_file(
+        &db,
+        "stable-def",
+        "\npragma solcore;\nfunction target() {}\n",
+    );
 
     let before = {
         let targets = defs_by_name(&db, file, DefKind::Function, "target");
@@ -314,7 +327,7 @@ fn inserting_unrelated_item_above_def_keeps_identity_stable() {
     };
 
     file.set_content(&mut db).to(Some(
-        "\nfunction helper() {}\n\nfunction target() {}\n".to_owned(),
+        "\npragma solcore;\nfunction helper() {}\n\nfunction target() {}\n".to_owned(),
     ));
 
     let after = {
@@ -329,7 +342,11 @@ fn inserting_unrelated_item_above_def_keeps_identity_stable() {
 #[test]
 fn leading_whitespace_does_not_change_def_identity() {
     let mut db = TestDb::default();
-    let file = source_file(&db, "leading-whitespace", "\nfunction target() {}\n");
+    let file = source_file(
+        &db,
+        "leading-whitespace",
+        "\npragma solcore;\nfunction target() {}\n",
+    );
 
     let before = {
         let targets = defs_by_name(&db, file, DefKind::Function, "target");
@@ -337,8 +354,9 @@ fn leading_whitespace_does_not_change_def_identity() {
         def_identity(&db, targets[0])
     };
 
-    file.set_content(&mut db)
-        .to(Some("\n\n\nfunction target() {}\n".to_owned()));
+    file.set_content(&mut db).to(Some(
+        "\npragma solcore;\n\n\nfunction target() {}\n".to_owned(),
+    ));
 
     let after = {
         let targets = defs_by_name(&db, file, DefKind::Function, "target");
@@ -355,7 +373,7 @@ fn well_formed_program_defs_have_zero_disambiguators() {
     let file = source_file(
         &db,
         "zero-disambiguators",
-        "trait StorageType<self> {}\n\n\
+        "pragma solcore;\ntrait StorageType<self> {}\n\n\
          impl StorageType<word> {\n  function rep(x:word) returns (word) { return x; }\n}\n\n\
          contract Counter {\n  function main() returns (word) { return 0; }\n}\n\n\
          function top() {}\n",

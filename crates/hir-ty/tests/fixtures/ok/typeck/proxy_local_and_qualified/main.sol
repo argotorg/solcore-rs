@@ -1,3 +1,5 @@
+pragma solcore;
+
 import lib;
 import { Proxy as Renamed } from lib;
 

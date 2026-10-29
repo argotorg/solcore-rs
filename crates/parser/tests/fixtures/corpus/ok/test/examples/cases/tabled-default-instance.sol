@@ -1,3 +1,5 @@
+pragma solcore;
+
 trait Fallback<a> {
     function tag(x: a) returns (word);
 }

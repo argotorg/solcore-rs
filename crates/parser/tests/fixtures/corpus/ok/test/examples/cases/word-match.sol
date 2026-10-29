@@ -1,3 +1,5 @@
+pragma solcore;
+
 trait IsWord<a> {
     function toWord(x: a) returns (word);
 }

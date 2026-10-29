@@ -1,3 +1,5 @@
+pragma solcore;
+
 contract ListModule {
     enum List<a> {
         Nil,

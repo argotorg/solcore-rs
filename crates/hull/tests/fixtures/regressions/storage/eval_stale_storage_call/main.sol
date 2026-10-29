@@ -1,3 +1,5 @@
+pragma solcore;
+
 contract StaleCall {
     x: word;
 

@@ -1,3 +1,5 @@
+pragma solcore;
+
 import * as F from foo;
 
 function main() returns (word) {

@@ -1,3 +1,5 @@
+pragma solcore;
+
 function conditions(x: bool) returns (bool) {
     if (.true) {} else {}
     while (.false) {}

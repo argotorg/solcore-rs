@@ -1,3 +1,5 @@
+pragma solcore;
+
 // ambiguous-leaf: true
 trait C<a> where a: Sub {}
 trait Sub<a> where a: C {}

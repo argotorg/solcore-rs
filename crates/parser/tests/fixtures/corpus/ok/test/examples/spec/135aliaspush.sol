@@ -1,3 +1,5 @@
+pragma solcore;
+
 // Binding a storage array field to a local is an *alias*, not a copy: the local
 // holds the same slot, so growing it grows the field. (Solidity's `T[] storage p`.)
 import * from std;

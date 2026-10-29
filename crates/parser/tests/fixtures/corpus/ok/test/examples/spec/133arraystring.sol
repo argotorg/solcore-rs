@@ -1,3 +1,5 @@
+pragma solcore;
+
 // Storage arrays whose element type is dynamic. Declaring the field and taking
 // its length must work even before `push` accepts dynamic values; the element
 // slot itself is what holds the length / short-string encoding.

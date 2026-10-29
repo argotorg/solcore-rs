@@ -1,3 +1,5 @@
+pragma solcore;
+
 contract EitherModule {
     enum Either<a, b> {
         Left(a),

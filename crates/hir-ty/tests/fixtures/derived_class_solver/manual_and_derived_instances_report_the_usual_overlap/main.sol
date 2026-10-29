@@ -1,3 +1,5 @@
+pragma solcore;
+
 trait Marker<a> {}
 #[derive(Marker)]
 enum Target {}

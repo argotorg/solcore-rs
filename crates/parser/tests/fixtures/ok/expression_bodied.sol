@@ -1,3 +1,5 @@
+pragma solcore;
+
 function zero() returns (word) {
     0
 }

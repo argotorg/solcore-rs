@@ -788,7 +788,7 @@ mod tests {
 
     #[test]
     fn bytecode_only_emits_each_object_without_execution() {
-        let source = "contract A { function main() public returns (word) { return 1; } }\ncontract B { function main() public returns (word) { return 2; } }";
+        let source = "pragma solcore;\ncontract A { function main() public returns (word) { return 1; } }\ncontract B { function main() public returns (word) { return 2; } }";
         let result = compile_impl(input(
             source,
             Options {
@@ -825,7 +825,7 @@ mod tests {
                 .is_empty()
         );
         let invalid = compile_impl(input(
-            "function main() returns (word) { return true; }",
+            "pragma solcore; function main() returns (word) { return true; }",
             Options {
                 emit_bytecode: true,
                 ..Options::for_tests()
@@ -838,12 +838,18 @@ mod tests {
     #[test]
     fn discovery_reports_main_without_generating_artifacts() {
         for (source, expected) in [
-            ("function main() returns (word) { return 42; }", true),
             (
-                "contract Hello { function main() public returns (word) { return 42; } }",
+                "pragma solcore; function main() returns (word) { return 42; }",
                 true,
             ),
-            ("function helper() returns (word) { return 42; }", false),
+            (
+                "pragma solcore; contract Hello { function main() public returns (word) { return 42; } }",
+                true,
+            ),
+            (
+                "pragma solcore; function helper() returns (word) { return 42; }",
+                false,
+            ),
         ] {
             let result = compile_impl(input(source, Options::for_tests()));
             assert!(result.success);
@@ -854,14 +860,17 @@ mod tests {
 
     #[test]
     fn compile_accepts_only_sol_entry_files() {
-        let valid = compile_impl(input("function main() {}\n", Options::for_tests()));
+        let valid = compile_impl(input(
+            "pragma solcore;\nfunction main() {}\n",
+            Options::for_tests(),
+        ));
         assert!(valid.success);
         assert!(valid.diagnostics.is_empty());
 
         let invalid = compile_impl(CompileInput {
             files: vec![FileInput {
                 path: "main.solc".to_owned(),
-                content: "function main() {}\n".to_owned(),
+                content: "pragma solcore;\nfunction main() {}\n".to_owned(),
             }],
             entry: "main.solc".to_owned(),
             options: Options::for_tests(),
@@ -882,7 +891,7 @@ mod tests {
     fn clean_program_emits_all_playground_outputs() {
         let result = compile_impl(input(
             concat!(
-                "import * from std;\n",
+                "pragma solcore;\nimport * from std;\n",
                 "import * from std.dispatch;\n",
                 "contract Main {\n",
                 "  function answer() public returns (uint256) {\n",
@@ -921,7 +930,7 @@ mod tests {
     #[test]
     fn sonatina_only_runs_the_shared_hull_pipeline() {
         let result = compile_impl(input(
-            "contract Main {\n  function main() public returns (word) {\n    return 1;\n  }\n}\n",
+            "pragma solcore;\ncontract Main {\n  function main() public returns (word) {\n    return 1;\n  }\n}\n",
             Options {
                 emit_hull: false,
                 emit_yul: false,
@@ -947,7 +956,7 @@ mod tests {
     fn multiple_contracts_have_independent_yul_outputs() {
         let result = compile_impl(input(
             concat!(
-                "contract A { function main() public returns (word) { return 1; } }\n",
+                "pragma solcore;\ncontract A { function main() public returns (word) { return 1; } }\n",
                 "contract B { function main() public returns (word) { return 2; } }\n",
             ),
             Options {
@@ -1040,7 +1049,7 @@ mod tests {
     fn abi_only_emits_contract_json() {
         let result = compile_impl(input(
             concat!(
-                "import * from std;\n",
+                "pragma solcore;\nimport * from std;\n",
                 "import * from std.dispatch;\n",
                 "contract Main {\n",
                 "  function answer() public returns (uint256) {\n",
@@ -1074,19 +1083,19 @@ mod tests {
             files: vec![
                 FileInput {
                     path: "main.sol".to_owned(),
-                    content: "import a; import b; function main() returns (word) { return 0; }\n"
+                    content: "pragma solcore;\nimport a; import b; function main() returns (word) { return 0; }\n"
                         .to_owned(),
                 },
                 FileInput {
                     path: "a.sol".to_owned(),
                     content:
-                        "contract Token { function main() public returns (word) { return 1; } }\n"
+                        "pragma solcore;\ncontract Token { function main() public returns (word) { return 1; } }\n"
                             .to_owned(),
                 },
                 FileInput {
                     path: "b.sol".to_owned(),
                     content:
-                        "contract Token { function main() public returns (word) { return 2; } }\n"
+                        "pragma solcore;\ncontract Token { function main() public returns (word) { return 2; } }\n"
                             .to_owned(),
                 },
             ],
@@ -1123,12 +1132,12 @@ mod tests {
         workspace.set_external_file(
             "pkg",
             "token.sol",
-            "contract ExternalToken { function main() public returns (word) { return 7; } }\n"
+            "pragma solcore;\ncontract ExternalToken { function main() public returns (word) { return 7; } }\n"
                 .to_owned(),
         );
         workspace.set_file(
             "main.sol",
-            "import @pkg.token; contract Local { function main() public returns (word) { return 1; } }\n"
+            "pragma solcore;\nimport @pkg.token; contract Local { function main() public returns (word) { return 1; } }\n"
                 .to_owned(),
         );
         workspace.set_entry("main.sol");
@@ -1159,7 +1168,7 @@ mod tests {
     fn backend_diagnostic_uses_shared_vfs_conversion() {
         let result = compile_impl(input(
             concat!(
-                "import {string} from std;\n",
+                "pragma solcore;\nimport {string} from std;\n",
                 "contract Main {\n",
                 "  function main() public returns (string) { return \"nope\"; }\n",
                 "}\n",
@@ -1191,7 +1200,7 @@ mod tests {
     #[test]
     fn bad_program_reports_position_and_skips_backend() {
         let result = compile_impl(input(
-            "function f() returns (word) {\n  return true;\n}\n",
+            "pragma solcore;\nfunction f() returns (word) {\n  return true;\n}\n",
             Options {
                 emit_hull: true,
                 emit_yul: true,

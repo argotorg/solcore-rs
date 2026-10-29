@@ -1,3 +1,5 @@
+pragma solcore;
+
 import type_collision_a;
 import type_collision_b;
 

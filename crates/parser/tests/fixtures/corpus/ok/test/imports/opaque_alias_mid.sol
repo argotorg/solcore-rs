@@ -1,3 +1,5 @@
+pragma solcore;
+
 import * as Base from opaque_dep_base;
 
 export { make };

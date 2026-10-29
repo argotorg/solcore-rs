@@ -1,3 +1,5 @@
+pragma solcore;
+
 pragma no-patterson-condition;
 import * from base;
 impl Child<word> {

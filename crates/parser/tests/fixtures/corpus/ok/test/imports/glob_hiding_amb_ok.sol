@@ -1,3 +1,5 @@
+pragma solcore;
+
 import * from glob_amb_a hiding { shared };
 import * from glob_amb_b;
 

@@ -4,12 +4,12 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/specialize/ergo_poly_entry/main.sol
 ---
 error[SC0401]: entry point must have a concrete, non-polymorphic type before specialization
- --> /main/main.sol:5:1
+ --> /main/main.sol:7:1
   |
-4 |
-5 | / function main<a>(x: a) returns (a) {
-6 | |     return x;
-7 | | }
+6 |
+7 | / function main<a>(x: a) returns (a) {
+8 | |     return x;
+9 | | }
   | |_^ type must be concrete here
   |
   = note: entry points are specialization roots and must have a single concrete type

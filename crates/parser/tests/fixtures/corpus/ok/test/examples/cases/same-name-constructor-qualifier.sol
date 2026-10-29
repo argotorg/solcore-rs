@@ -1,3 +1,5 @@
+pragma solcore;
+
 // Qualifier access (T.C) must work even when T has a same-name constructor.
 // Regression test for: `Error.Empty` reporting "Unqualified constructor: Empty".
 enum Err {

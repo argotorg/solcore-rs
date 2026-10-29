@@ -1,3 +1,5 @@
+pragma solcore;
+
 // Error: top-level free function with no explicit return type
 function double(x: word) {
     let res: word;

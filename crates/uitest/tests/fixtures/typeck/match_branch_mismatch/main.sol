@@ -1,3 +1,5 @@
+pragma solcore;
+
 function h(x: bool) returns (word) {
     match (x) {
         case true {

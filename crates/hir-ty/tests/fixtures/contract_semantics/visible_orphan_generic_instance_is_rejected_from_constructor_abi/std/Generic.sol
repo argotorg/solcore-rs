@@ -1,3 +1,5 @@
+pragma solcore;
+
 pragma no-patterson-condition;
 pragma no-bounded-variable-condition;
 export { Generic };

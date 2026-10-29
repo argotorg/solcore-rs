@@ -1,3 +1,5 @@
+pragma solcore;
+
 pragma no-patterson-condition StorageType;
 pragma no-bounded-variable-condition StorageType;
 

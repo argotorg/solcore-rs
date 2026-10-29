@@ -1,3 +1,5 @@
+pragma solcore;
+
 function call_zero(f: function () returns (word)) returns (word) {
     return f();
 }

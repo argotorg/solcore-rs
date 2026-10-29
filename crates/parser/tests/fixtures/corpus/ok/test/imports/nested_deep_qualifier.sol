@@ -1,3 +1,5 @@
+pragma solcore;
+
 import foo.bar.baz;
 
 function main() returns (word) {

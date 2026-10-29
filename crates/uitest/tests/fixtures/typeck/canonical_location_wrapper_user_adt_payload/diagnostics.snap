@@ -4,32 +4,32 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/canonical_location_wrapper_user_adt_payload/main.sol
 ---
 error[SC0207]: cannot satisfy trait constraint: Contract<Method<DispatchNameTy_C_roundtrip, NonPayable, memory<Point>, word, function(memory<Point>) returns (word)>, Fallback<NonPayable, (), (), function() returns (())>>: RunContract
- --> /main/main.sol:8:10
-  |
-7 |
-8 | contract C {
-  |          ^ constraint originates here
-9 |     function roundtrip(value: memory<Point>) public returns (word) {
-  |
-  = note: no visible impl matches `Contract<Method<DispatchNameTy_C_roundtrip, NonPayable, memory<Point>, word, function(memory<Point>) returns (word)>, Fallback<NonPayable, (), (), function() returns (())>>: RunContract`
-  = help: add a matching impl or strengthen the surrounding type context
+  --> /main/main.sol:10:10
+   |
+ 9 |
+10 | contract C {
+   |          ^ constraint originates here
+11 |     function roundtrip(value: memory<Point>) public returns (word) {
+   |
+   = note: no visible impl matches `Contract<Method<DispatchNameTy_C_roundtrip, NonPayable, memory<Point>, word, function(memory<Point>) returns (word)>, Fallback<NonPayable, (), (), function() returns (())>>: RunContract`
+   = help: add a matching impl or strengthen the surrounding type context
 ---
 
 error[SC0231]: ABI parameter cannot be represented in the ABI: adt:Point (only memory<string> and memory<bytes> have canonical ABI evidence)
-  --> /main/main.sol:9:5
+  --> /main/main.sol:11:5
    |
- 8 | contract C {
- 9 |     function roundtrip(value: memory<Point>) public returns (word) {
+10 | contract C {
+11 |     function roundtrip(value: memory<Point>) public returns (word) {
    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ unsupported ABI type
-10 |         return 0;
+12 |         return 0;
    |
 ---
 
 error[SC0231]: roundtrip cannot be represented in the ABI: adt:Point (only memory<string> and memory<bytes> have canonical ABI evidence)
-  --> /main/main.sol:9:5
+  --> /main/main.sol:11:5
    |
- 8 | contract C {
- 9 |     function roundtrip(value: memory<Point>) public returns (word) {
+10 | contract C {
+11 |     function roundtrip(value: memory<Point>) public returns (word) {
    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ unsupported ABI type
-10 |         return 0;
+12 |         return 0;
    |

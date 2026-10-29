@@ -1,3 +1,5 @@
+pragma solcore;
+
 type A = B;
 type B = A;
 

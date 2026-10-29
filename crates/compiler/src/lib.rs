@@ -415,7 +415,10 @@ mod tests {
     #[test]
     fn frontend_diagnostics_are_lowered() {
         let mut db = TestDb::default();
-        let key = load_main_source(&mut db, "function main() returns (word) { return true; }\n");
+        let key = load_main_source(
+            &mut db,
+            "pragma solcore;\nfunction main() returns (word) { return true; }\n",
+        );
         let entry = module_id_from_key(&db, &key);
 
         let diagnostics = collect_frontend_diagnostics(&db, entry);
@@ -432,7 +435,7 @@ mod tests {
         let mut db = TestDb::default();
         let key = load_main_source(
             &mut db,
-            "contract Main { function answer() public returns (word) { return 42; } }\n",
+            "pragma solcore;\ncontract Main { function answer() public returns (word) { return 42; } }\n",
         );
         let entry = module_id_from_key(&db, &key);
 
@@ -449,7 +452,10 @@ mod tests {
     #[test]
     fn clean_source_builds_checked_hull() {
         let mut db = TestDb::default();
-        let key = load_main_source(&mut db, "function main() returns (word) { return 42; }\n");
+        let key = load_main_source(
+            &mut db,
+            "pragma solcore;\nfunction main() returns (word) { return 42; }\n",
+        );
         let entry = module_id_from_key(&db, &key);
         let file = db.module_file(entry).expect("entry source");
 
@@ -465,17 +471,17 @@ mod tests {
         let mut db = TestDb::default();
         let entry_key = load_main_source(
             &mut db,
-            "import a; import b;\nfunction main() returns (word) { return 0; }\n",
+            "pragma solcore;\nimport a; import b;\nfunction main() returns (word) { return 0; }\n",
         );
         insert_main_module(
             &mut db,
             "a",
-            "contract Token { function main() public returns (word) { return 1; } }\n",
+            "pragma solcore;\ncontract Token { function main() public returns (word) { return 1; } }\n",
         );
         insert_main_module(
             &mut db,
             "b",
-            "contract Token { function main() public returns (word) { return 2; } }\n",
+            "pragma solcore;\ncontract Token { function main() public returns (word) { return 2; } }\n",
         );
         set_main_module_paths(&mut db, &["main", "a", "b"]);
         let entry = module_id_from_key(&db, &entry_key);

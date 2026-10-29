@@ -1,3 +1,5 @@
+pragma solcore;
+
 function classify(n: integer) returns (integer) {
     match (n) {
         case 0 {

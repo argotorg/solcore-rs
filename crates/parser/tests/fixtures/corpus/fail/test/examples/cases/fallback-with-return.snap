@@ -4,12 +4,12 @@ expression: value
 input_file: crates/parser/tests/fixtures/corpus/fail/test/examples/cases/fallback-with-return.sol
 ---
 error[SC0001]: parse error: unexpected identifier `returns`
- --> /fallback-with-return.sol:7:16
-  |
-6 |
-7 |     fallback() returns (uint256) {
-  |                ^^^^^^^ unexpected token
-8 |         return uint256(0);
-  |
-  = note: expecting `payable`, `public`, or `{`
-  = note: while parsing fallback definition
+  --> /fallback-with-return.sol:9:16
+   |
+ 8 |
+ 9 |     fallback() returns (uint256) {
+   |                ^^^^^^^ unexpected token
+10 |         return uint256(0);
+   |
+   = note: expecting `payable`, `public`, or `{`
+   = note: while parsing fallback definition

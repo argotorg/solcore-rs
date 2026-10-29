@@ -1,3 +1,5 @@
+pragma solcore;
+
 export { Eq, Ord };
 
 trait Eq<a> {}

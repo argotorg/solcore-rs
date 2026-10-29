@@ -1,3 +1,5 @@
+pragma solcore;
+
 /////// Construction
 trait Typedef<abs, rep> {
     function rep(x: abs) returns (rep);

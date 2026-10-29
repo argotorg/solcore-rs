@@ -1,3 +1,5 @@
+pragma solcore;
+
 import * as B from booldef;
 
 function idBool(b: Bool) returns (Bool) {

@@ -660,7 +660,7 @@ mod tests {
     #[test]
     fn did_open_publishes_diagnostics() {
         let mut world = WorldState::new();
-        let source = "function f() returns (word) {\n  return true;\n}\n";
+        let source = "pragma solcore;\nfunction f() returns (word) {\n  return true;\n}\n";
         let outgoing = dispatch(&mut world, &did_open_message(source));
 
         assert_eq!(outgoing.len(), 1);
@@ -679,10 +679,10 @@ mod tests {
     #[test]
     fn did_change_republishes_importer_diagnostics_when_sibling_exports_change() {
         let mut world = WorldState::new();
-        let main = "import {double} from math;\n\nfunction main() returns (word) {\n  return double(21);\n}\n";
-        let math_no_export = "function double(x: word) returns (word) { return x; }\n";
-        let math_with_export =
-            "function double(x: word) returns (word) { return x; }\n\nexport { double };\n";
+        let main = "pragma solcore;\nimport {double} from math;\n\nfunction main() returns (word) {\n  return double(21);\n}\n";
+        let math_no_export =
+            "pragma solcore;\nfunction double(x: word) returns (word) { return x; }\n";
+        let math_with_export = "pragma solcore;\nfunction double(x: word) returns (word) { return x; }\n\nexport { double };\n";
 
         let _ = dispatch(&mut world, &did_open_uri_message(URI, main));
         let opened_math = dispatch(&mut world, &did_open_uri_message(MATH_URI, math_no_export));
@@ -719,7 +719,7 @@ mod tests {
     #[test]
     fn hover_and_document_symbol_requests_return_results() {
         let mut world = WorldState::new();
-        let source = "function main() returns (word) {\n  return 42;\n}\n";
+        let source = "pragma solcore;\nfunction main() returns (word) {\n  return 42;\n}\n";
         let outgoing = dispatch(&mut world, &did_open_message(source));
         assert_eq!(outgoing.len(), 1);
 
@@ -768,12 +768,12 @@ mod tests {
     #[test]
     fn completion_request_returns_items() {
         let mut world = WorldState::new();
-        let source = "function helper() returns (word) { return 1; }\nfunction main(x: word) returns (word) { return x; }\n";
+        let source = "pragma solcore;\nfunction helper() returns (word) { return 1; }\nfunction main(x: word) returns (word) { return x; }\n";
         let outgoing = dispatch(&mut world, &did_open_message(source));
         assert_eq!(outgoing.len(), 1);
         let character = source
             .lines()
-            .nth(1)
+            .nth(2)
             .expect("main line")
             .find("return x")
             .expect("return x")
@@ -787,7 +787,7 @@ mod tests {
                 "method": "textDocument/completion",
                 "params": {
                     "textDocument": { "uri": URI },
-                    "position": { "line": 1, "character": character }
+                    "position": { "line": 2, "character": character }
                 }
             })
             .to_string(),
@@ -807,7 +807,7 @@ mod tests {
     #[test]
     fn references_request_returns_locations() {
         let mut world = WorldState::new();
-        let source = "function id(x: word) returns (word) {\n  return x;\n}\n";
+        let source = "pragma solcore;\nfunction id(x: word) returns (word) {\n  return x;\n}\n";
         let outgoing = dispatch(&mut world, &did_open_message(source));
         assert_eq!(outgoing.len(), 1);
 
@@ -819,7 +819,7 @@ mod tests {
                 "method": "textDocument/references",
                 "params": {
                     "textDocument": { "uri": URI },
-                    "position": { "line": 1, "character": 9 },
+                    "position": { "line": 2, "character": 9 },
                     "context": { "includeDeclaration": true }
                 }
             })
@@ -842,7 +842,7 @@ mod tests {
     #[test]
     fn signature_help_request_returns_active_parameter() {
         let mut world = WorldState::new();
-        let source = "function f(a: word, b: word) returns (word) {\n  return a;\n}\n\nfunction main() returns (word) {\n  return f(1, 2);\n}\n";
+        let source = "pragma solcore;\nfunction f(a: word, b: word) returns (word) {\n  return a;\n}\n\nfunction main() returns (word) {\n  return f(1, 2);\n}\n";
         let outgoing = dispatch(&mut world, &did_open_message(source));
         assert_eq!(outgoing.len(), 1);
 
@@ -854,7 +854,7 @@ mod tests {
                 "method": "textDocument/signatureHelp",
                 "params": {
                     "textDocument": { "uri": URI },
-                    "position": { "line": 5, "character": 13 }
+                    "position": { "line": 6, "character": 13 }
                 }
             })
             .to_string(),
@@ -877,7 +877,7 @@ mod tests {
     #[test]
     fn semantic_tokens_full_request_returns_tokens() {
         let mut world = WorldState::new();
-        let source = "function main(x: word) returns (word) {\n  return x;\n}\n";
+        let source = "pragma solcore;\nfunction main(x: word) returns (word) {\n  return x;\n}\n";
         let outgoing = dispatch(&mut world, &did_open_message(source));
         assert_eq!(outgoing.len(), 1);
 
@@ -903,14 +903,16 @@ mod tests {
             data.len() >= 5 && data.len().is_multiple_of(5),
             "expected packed semantic token data, got {response:#?}"
         );
-        assert_eq!(data[0], 0);
-        assert_eq!(data[1], source.find("main").expect("main") as u32);
+        assert_eq!(data[0], 1);
+        let main_line = source.lines().nth(1).expect("main line");
+        assert_eq!(data[1], main_line.find("main").expect("main") as u32);
     }
 
     #[test]
     fn inlay_hint_request_returns_results() {
         let mut world = WorldState::new();
-        let source = "function main() returns (word) {\n  let x = 42;\n  return x;\n}\n";
+        let source =
+            "pragma solcore;\nfunction main() returns (word) {\n  let x = 42;\n  return x;\n}\n";
         let outgoing = dispatch(&mut world, &did_open_message(source));
         assert_eq!(outgoing.len(), 1);
 
@@ -941,7 +943,7 @@ mod tests {
     #[test]
     fn workspace_symbol_request_returns_matching_symbols() {
         let mut world = WorldState::new();
-        let source = "function target() returns (word) {\n  return 42;\n}\n";
+        let source = "pragma solcore;\nfunction target() returns (word) {\n  return 42;\n}\n";
         let outgoing = dispatch(&mut world, &did_open_message(source));
         assert_eq!(outgoing.len(), 1);
 
@@ -971,7 +973,7 @@ mod tests {
     #[test]
     fn code_action_formatting_folding_and_selection_requests_return_results() {
         let mut world = WorldState::new();
-        let source = "function value() returns (word) { return 1; }\nfunction main() returns (word) {\n/* 😀 */ return vaue();\n}\n";
+        let source = "pragma solcore;\nfunction value() returns (word) { return 1; }\nfunction main() returns (word) {\n/* 😀 */ return vaue();\n}\n";
         let opened = dispatch(&mut world, &did_open_message(source));
         let notification = diagnostic_notification_for_uri(&opened, URI);
         let diagnostic = notification["params"]["diagnostics"]
@@ -1013,8 +1015,8 @@ mod tests {
         assert_eq!(
             edit["range"],
             serde_json::json!({
-                "start": { "line": 2, "character": 16 },
-                "end": { "line": 2, "character": 20 }
+                "start": { "line": 3, "character": 16 },
+                "end": { "line": 3, "character": 20 }
             })
         );
 
@@ -1063,7 +1065,7 @@ mod tests {
                 "method": "textDocument/selectionRange",
                 "params": {
                     "textDocument": { "uri": URI },
-                    "positions": [{ "line": 2, "character": 9 }]
+                    "positions": [{ "line": 3, "character": 9 }]
                 }
             })
             .to_string(),
@@ -1077,8 +1079,9 @@ mod tests {
     #[test]
     fn missing_import_code_action_round_trips_over_wasm_dispatch() {
         let mut world = WorldState::new();
-        let provider = "function value() returns (word) { return 1; }\n\nexport { value };\n";
-        let main = "function main() returns (word) { return value(); }\n";
+        let provider =
+            "pragma solcore;\nfunction value() returns (word) { return 1; }\n\nexport { value };\n";
+        let main = "pragma solcore;\nfunction main() returns (word) { return value(); }\n";
 
         let _ = dispatch(&mut world, &did_open_uri_message(MATH_URI, provider));
         let opened = dispatch(&mut world, &did_open_uri_message(URI, main));
@@ -1121,8 +1124,8 @@ mod tests {
             action["edit"]["changes"][URI][0],
             serde_json::json!({
                 "range": {
-                    "start": { "line": 0, "character": 0 },
-                    "end": { "line": 0, "character": 0 }
+                    "start": { "line": 1, "character": 0 },
+                    "end": { "line": 1, "character": 0 }
                 },
                 "newText": "import {value} from lib.math;\n"
             })
@@ -1133,14 +1136,14 @@ mod tests {
     fn qualified_import_code_actions_round_trip_over_wasm_dispatch() {
         let cases = [
             (
-                "enum Option {None , Some(word)}\nexport { Option(*) };\n",
-                "function main() returns (word) { let option = Option.Some(1); return 1; }\n",
+                "pragma solcore;\nenum Option {None , Some(word)}\nexport { Option(*) };\n",
+                "pragma solcore;\nfunction main() returns (word) { let option = Option.Some(1); return 1; }\n",
                 "Import `Option` from `lib.math`",
                 "import {Option} from lib.math;\n",
             ),
             (
-                "function value() returns (word) { return 1; }\nexport { value };\n",
-                "function main() returns (word) { return math.value(); }\n",
+                "pragma solcore;\nfunction value() returns (word) { return 1; }\nexport { value };\n",
+                "pragma solcore;\nfunction main() returns (word) { return math.value(); }\n",
                 "Import module `math` from `lib.math`",
                 "import lib.math;\n",
             ),
@@ -1193,7 +1196,8 @@ mod tests {
     #[test]
     fn standard_library_missing_import_round_trips_over_wasm_dispatch() {
         let mut world = WorldState::new();
-        let source = "function main() returns (word) { assert(true); return 1; }\n";
+        let source =
+            "pragma solcore;\nfunction main() returns (word) { assert(true); return 1; }\n";
         let opened = dispatch(&mut world, &did_open_message(source));
         let notification = diagnostic_notification_for_uri(&opened, URI);
         let diagnostic = notification["params"]["diagnostics"]
@@ -1240,7 +1244,7 @@ mod tests {
     fn closing_untitled_document_removes_it_from_workspace_symbols() {
         let mut world = WorldState::new();
         let uri = "untitled:Untitled-1";
-        let source = "function ghost() returns (word) { return 42; }\n";
+        let source = "pragma solcore;\nfunction ghost() returns (word) { return 42; }\n";
         let _ = dispatch(&mut world, &did_open_uri_message(uri, source));
 
         let _ = dispatch(
@@ -1276,7 +1280,7 @@ mod tests {
     fn closing_workspace_document_removes_it_from_workspace_symbols() {
         let mut world = WorldState::new();
         let uri = "file:///main/ghost.sol";
-        let source = "function ghost() returns (word) { return 42; }\n";
+        let source = "pragma solcore;\nfunction ghost() returns (word) { return 42; }\n";
         let _ = dispatch(&mut world, &did_open_uri_message(uri, source));
 
         let _ = dispatch(
@@ -1328,7 +1332,10 @@ mod tests {
         );
         let _ = dispatch(
             &mut world,
-            &did_open_uri_message(uri, "function ghost() returns (word) { return 42; }\n"),
+            &did_open_uri_message(
+                uri,
+                "pragma solcore;\nfunction ghost() returns (word) { return 42; }\n",
+            ),
         );
         let _ = dispatch(
             &mut world,
@@ -1367,7 +1374,7 @@ mod tests {
     #[test]
     fn document_highlight_request_returns_highlights() {
         let mut world = WorldState::new();
-        let source = "function id(x: word) returns (word) {\n  return x;\n}\n";
+        let source = "pragma solcore;\nfunction id(x: word) returns (word) {\n  return x;\n}\n";
         let outgoing = dispatch(&mut world, &did_open_message(source));
         assert_eq!(outgoing.len(), 1);
 
@@ -1379,7 +1386,7 @@ mod tests {
                 "method": "textDocument/documentHighlight",
                 "params": {
                     "textDocument": { "uri": URI },
-                    "position": { "line": 1, "character": 9 }
+                    "position": { "line": 2, "character": 9 }
                 }
             })
             .to_string(),
@@ -1405,7 +1412,7 @@ mod tests {
     #[test]
     fn rename_requests_return_workspace_edit_and_prepare_range() {
         let mut world = WorldState::new();
-        let source = "function id(x: word) returns (word) {\n  let y = x;\n  return x;\n}\n";
+        let source = "pragma solcore;\nfunction id(x: word) returns (word) {\n  let y = x;\n  return x;\n}\n";
         let outgoing = dispatch(&mut world, &did_open_message(source));
         assert_eq!(outgoing.len(), 1);
 
@@ -1417,7 +1424,7 @@ mod tests {
                 "method": "textDocument/prepareRename",
                 "params": {
                     "textDocument": { "uri": URI },
-                    "position": { "line": 1, "character": 10 }
+                    "position": { "line": 2, "character": 10 }
                 }
             })
             .to_string(),
@@ -1425,9 +1432,9 @@ mod tests {
         assert_eq!(prepare.len(), 1);
         let prepare_response = parse_message(&prepare[0]);
         assert_eq!(prepare_response["id"], "prepare-rename-1");
-        assert_eq!(prepare_response["result"]["start"]["line"], 1);
+        assert_eq!(prepare_response["result"]["start"]["line"], 2);
         assert_eq!(prepare_response["result"]["start"]["character"], 10);
-        assert_eq!(prepare_response["result"]["end"]["line"], 1);
+        assert_eq!(prepare_response["result"]["end"]["line"], 2);
         assert_eq!(prepare_response["result"]["end"]["character"], 11);
 
         let rename = dispatch(
@@ -1438,7 +1445,7 @@ mod tests {
                 "method": "textDocument/rename",
                 "params": {
                     "textDocument": { "uri": URI },
-                    "position": { "line": 1, "character": 10 },
+                    "position": { "line": 2, "character": 10 },
                     "newName": "renamed"
                 }
             })
@@ -1453,11 +1460,11 @@ mod tests {
             .expect("rename edits array");
         assert_eq!(edits.len(), 3, "expected declaration and two uses");
         assert!(edits.iter().all(|edit| edit["newText"] == "renamed"));
-        assert_eq!(edits[0]["range"]["start"]["line"], 0);
+        assert_eq!(edits[0]["range"]["start"]["line"], 1);
         assert_eq!(edits[0]["range"]["start"]["character"], 12);
-        assert_eq!(edits[1]["range"]["start"]["line"], 1);
+        assert_eq!(edits[1]["range"]["start"]["line"], 2);
         assert_eq!(edits[1]["range"]["start"]["character"], 10);
-        assert_eq!(edits[2]["range"]["start"]["line"], 2);
+        assert_eq!(edits[2]["range"]["start"]["line"], 3);
         assert_eq!(edits[2]["range"]["start"]["character"], 9);
     }
 

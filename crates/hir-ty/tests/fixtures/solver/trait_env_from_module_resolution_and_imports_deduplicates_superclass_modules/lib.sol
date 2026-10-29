@@ -1,3 +1,5 @@
+pragma solcore;
+
 export { Parent, Child };
 
 trait Parent<a> {}

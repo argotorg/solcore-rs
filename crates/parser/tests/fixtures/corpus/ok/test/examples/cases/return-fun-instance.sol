@@ -1,3 +1,5 @@
+pragma solcore;
+
 // Instance member returning a function with CORRECT annotations.
 // The compiled-away validation pass used to check this; the single pass must too.
 trait CtFun<t> {

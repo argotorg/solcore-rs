@@ -1,3 +1,5 @@
+pragma solcore;
+
 // comptime let bound to a runtime function parameter: must fail comptime
 // evaluation. The interesting question is span quality + cascade volume.
 import std;

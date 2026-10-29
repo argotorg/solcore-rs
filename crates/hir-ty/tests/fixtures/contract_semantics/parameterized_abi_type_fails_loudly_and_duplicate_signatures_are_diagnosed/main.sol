@@ -1,3 +1,5 @@
+pragma solcore;
+
 enum Mapping<a, b> {
     Mapping
 }

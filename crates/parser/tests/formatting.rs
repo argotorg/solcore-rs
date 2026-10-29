@@ -34,17 +34,18 @@ fn run_with_fixture_stack(assertion: impl FnOnce() + Send + 'static) {
 
 #[test]
 fn formats_declarations_types_and_control_flow() {
-    let source = "import{A,B}from lib;export{A};enum E<a>{A(a),B}\nfunction f<a>(x:Pair<a,word>)returns(word){for(let i=0;i<3;i+=1){if(x>0){continue;}else{break;}}return x?1:2;}";
+    let source = "pragma solcore;\nimport{A,B}from lib;export{A};enum E<a>{A(a),B}\nfunction f<a>(x:Pair<a,word>)returns(word){for(let i=0;i<3;i+=1){if(x>0){continue;}else{break;}}return x?1:2;}";
     assert_eq!(
         format(source),
-        "import { A, B } from lib;\nexport { A };\nenum E<a> {\n    A(a),\n    B\n}\nfunction f<a>(x: Pair<a, word>) returns (word) {\n    for (let i = 0; i < 3; i += 1) {\n        if (x > 0) {\n            continue;\n        } else {\n            break;\n        }\n    }\n    return x ? 1 : 2;\n}\n"
+        "pragma solcore;\nimport { A, B } from lib;\nexport { A };\nenum E<a> {\n    A(a),\n    B\n}\nfunction f<a>(x: Pair<a, word>) returns (word) {\n    for (let i = 0; i < 3; i += 1) {\n        if (x > 0) {\n            continue;\n        } else {\n            break;\n        }\n    }\n    return x ? 1 : 2;\n}\n"
     );
     assert_stable(source);
 }
 
 #[test]
 fn formats_unary_minus_without_changing_operator_precedence() {
-    let source = "function f(x:word){let low=-128;let hex=-0x80;return -x*2- -(-x);}";
+    let source =
+        "pragma solcore; function f(x:word){let low=-128;let hex=-0x80;return -x*2- -(-x);}";
     let formatted = format(source);
     assert!(formatted.contains("let low = -128;"), "{formatted}");
     assert!(formatted.contains("let hex = -0x80;"), "{formatted}");
@@ -54,10 +55,10 @@ fn formats_unary_minus_without_changing_operator_precedence() {
 
 #[test]
 fn formats_yul_without_semicolon_boundaries() {
-    let source = "function f(){assembly{let x:=0 x:=add(x,1) for{let i:=0}lt(i,3){i:=add(i,1)}{mstore(i,x)} switch x case 0{leave}default{revert(0,0)}}}";
+    let source = "pragma solcore; function f(){assembly{let x:=0 x:=add(x,1) for{let i:=0}lt(i,3){i:=add(i,1)}{mstore(i,x)} switch x case 0{leave}default{revert(0,0)}}}";
     assert_eq!(
         format(source),
-        "function f() {\n    assembly {\n        let x := 0\n        x := add(x, 1)\n        for {\n            let i := 0\n        } lt(i, 3) {\n            i := add(i, 1)\n        } {\n            mstore(i, x)\n        }\n        switch x\n        case 0 {\n            leave\n        }\n        default {\n            revert(0, 0)\n        }\n    }\n}\n"
+        "pragma solcore;\nfunction f() {\n    assembly {\n        let x := 0\n        x := add(x, 1)\n        for {\n            let i := 0\n        } lt(i, 3) {\n            i := add(i, 1)\n        } {\n            mstore(i, x)\n        }\n        switch x\n        case 0 {\n            leave\n        }\n        default {\n            revert(0, 0)\n        }\n    }\n}\n"
     );
     assert_stable(source);
 }
@@ -87,27 +88,28 @@ fn preserves_tokens_and_comment_payloads() {
 #[test]
 fn keeps_empty_for_clauses_inline() {
     assert_eq!(
-        format("function f(){for(;true;){break;}}"),
-        "function f() {\n    for (; true;) {\n        break;\n    }\n}\n"
+        format("pragma solcore; function f(){for(;true;){break;}}"),
+        "pragma solcore;\nfunction f() {\n    for (; true;) {\n        break;\n    }\n}\n"
     );
 }
 
 #[test]
 fn formats_unchecked_blocks_like_blocks() {
-    let source = "function f(x:word)returns(word){unchecked{let y=x+x;x-=y;return x;}}";
+    let source =
+        "pragma solcore; function f(x:word)returns(word){unchecked{let y=x+x;x-=y;return x;}}";
     assert_eq!(
         format(source),
-        "function f(x: word) returns (word) {\n    unchecked {\n        let y = x + x;\n        x -= y;\n        return x;\n    }\n}\n"
+        "pragma solcore;\nfunction f(x: word) returns (word) {\n    unchecked {\n        let y = x + x;\n        x -= y;\n        return x;\n    }\n}\n"
     );
     assert_stable(source);
 }
 
 #[test]
 fn keeps_shift_operator_tokens_together() {
-    let source = "function f(x:word,y:Pair<word,Pair<word,word>>)returns(word){let a=x<<1;x>>=a;x<<=1;let p=@P<Q<word>>;return x>>a>y.fst?a:x>=a?1:0;}";
+    let source = "pragma solcore; function f(x:word,y:Pair<word,Pair<word,word>>)returns(word){let a=x<<1;x>>=a;x<<=1;let p=@P<Q<word>>;return x>>a>y.fst?a:x>=a?1:0;}";
     assert_eq!(
         format(source),
-        "function f(x: word, y: Pair<word, Pair<word, word>>) returns (word) {\n    let a = x << 1;\n    x >>= a;\n    x <<= 1;\n    let p = @P<Q<word>>;\n    return x >> a > y.fst ? a : x >= a ? 1 : 0;\n}\n"
+        "pragma solcore;\nfunction f(x: word, y: Pair<word, Pair<word, word>>) returns (word) {\n    let a = x << 1;\n    x >>= a;\n    x <<= 1;\n    let p = @P<Q<word>>;\n    return x >> a > y.fst ? a : x >= a ? 1 : 0;\n}\n"
     );
     assert_stable(source);
 }
@@ -115,10 +117,10 @@ fn keeps_shift_operator_tokens_together() {
 #[test]
 fn rejects_invalid_input_without_returning_partial_output() {
     for source in [
-        "function f(){let x=;}",
+        "pragma solcore; function f(){let x=;}",
         "function f(){\"unterminated",
         "/* unterminated",
-        "function f(){let x=lam(){let y=;};}",
+        "pragma solcore; function f(){let x=lam(){let y=;};}",
     ] {
         assert!(
             format_source(source, &FormatOptions::default()).is_err(),
@@ -135,7 +137,7 @@ fn respects_options_for_whitespace_on_the_final_line() {
         trim_trailing_whitespace: false,
         ..FormatOptions::default()
     };
-    for source in ["function f() {}\n   ", "\n   "] {
+    for source in ["pragma solcore;\nfunction f() {}\n   ", "\n   "] {
         assert_eq!(format_source(source, &options).unwrap(), source);
         options.insert_final_newline = true;
         let expected = format!("{source}\n");
@@ -147,8 +149,7 @@ fn respects_options_for_whitespace_on_the_final_line() {
 
 #[test]
 fn distinguishes_constructor_dots_and_comparison_parentheses() {
-    let source =
-        "function f(x:M.T){match(x){case comptime .A{return .B(x.field);}case .C{return x>(1);}}}";
+    let source = "pragma solcore; function f(x:M.T){match(x){case comptime .A{return .B(x.field);}case .C{return x>(1);}}}";
     let formatted = format(source);
     assert!(formatted.contains("case comptime .A {"));
     assert!(formatted.contains("return .B(x.field);"));
@@ -158,11 +159,10 @@ fn distinguishes_constructor_dots_and_comparison_parentheses() {
 
 #[test]
 fn retains_explicit_continuation_lines_and_blank_line_separators() {
-    let source =
-        "function f(\nx: word,\ny: word\n) returns (word) {\n\nreturn add(\nx,\ny\n);\n}\n\n\n";
+    let source = "pragma solcore;\nfunction f(\nx: word,\ny: word\n) returns (word) {\n\nreturn add(\nx,\ny\n);\n}\n\n\n";
     assert_eq!(
         format(source),
-        "function f(\n    x: word,\n    y: word\n) returns (word) {\n\n    return add(\n        x,\n        y\n    );\n}\n"
+        "pragma solcore;\nfunction f(\n    x: word,\n    y: word\n) returns (word) {\n\n    return add(\n        x,\n        y\n    );\n}\n"
     );
     assert_stable(source);
 }

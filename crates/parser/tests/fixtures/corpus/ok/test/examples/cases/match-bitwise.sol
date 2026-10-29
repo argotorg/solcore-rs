@@ -1,3 +1,5 @@
+pragma solcore;
+
 import * from std;
 import { mstore } from std.opcodes;
 pragma no-patterson-condition;

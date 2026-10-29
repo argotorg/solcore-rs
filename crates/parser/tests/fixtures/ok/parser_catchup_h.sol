@@ -1,3 +1,5 @@
+pragma solcore;
+
 enum First {
     First(word)
 }

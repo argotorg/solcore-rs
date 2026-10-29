@@ -1,3 +1,5 @@
+pragma solcore;
+
 enum address {
     address(word)
 }

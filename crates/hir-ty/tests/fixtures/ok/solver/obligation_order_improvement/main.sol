@@ -1,3 +1,5 @@
+pragma solcore;
+
 // Regression test for fixpoint obligation solving with class-argument
 // improvement.
 //

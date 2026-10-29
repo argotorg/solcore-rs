@@ -1,3 +1,5 @@
+pragma solcore;
+
 contract ComptimeSyntax {
 
     function f(comptime x: word) returns (comptime<word>) {

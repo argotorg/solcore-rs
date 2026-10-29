@@ -1,3 +1,5 @@
+pragma solcore;
+
 // Error: mutually recursive free functions without annotations
 function foo(x: word) {
     return bar(x);

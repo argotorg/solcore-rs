@@ -1,3 +1,5 @@
+pragma solcore;
+
 function and(x: word, y: word) returns (bool) {
     return true;
 }

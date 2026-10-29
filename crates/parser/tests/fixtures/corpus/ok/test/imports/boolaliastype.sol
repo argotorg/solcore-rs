@@ -1,3 +1,5 @@
+pragma solcore;
+
 import * as B from booldef;
 
 function fromAliasType(b: B.Bool) returns (B.Bool) {

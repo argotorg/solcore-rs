@@ -1,3 +1,5 @@
+pragma solcore;
+
 // test multiple contract fields
 import * from std;
 

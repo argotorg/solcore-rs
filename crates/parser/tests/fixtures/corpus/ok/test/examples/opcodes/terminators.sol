@@ -1,3 +1,5 @@
+pragma solcore;
+
 // Terminators (stop, invalid, selfdestruct, revert) never return control, so
 // a bare 'assembly' block ending in one is allowed as the last statement of a
 // value-returning function — its polymorphic result unifies with any return

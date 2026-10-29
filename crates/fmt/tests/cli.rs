@@ -7,8 +7,8 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-const SOURCE: &str = "function main() returns(word){return 0;}";
-const FORMATTED: &str = "function main() returns (word) {\n    return 0;\n}\n";
+const SOURCE: &str = "pragma solcore; function main() returns(word){return 0;}";
+const FORMATTED: &str = "pragma solcore;\nfunction main() returns (word) {\n    return 0;\n}\n";
 
 fn formatter() -> Command {
     Command::new(env!("CARGO_BIN_EXE_solcore-fmt"))
@@ -98,7 +98,7 @@ fn stdin_formats_with_default_and_custom_indentation() {
     assert_success(&output);
     assert_eq!(
         output.stdout,
-        b"function main() returns (word) {\n  return 0;\n}\n"
+        b"pragma solcore;\nfunction main() returns (word) {\n  return 0;\n}\n"
     );
 }
 
@@ -106,7 +106,7 @@ fn stdin_formats_with_default_and_custom_indentation() {
 fn stdout_preserves_input_files_and_input_order() {
     let dir = TestDir::new();
     let first = dir.source("first.sol", SOURCE);
-    let second = dir.source("second.sol", "function second(){return 1;}");
+    let second = dir.source("second.sol", "pragma solcore; function second(){return 1;}");
     let output = formatter().arg(&first).arg(&second).output().unwrap();
     assert_success(&output);
     let stdout = String::from_utf8(output.stdout).unwrap();
@@ -115,7 +115,7 @@ fn stdout_preserves_input_files_and_input_order() {
     assert_eq!(fs::read_to_string(first).unwrap(), SOURCE);
     assert_eq!(
         fs::read_to_string(second).unwrap(),
-        "function second(){return 1;}"
+        "pragma solcore; function second(){return 1;}"
     );
 }
 

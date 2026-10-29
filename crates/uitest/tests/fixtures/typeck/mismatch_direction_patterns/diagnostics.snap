@@ -4,72 +4,72 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/mismatch_direction_patterns/main.sol
 ---
 error[SC0201]: type mismatch: expected bool, found Box
-  --> /main/main.sol:10:14
+  --> /main/main.sol:12:14
    |
- 9 |     match (x) {
-10 |         case Box(y) {}
+11 |     match (x) {
+12 |         case Box(y) {}
    |              ^^^^^^ expression has mismatched type
-11 |         case _ {}
+13 |         case _ {}
    |
    = note: expected type: bool
    = note: found type: Box
 ---
 
 error[SC0201]: type mismatch: expected bool, found Empty
-  --> /main/main.sol:17:14
+  --> /main/main.sol:19:14
    |
-16 |     match (x) {
-17 |         case Empty {}
+18 |     match (x) {
+19 |         case Empty {}
    |              ^^^^^ expression has mismatched type
-18 |         case _ {}
+20 |         case _ {}
    |
    = note: expected type: bool
    = note: found type: Empty
 ---
 
 error[SC0201]: type mismatch: expected bool, found numeric
-  --> /main/main.sol:24:14
+  --> /main/main.sol:26:14
    |
-23 |     match (x) {
-24 |         case 1 {}
+25 |     match (x) {
+26 |         case 1 {}
    |              ^ expression has mismatched type
-25 |         case _ {}
+27 |         case _ {}
    |
    = note: expected type: bool
    = note: found type: numeric
 ---
 
 error[SC0201]: type mismatch: expected bool, found numeric
-  --> /main/main.sol:31:14
+  --> /main/main.sol:33:14
    |
-30 |     match (x) {
-31 |         case 0x1 {}
+32 |     match (x) {
+33 |         case 0x1 {}
    |              ^^^ expression has mismatched type
-32 |         case _ {}
+34 |         case _ {}
    |
    = note: expected type: bool
    = note: found type: numeric
 ---
 
 error[SC0201]: type mismatch: expected bool, found tuple
-  --> /main/main.sol:38:14
+  --> /main/main.sol:40:14
    |
-37 |     match (x) {
-38 |         case (a, b) {}
+39 |     match (x) {
+40 |         case (a, b) {}
    |              ^^^^^^ expression has mismatched type
-39 |         case _ {}
+41 |         case _ {}
    |
    = note: expected type: bool
    = note: found type: tuple
 ---
 
 error[SC0201]: type mismatch: expected word, found bool
-  --> /main/main.sol:45:18
+  --> /main/main.sol:47:18
    |
-44 |     match (x) {
-45 |         case Box(true) {}
+46 |     match (x) {
+47 |         case Box(true) {}
    |                  ^^^^ expression has mismatched type
-46 |         case _ {}
+48 |         case _ {}
    |
    = note: expected type: word
    = note: found type: bool

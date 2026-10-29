@@ -1,3 +1,5 @@
+pragma solcore;
+
 // Materialize a string literal into a runtime memory(string).
 // The literal is comptime; Str.fromString at memory(string) lowers to a
 // per-literal allocator that writes the length and characters into memory.

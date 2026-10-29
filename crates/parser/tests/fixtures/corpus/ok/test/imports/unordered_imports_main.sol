@@ -1,3 +1,5 @@
+pragma solcore;
+
 export { main };
 
 pragma no-patterson-condition;

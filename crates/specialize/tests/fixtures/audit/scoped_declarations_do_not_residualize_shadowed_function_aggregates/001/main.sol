@@ -1,3 +1,5 @@
+pragma solcore;
+
 //~ specialize: loader bare
 
 function identity(value: word) returns (word) {

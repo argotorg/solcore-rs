@@ -4,11 +4,11 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/specialize/polyrec_type_size_fuel/main.sol
 ---
 error[SC0412]: specialization type size exceeded at 4096 type nodes
- --> /main/main.sol:2:12
+ --> /main/main.sol:4:12
   |
-1 | function go<a>(x: a) returns (word) {
-2 |     return go((x, x));
+3 | function go<a>(x: a) returns (word) {
+4 |     return go((x, x));
   |            ^^^^^^^^^^ specialization type size limit reached here
-3 | }
+5 | }
   |
   = note: help: simplify the specialized type or raise --pe-max-type-nodes when using solcore-driver

@@ -1,3 +1,5 @@
+pragma solcore;
+
 enum bytes32 {
     bytes32(word)
 }

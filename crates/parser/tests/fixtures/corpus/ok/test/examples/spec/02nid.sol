@@ -1,3 +1,5 @@
+pragma solcore;
+
 contract Id1 {
     function id(x: word) public returns (word) {
         return x;

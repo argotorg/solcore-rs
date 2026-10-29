@@ -1,3 +1,5 @@
+pragma solcore;
+
 enum Foo<a> {
     Foo(word)
 }

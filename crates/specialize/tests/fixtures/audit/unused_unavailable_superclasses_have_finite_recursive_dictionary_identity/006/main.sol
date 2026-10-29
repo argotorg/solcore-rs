@@ -1,3 +1,5 @@
+pragma solcore;
+
 //~ specialize: loader bare
 //~ specialize: max-depth 16
 //~ specialize: diagnostic missing-evidence

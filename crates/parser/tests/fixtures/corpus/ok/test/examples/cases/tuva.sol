@@ -1,3 +1,5 @@
+pragma solcore;
+
 // TUVA: TUple-based Value Access
 /*
 # Types and classes for assignemnt desugaring using

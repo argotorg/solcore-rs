@@ -1,3 +1,5 @@
+pragma solcore;
+
 // An element type with no `StorageCopy` instance cannot be the element of a
 // storage array: `CanStore` for `storage(array(t))` -- which every field access
 // goes through -- requires `t:StorageCopy`. Rejecting this at compile time is

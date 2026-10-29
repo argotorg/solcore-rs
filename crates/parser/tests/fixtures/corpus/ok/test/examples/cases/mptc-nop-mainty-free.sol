@@ -1,3 +1,5 @@
+pragma solcore;
+
 // Documents the NOP-A guard in resolveMPTCsFromPreds.
 //
 // The guard `null (freetv mainTy')` is false when the main type variable

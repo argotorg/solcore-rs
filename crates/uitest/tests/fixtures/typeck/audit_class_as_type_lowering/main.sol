@@ -1,3 +1,5 @@
+pragma solcore;
+
 trait C<a> {}
 
 function class_annotation() returns (word) {

@@ -4,9 +4,11 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/parse/missing_semicolon/main.sol
 ---
 error[SC0001]: parse error: unexpected end of input
- --> /main/main.sol:1:18
+ --> /main/main.sol:3:18
   |
-1 | import core.math
+1 | pragma solcore;
+2 |
+3 | import core.math
   |                 ^ unexpected token
   |
   = note: expecting `.`, or `;`

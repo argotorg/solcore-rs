@@ -163,7 +163,7 @@ mod tests {
 
     #[test]
     fn renaming_parameter_edits_declaration_and_uses() {
-        let source = "function id(x: word) returns (word) {\n  let y = x;\n  return x;\n}\n";
+        let source = "pragma solcore;\nfunction id(x: word) returns (word) {\n  let y = x;\n  return x;\n}\n";
         let (world, uri) = world_with_main(source);
         let line_index = world.line_index(&uri).expect("line index");
         let declaration = source.find("x: word").expect("declaration") as u32;
@@ -191,7 +191,7 @@ mod tests {
 
     #[test]
     fn prepare_rename_returns_user_symbol_range_but_not_builtin_or_keyword() {
-        let source = "function id(x: word) returns (word) {\n  return x;\n}\n";
+        let source = "pragma solcore;\nfunction id(x: word) returns (word) {\n  return x;\n}\n";
         let (world, uri) = world_with_main(source);
         let line_index = world.line_index(&uri).expect("line index");
         let use_offset = (source.find("return x").expect("use") + "return ".len()) as u32;
@@ -219,7 +219,7 @@ mod tests {
 
     #[test]
     fn rename_rejects_invalid_new_name() {
-        let source = "function id(x: word) returns (word) {\n  return x;\n}\n";
+        let source = "pragma solcore;\nfunction id(x: word) returns (word) {\n  return x;\n}\n";
         let (world, uri) = world_with_main(source);
         let line_index = world.line_index(&uri).expect("line index");
         let use_offset = (source.find("return x").expect("use") + "return ".len()) as u32;
@@ -235,10 +235,8 @@ mod tests {
 
     #[test]
     fn renaming_exported_function_edits_import_and_export_names() {
-        let main =
-            "import {double} from math;\nfunction main() returns (word) { return double(21); }\n";
-        let math =
-            "function double(x: word) returns (word) { return x + x; }\nexport { double };\n";
+        let main = "pragma solcore;\nimport {double} from math;\nfunction main() returns (word) { return double(21); }\n";
+        let math = "pragma solcore;\nfunction double(x: word) returns (word) { return x + x; }\nexport { double };\n";
         let (world, main_uri, math_uri) = world_with_main_and_math(main, math);
         let main_index = world.line_index(&main_uri).expect("main line index");
         let math_index = world.line_index(&math_uri).expect("math line index");
@@ -279,7 +277,7 @@ mod tests {
 
     #[test]
     fn embedded_std_symbol_is_not_offered_for_rename() {
-        let source = "import {addWord} from std;\nfunction main() returns (word) { return addWord(1, 2); }\n";
+        let source = "pragma solcore;\nimport {addWord} from std;\nfunction main() returns (word) { return addWord(1, 2); }\n";
         let (world, uri) = world_with_main(source);
         let line_index = world.line_index(&uri).expect("line index");
         let call = source.rfind("addWord").expect("call") as u32;
@@ -294,9 +292,8 @@ mod tests {
         let mut world = WorldState::new();
         let main_uri = Url::parse("file:///main/main.sol").expect("main uri");
         let math_uri = Url::parse("file:///main/math.sol").expect("math uri");
-        let main =
-            "import {double} from math;\nfunction main() returns (word) { return double(21); }\n";
-        let math = "function double(x: word) returns (word) { return x + x; }\nfunction local() returns (word) { return double(2); }\nexport { double };\n";
+        let main = "pragma solcore;\nimport {double} from math;\nfunction main() returns (word) { return double(21); }\n";
+        let math = "pragma solcore;\nfunction double(x: word) returns (word) { return x + x; }\nfunction local() returns (word) { return double(2); }\nexport { double };\n";
         assert!(world.open_document(math_uri.clone(), math.to_owned()));
         assert!(world.open_document(main_uri.clone(), main.to_owned()));
         let main_index = world.line_index(&main_uri).expect("main line index");
@@ -340,8 +337,8 @@ mod tests {
 
     #[test]
     fn renaming_selected_import_alias_only_edits_local_alias_uses() {
-        let main = "import {double as twice} from math;\nfunction main() returns (word) { return twice(21); }\n";
-        let math = "function double(x: word) returns (word) { return x; }\nexport { double };\n";
+        let main = "pragma solcore;\nimport {double as twice} from math;\nfunction main() returns (word) { return twice(21); }\n";
+        let math = "pragma solcore;\nfunction double(x: word) returns (word) { return x; }\nexport { double };\n";
         let (world, main_uri, math_uri) = world_with_main_and_math(main, math);
         let index = world.line_index(&main_uri).expect("main index");
         let alias = main.find("twice").expect("alias declaration") as u32;
@@ -372,9 +369,9 @@ mod tests {
 
     #[test]
     fn renaming_explicit_module_alias_edits_alias_and_qualifiers() {
-        let main =
-            "import * as M from math;\nfunction main() returns (word) { return M.value(); }\n";
-        let math = "function value() returns (word) { return 1; }\nexport { value };\n";
+        let main = "pragma solcore;\nimport * as M from math;\nfunction main() returns (word) { return M.value(); }\n";
+        let math =
+            "pragma solcore;\nfunction value() returns (word) { return 1; }\nexport { value };\n";
         let (world, main_uri, _) = world_with_main_and_math(main, math);
         let index = world.line_index(&main_uri).expect("main index");
         let alias = main.find("M from").expect("alias declaration") as u32;
@@ -403,8 +400,9 @@ mod tests {
 
     #[test]
     fn renaming_module_alias_updates_type_and_pattern_qualifiers() {
-        let main = "import * as M from math;\nfunction unwrap(token: M.Token) returns (word) {\n  match (token) {\n  case M.Token.Ok(value) { return value; }\ncase M.Token.Err(value) { return value; }}\n}\n";
-        let model = "enum Token {Ok(word) , Err(word)}\nexport { Token(Ok, Err) };\n";
+        let main = "pragma solcore;\nimport * as M from math;\nfunction unwrap(token: M.Token) returns (word) {\n  match (token) {\n  case M.Token.Ok(value) { return value; }\ncase M.Token.Err(value) { return value; }}\n}\n";
+        let model =
+            "pragma solcore;\nenum Token {Ok(word) , Err(word)}\nexport { Token(Ok, Err) };\n";
         let (world, main_uri, _) = world_with_main_and_math(main, model);
         let index = world.line_index(&main_uri).expect("main index");
         let declaration = main.find("M from").expect("alias declaration") as u32;
@@ -437,8 +435,8 @@ mod tests {
 
     #[test]
     fn exported_selected_alias_is_not_offered_an_incomplete_text_rename() {
-        let main = "import {double as twice} from math;\nexport { twice };\nfunction main() returns (word) { return twice(21); }\n";
-        let math = "function double(x: word) returns (word) { return x; }\nexport { double };\n";
+        let main = "pragma solcore;\nimport {double as twice} from math;\nexport { twice };\nfunction main() returns (word) { return twice(21); }\n";
+        let math = "pragma solcore;\nfunction double(x: word) returns (word) { return x; }\nexport { double };\n";
         let (world, main_uri, _) = world_with_main_and_math(main, math);
         let index = world.line_index(&main_uri).expect("main index");
         let use_offset = main.rfind("twice").expect("alias use") as u32;
@@ -455,12 +453,11 @@ mod tests {
         let facade_uri = Url::parse("file:///main/facade.sol").expect("facade uri");
         let main_uri = Url::parse("file:///main/main.sol").expect("main uri");
         let consumer_uri = Url::parse("file:///main/consumer.sol").expect("consumer uri");
-        let util = "function value() returns (word) { return 1; }\nexport { value };\n";
-        let facade = "export util as Tools;\n";
-        let main =
-            "import facade;\nfunction main() returns (word) { return facade.Tools.value(); }\n";
-        let consumer =
-            "import facade;\nfunction consume() returns (word) { return facade.Tools.value(); }\n";
+        let util =
+            "pragma solcore;\nfunction value() returns (word) { return 1; }\nexport { value };\n";
+        let facade = "pragma solcore;\nexport util as Tools;\n";
+        let main = "pragma solcore;\nimport facade;\nfunction main() returns (word) { return facade.Tools.value(); }\n";
+        let consumer = "pragma solcore;\nimport facade;\nfunction consume() returns (word) { return facade.Tools.value(); }\n";
         assert!(world.open_document(util_uri, util.to_owned()));
         assert!(world.open_document(facade_uri.clone(), facade.to_owned()));
         assert!(world.open_document(main_uri.clone(), main.to_owned()));
@@ -514,10 +511,9 @@ mod tests {
         let math_uri = Url::parse("file:///main/math.sol").expect("math uri");
         let bridge_uri = Url::parse("file:///main/bridge.sol").expect("bridge uri");
         let main_uri = Url::parse("file:///main/main.sol").expect("main uri");
-        let math = "function double(x: word) returns (word) { return x; }\nexport { double };\n";
-        let bridge = "import {double as twice} from math;\nexport { twice };\n";
-        let main =
-            "import {twice} from bridge;\nfunction main() returns (word) { return twice(1); }\n";
+        let math = "pragma solcore;\nfunction double(x: word) returns (word) { return x; }\nexport { double };\n";
+        let bridge = "pragma solcore;\nimport {double as twice} from math;\nexport { twice };\n";
+        let main = "pragma solcore;\nimport {twice} from bridge;\nfunction main() returns (word) { return twice(1); }\n";
         assert!(world.open_document(math_uri.clone(), math.to_owned()));
         assert!(world.open_document(bridge_uri, bridge.to_owned()));
         assert!(world.open_document(main_uri, main.to_owned()));
@@ -540,12 +536,12 @@ mod tests {
         let left_math = Url::from_file_path(left_path.join("math.sol")).expect("left math");
         let right_main = Url::from_file_path(right_path.join("main.sol")).expect("right main");
         let right_math = Url::from_file_path(right_path.join("math.sol")).expect("right math");
-        let left_source =
-            "import {value} from lib.math;\nfunction left() returns (word) { return value(); }\n";
-        let right_source =
-            "import {value} from lib.math;\nfunction right() returns (word) { return value(); }\n";
-        let left_library = "function value() returns (word) { return 1; }\nexport { value };\n";
-        let right_library = "function value() returns (word) { return 2; }\nexport { value };\n";
+        let left_source = "pragma solcore;\nimport {value} from lib.math;\nfunction left() returns (word) { return value(); }\n";
+        let right_source = "pragma solcore;\nimport {value} from lib.math;\nfunction right() returns (word) { return value(); }\n";
+        let left_library =
+            "pragma solcore;\nfunction value() returns (word) { return 1; }\nexport { value };\n";
+        let right_library =
+            "pragma solcore;\nfunction value() returns (word) { return 2; }\nexport { value };\n";
         let mut world = WorldState::new();
         world.load_workspace_roots([
             (
@@ -589,10 +585,11 @@ mod tests {
         let facade_uri = Url::parse("file:///main/facade.sol").expect("facade uri");
         let bridge_uri = Url::parse("file:///main/bridge.sol").expect("bridge uri");
         let main_uri = Url::parse("file:///main/main.sol").expect("main uri");
-        let util = "function value() returns (word) { return 1; }\nexport { value };\n";
-        let facade = "export util as Tools;\n";
-        let bridge = "export facade;\n";
-        let main = "import bridge;\nfunction main() returns (word) { return bridge.facade.Tools.value(); }\n";
+        let util =
+            "pragma solcore;\nfunction value() returns (word) { return 1; }\nexport { value };\n";
+        let facade = "pragma solcore;\nexport util as Tools;\n";
+        let bridge = "pragma solcore;\nexport facade;\n";
+        let main = "pragma solcore;\nimport bridge;\nfunction main() returns (word) { return bridge.facade.Tools.value(); }\n";
         assert!(world.open_document(util_uri, util.to_owned()));
         assert!(world.open_document(facade_uri.clone(), facade.to_owned()));
         assert!(world.open_document(bridge_uri.clone(), bridge.to_owned()));
@@ -633,10 +630,10 @@ mod tests {
         let util_uri = Url::parse("file:///main/util.sol").expect("util uri");
         let facade_uri = Url::parse("file:///main/facade.sol").expect("facade uri");
         let main_uri = Url::parse("file:///main/main.sol").expect("main uri");
-        let util = "function value() returns (word) { return 1; }\nexport { value };\n";
-        let facade = "export util;\n";
-        let main =
-            "import facade;\nfunction main() returns (word) { return facade.util.value(); }\n";
+        let util =
+            "pragma solcore;\nfunction value() returns (word) { return 1; }\nexport { value };\n";
+        let facade = "pragma solcore;\nexport util;\n";
+        let main = "pragma solcore;\nimport facade;\nfunction main() returns (word) { return facade.util.value(); }\n";
         assert!(world.open_document(util_uri, util.to_owned()));
         assert!(world.open_document(facade_uri, facade.to_owned()));
         assert!(world.open_document(main_uri.clone(), main.to_owned()));
@@ -653,8 +650,9 @@ mod tests {
         let mut world = WorldState::new();
         let main_uri = Url::parse("file:///main/main.sol").expect("main uri");
         let model_uri = Url::parse("file:///main/model.sol").expect("model uri");
-        let main = "import {Token} from model;\nfunction make(x: word) returns (Token) { return Token.Ok(x); }\n";
-        let model = "enum Token {Ok(word) , Err(word)}\nexport { Token(Ok, Err) };\n";
+        let main = "pragma solcore;\nimport {Token} from model;\nfunction make(x: word) returns (Token) { return Token.Ok(x); }\n";
+        let model =
+            "pragma solcore;\nenum Token {Ok(word) , Err(word)}\nexport { Token(Ok, Err) };\n";
         assert!(world.open_document(main_uri.clone(), main.to_owned()));
         assert!(world.open_document(model_uri.clone(), model.to_owned()));
         let main_index = world.line_index(&main_uri).expect("main index");

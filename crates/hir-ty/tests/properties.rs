@@ -14,7 +14,7 @@ fn run_frontend(source: &str) {
 
 fn generated_program(literal: u64, depth: usize, result_kind: u8) -> String {
     let mut source = format!(
-        "function main(value : word) returns (word) {{\n  let value0 : word = {literal};\n"
+        "pragma solcore;\nfunction main(value : word) returns (word) {{\n  let value0 : word = {literal};\n"
     );
     for index in 1..=depth {
         source.push_str(&format!(

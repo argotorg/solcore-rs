@@ -1,3 +1,5 @@
+pragma solcore;
+
 function concatLit(x: word) returns (word) {
     return x;
 }

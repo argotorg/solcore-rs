@@ -1,3 +1,5 @@
+pragma solcore;
+
 //~ layout: finite
 enum Box<a> {
     Box(a)

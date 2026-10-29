@@ -1,3 +1,5 @@
+pragma solcore;
+
 import { Token, mkErr } from hidden_ctor_lib;
 
 function main() returns (word) {

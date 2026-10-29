@@ -1,3 +1,5 @@
+pragma solcore;
+
 // Distinct string literals get distinct allocators; identical literals share
 // one (dedup by content).  "alpha" is used twice and "beta" once, so the
 // generated hull must contain exactly two __strlit_* allocators.

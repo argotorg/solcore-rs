@@ -1,3 +1,5 @@
+pragma solcore;
+
 import wildA;
 
 function main() returns (word) {

@@ -1,3 +1,5 @@
+pragma solcore;
+
 import * from std;
 type Units = calldata<array<()>>;
 contract C {

@@ -1,3 +1,5 @@
+pragma solcore;
+
 import * from lib;
 enum Decoy {
     Hidden(word)

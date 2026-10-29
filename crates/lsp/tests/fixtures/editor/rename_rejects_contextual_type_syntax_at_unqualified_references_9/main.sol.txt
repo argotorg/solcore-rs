@@ -1,1 +1,3 @@
+pragma solcore;
+
 type Original(a) = a; function id(value: Original<word>) returns (Original<word>) { return value; }

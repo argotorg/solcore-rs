@@ -1,1 +1,3 @@
+pragma solcore;
+
 function main(renamed: word) returns (word) { let f = lam () -> word { let renamed: word = renamed; return renamed; }; return f(); }

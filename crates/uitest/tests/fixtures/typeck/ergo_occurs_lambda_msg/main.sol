@@ -1,3 +1,5 @@
+pragma solcore;
+
 function f() {
     let s = lam (x, y) {
         let g = x(y);

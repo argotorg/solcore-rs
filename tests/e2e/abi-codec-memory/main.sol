@@ -1,3 +1,5 @@
+pragma solcore;
+
 import * from std;
 import * from std.dispatch;
 import { mload } from std.opcodes;

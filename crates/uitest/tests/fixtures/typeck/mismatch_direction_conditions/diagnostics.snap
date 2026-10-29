@@ -4,72 +4,72 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/mismatch_direction_conditions/main.sol
 ---
 error[SC0201]: type mismatch: expected bool, found word
- --> /main/main.sol:3:9
+ --> /main/main.sol:5:9
   |
-2 |     let x: word;
-3 |     if (x) {} else {}
+4 |     let x: word;
+5 |     if (x) {} else {}
   |         ^ expression has mismatched type
-4 | }
+6 | }
   |
   = note: expected type: bool
   = note: found type: word
 ---
 
 error[SC0201]: type mismatch: expected bool, found word
- --> /main/main.sol:7:12
-  |
-6 | function while_condition(x: word) {
-7 |     while (x) {}
-  |            ^ expression has mismatched type
-8 | }
-  |
-  = note: expected type: bool
-  = note: found type: word
----
-
-error[SC0201]: type mismatch: expected bool, found word
-  --> /main/main.sol:11:12
+  --> /main/main.sol:9:12
    |
-10 | function for_condition(x: word) {
-11 |     for (; x;) {}
+ 8 | function while_condition(x: word) {
+ 9 |     while (x) {}
    |            ^ expression has mismatched type
-12 | }
+10 | }
    |
    = note: expected type: bool
    = note: found type: word
 ---
 
 error[SC0201]: type mismatch: expected bool, found word
-  --> /main/main.sol:15:12
+  --> /main/main.sol:13:12
    |
-14 | function conditional_expression(x: word) returns (word) {
-15 |     return x ? 1 : 2;
+12 | function for_condition(x: word) {
+13 |     for (; x;) {}
    |            ^ expression has mismatched type
-16 | }
+14 | }
+   |
+   = note: expected type: bool
+   = note: found type: word
+---
+
+error[SC0201]: type mismatch: expected bool, found word
+  --> /main/main.sol:17:12
+   |
+16 | function conditional_expression(x: word) returns (word) {
+17 |     return x ? 1 : 2;
+   |            ^ expression has mismatched type
+18 | }
    |
    = note: expected type: bool
    = note: found type: word
 ---
 
 error[SC0201]: type mismatch: expected bool, found numeric
-  --> /main/main.sol:19:9
+  --> /main/main.sol:21:9
    |
-18 | function literal_condition() {
-19 |     if (1) {}
+20 | function literal_condition() {
+21 |     if (1) {}
    |         ^ expression has mismatched type
-20 | }
+22 | }
    |
    = note: expected type: bool
    = note: found type: numeric
 ---
 
 error[SC0201]: type mismatch: expected bool, found word
-  --> /main/main.sol:27:9
+  --> /main/main.sol:29:9
    |
-26 | function call_condition() {
-27 |     if (word_value()) {}
+28 | function call_condition() {
+29 |     if (word_value()) {}
    |         ^^^^^^^^^^^^ expression has mismatched type
-28 | }
+30 | }
    |
    = note: expected type: bool
    = note: found type: word

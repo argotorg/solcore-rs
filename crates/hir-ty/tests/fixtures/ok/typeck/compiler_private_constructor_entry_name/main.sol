@@ -1,3 +1,5 @@
+pragma solcore;
+
 import * from std;
 
 function init_(x: word) returns (word) {

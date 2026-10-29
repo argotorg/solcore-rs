@@ -3,7 +3,7 @@ import test from 'node:test';
 import { loadProject, resolveProjectUrl, validateProjectManifest } from './loadProject.js';
 
 const manifest = { version: 1, id: 'unregistered', name: 'External project', entry: 'app/Main.sol',
-  files: [{ path: 'app/Main.sol', content: 'function main() returns (word) { return 42; }' }] };
+  files: [{ path: 'app/Main.sol', content: 'pragma solcore; function main() returns (word) { return 42; }' }] };
 const page = 'https://example.org/courses/editor/index.html?project=../projects/demo.json';
 
 test('a valid manifest needs no built-in example registration', () => {

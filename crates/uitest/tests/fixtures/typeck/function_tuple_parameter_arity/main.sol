@@ -1,3 +1,5 @@
+pragma solcore;
+
 function invokePair(f: function ((word, word)) returns (word), x: word, y: word) returns (word) {
     return f(x, y);
 }

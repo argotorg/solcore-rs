@@ -1,3 +1,5 @@
+pragma solcore;
+
 enum Box<a> {
     Box(word)
 }

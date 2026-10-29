@@ -1,3 +1,5 @@
+pragma solcore;
+
 // --- Preliminaries ---
 
 enum Bool {

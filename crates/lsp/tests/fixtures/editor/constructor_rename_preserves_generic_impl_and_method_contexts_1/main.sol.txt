@@ -1,3 +1,5 @@
+pragma solcore;
+
 enum Choice<a> { Pick(a), Other }
 trait Maker<a> { function make(x: a) returns (Choice<a>); function take(x: Choice<a>, defaultValue: a) returns (a); }
 impl<a> Maker<a> {

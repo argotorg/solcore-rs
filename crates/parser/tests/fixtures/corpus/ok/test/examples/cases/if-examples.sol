@@ -1,3 +1,5 @@
+pragma solcore;
+
 function toBool(x: word) returns (bool) {
     match (x) {
         case 0 {

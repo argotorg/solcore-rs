@@ -1,3 +1,5 @@
+pragma solcore;
+
 trait Ref<ref, deref> {
     function load(r: ref) returns (deref);
     function store(r: ref, v: deref) returns (unit);

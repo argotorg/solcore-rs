@@ -1,3 +1,5 @@
+pragma solcore;
+
 // Non-terminating comptime recursion: inline-depth exhaustion must stop the
 // recursive evaluator before the larger total-work fuel budget is consumed.
 import std;

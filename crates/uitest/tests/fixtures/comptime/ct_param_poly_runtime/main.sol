@@ -1,3 +1,5 @@
+pragma solcore;
+
 /* Negative: comptime violation in a polymorphic (generic) function.
    Before specialisation the concrete type of 'z' is unknown, so this
    cannot be resolved by inlining.  The SAIL-level check catches the

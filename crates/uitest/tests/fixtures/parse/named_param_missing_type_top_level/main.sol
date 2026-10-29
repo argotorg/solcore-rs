@@ -1,3 +1,5 @@
+pragma solcore;
+
 function id(x) {
   return x;
 }

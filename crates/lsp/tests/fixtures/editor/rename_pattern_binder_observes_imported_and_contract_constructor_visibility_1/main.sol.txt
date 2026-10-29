@@ -1,1 +1,3 @@
+pragma solcore;
+
 import {Choice} from math; function main(input: Choice) returns (word) { match (input) { case (value) { return 7; } } }

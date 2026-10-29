@@ -1,3 +1,5 @@
+pragma solcore;
+
 export { fromB };
 
 function fromB() returns (word) {

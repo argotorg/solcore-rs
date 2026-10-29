@@ -4,11 +4,11 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/parse/public_free_function/main.sol
 ---
 error[SC0001]: 'public' is only allowed on functions declared inside a contract
- --> /main/main.sol:1:16
+ --> /main/main.sol:3:16
   |
-1 | function bad() public {}
-  |                ^^^^^^
 2 |
-3 | function after() {}
+3 | function bad() public {}
+  |                ^^^^^^
+4 |
   |
   = note: while parsing function signature

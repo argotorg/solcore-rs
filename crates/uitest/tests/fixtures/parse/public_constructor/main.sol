@@ -1,3 +1,5 @@
+pragma solcore;
+
 contract Bad {
   constructor() public {}
 

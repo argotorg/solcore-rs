@@ -1,3 +1,5 @@
+pragma solcore;
+
 // Negative test for pragma merging - should fail
 import pragma_merge_base;
 

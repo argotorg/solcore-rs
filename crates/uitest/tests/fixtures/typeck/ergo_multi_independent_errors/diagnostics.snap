@@ -4,34 +4,34 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/ergo_multi_independent_errors/main.sol
 ---
 error[SC0201]: type mismatch: expected word, found bool
- --> /main/main.sol:2:12
+ --> /main/main.sol:4:12
   |
-1 | function a() returns (word) {
-2 |     return true;
+3 | function a() returns (word) {
+4 |     return true;
   |            ^^^^ expression has mismatched type
-3 | }
+5 | }
   |
   = note: expected type: word
   = note: found type: bool
 ---
 
 error[SC0201]: type mismatch: expected bool, found numeric
- --> /main/main.sol:6:12
+ --> /main/main.sol:8:12
   |
-5 | function b() returns (bool) {
-6 |     return 1;
+7 | function b() returns (bool) {
+8 |     return 1;
   |            ^ expression has mismatched type
-7 | }
+9 | }
   |
   = note: expected type: bool
   = note: found type: numeric
 ---
 
 error[SC0206]: non-callable value of type word
-  --> /main/main.sol:11:12
+  --> /main/main.sol:13:12
    |
-10 |     let value: word = 1;
-11 |     return x(value);
+12 |     let value: word = 1;
+13 |     return x(value);
    |            ^ callee is not callable
-12 | }
+14 | }
    |

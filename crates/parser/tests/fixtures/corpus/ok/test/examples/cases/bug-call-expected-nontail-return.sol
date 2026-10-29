@@ -1,3 +1,5 @@
+pragma solcore;
+
 // A class-method call in a `return` that is not the last statement of the
 // function must take its result type from the declared return type.
 //

@@ -1,3 +1,5 @@
+pragma solcore;
+
 function choose(b: bool, x: word, y: word) returns (word) {
     let p: (word, bool) = (x, false);
     let selected: word = (b ? x : y);

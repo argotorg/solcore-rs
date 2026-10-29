@@ -1,3 +1,5 @@
+pragma solcore;
+
 // Test: pragma no-generic-instance-for suppresses auto-derivation for the
 // listed types.  Pair has its instance suppressed and provided manually;
 // Box gets its instance generated automatically.

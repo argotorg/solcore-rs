@@ -4,12 +4,12 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/solver/ergo_constraint_escape/main.sol
 ---
 error[SC0207]: cannot satisfy trait constraint: a: Same
-  --> /main/main.sol:10:12
+  --> /main/main.sol:12:12
    |
- 9 |
-10 | function f<a>(x: a) returns (Bool) {
+11 |
+12 | function f<a>(x: a) returns (Bool) {
    |            ^ constraint originates here
-11 |     return Same.same(x, x);
+13 |     return Same.same(x, x);
    |
    = note: no visible impl matches `a: Same`
    = help: add a matching impl or strengthen the surrounding type context

@@ -107,8 +107,8 @@ impl solcore_nameres::Db for TestDb {
 
 #[test]
 fn module_diagnostics_backdates_after_same_module_body_literal_edit() {
-    let before = "function main() returns (word) {\n  return 1;\n}\n";
-    let after = "function main() returns (word) {\n  return 2;\n}\n";
+    let before = "pragma solcore;\nfunction main() returns (word) {\n  return 1;\n}\n";
+    let after = "pragma solcore;\nfunction main() returns (word) {\n  return 2;\n}\n";
     let (mut db, file, key) = db_with_main(before);
 
     {
@@ -150,7 +150,8 @@ fn module_diagnostics_backdates_after_same_module_body_literal_edit() {
 
 #[test]
 fn body_diagnostics_key_excludes_module_env_diagnostics() {
-    let (db, file, key) = db_with_main("function main() returns (word) { return 1; }\n");
+    let (db, file, key) =
+        db_with_main("pragma solcore;\nfunction main() returns (word) { return 1; }\n");
     let module = module_id_from_key(&db, &key);
     let hir_module = parse_file_to_hir(&db, file).module(&db);
     let body = hir_module
@@ -206,9 +207,8 @@ fn body_diagnostics_key_excludes_module_env_diagnostics() {
 
 #[test]
 fn duplicate_export_diagnostics_backdate_after_unrelated_body_length_edit() {
-    let before =
-        "export a.{f};\nexport b.{f};\n\nfunction unrelated() returns (word) {\n  return 1;\n}\n";
-    let after = "export a.{f};\nexport b.{f};\n\nfunction unrelated() returns (word) {\n  return 123456789;\n}\n";
+    let before = "pragma solcore;\nexport a.{f};\nexport b.{f};\n\nfunction unrelated() returns (word) {\n  return 1;\n}\n";
+    let after = "pragma solcore;\nexport a.{f};\nexport b.{f};\n\nfunction unrelated() returns (word) {\n  return 123456789;\n}\n";
     let (mut db, file, key) = db_with_duplicate_export_main(before);
 
     let before_ids = {
@@ -237,7 +237,7 @@ fn duplicate_export_diagnostics_backdate_after_unrelated_body_length_edit() {
 
 #[test]
 fn module_not_found_suggestion_tracks_fs_snapshot_edit() {
-    let (mut db, _file, key) = db_with_main("import utilx;\n");
+    let (mut db, _file, key) = db_with_main("pragma solcore;\nimport utilx;\n");
     let snapshot = db
         .module_fs_snapshot
         .expect("test module filesystem snapshot initialized");
@@ -322,11 +322,11 @@ fn db_with_duplicate_export_main(content: &str) -> (TestDb, SourceFile, ModuleKe
     for (path, source) in [
         (
             vec!["a"],
-            "function f() returns (word) { return 0; }\nexport { f };\n",
+            "pragma solcore;\nfunction f() returns (word) { return 0; }\nexport { f };\n",
         ),
         (
             vec!["b"],
-            "function f() returns (word) { return 0; }\nexport { f };\n",
+            "pragma solcore;\nfunction f() returns (word) { return 0; }\nexport { f };\n",
         ),
     ] {
         let key = ModuleKey {

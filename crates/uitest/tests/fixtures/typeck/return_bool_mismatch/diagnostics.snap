@@ -4,12 +4,12 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/return_bool_mismatch/main.sol
 ---
 error[SC0201]: type mismatch: expected word, found bool
- --> /main/main.sol:2:12
+ --> /main/main.sol:4:12
   |
-1 | function f() returns (word) {
-2 |     return true;
+3 | function f() returns (word) {
+4 |     return true;
   |            ^^^^ expression has mismatched type
-3 | }
+5 | }
   |
   = note: expected type: word
   = note: found type: bool

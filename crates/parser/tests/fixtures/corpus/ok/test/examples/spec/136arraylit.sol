@@ -1,3 +1,5 @@
+pragma solcore;
+
 // Array literal in memory: `[1,2,3]` builds a memory(DynArray(t)), whose
 // elements are then readable through `m[i]`.
 import * from std;

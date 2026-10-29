@@ -1,3 +1,5 @@
+pragma solcore;
+
 enum Choice<a> { Pick(a), Other }
 enum Box<a> { Box(a) }
 trait Mapper<a> { function map(x: a) returns (a); }

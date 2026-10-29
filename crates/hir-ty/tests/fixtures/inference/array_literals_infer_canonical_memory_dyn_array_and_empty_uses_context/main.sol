@@ -1,3 +1,5 @@
+pragma solcore;
+
 import { memory, DynArray } from std;
 
 function filled(x: word, y: word) returns (memory<DynArray<word>>) {

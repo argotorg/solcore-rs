@@ -1,3 +1,5 @@
+pragma solcore;
+
 trait IsA<b> {
     function ais<a>(x: a, witness: b) returns (a);
 }

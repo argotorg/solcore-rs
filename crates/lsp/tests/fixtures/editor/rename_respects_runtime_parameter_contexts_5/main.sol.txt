@@ -1,1 +1,3 @@
+pragma solcore;
+
 function main() returns (word) { let f = lam (value) { return value; }; return f(1); }

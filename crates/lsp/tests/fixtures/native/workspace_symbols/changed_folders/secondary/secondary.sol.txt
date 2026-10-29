@@ -1,1 +1,3 @@
+pragma solcore;
+
 function secondaryValue() returns (word) { return 2; }

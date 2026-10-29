@@ -1,3 +1,5 @@
+pragma solcore;
+
 // invalid-default: false
 enum Box<a> {
     Box(a)

@@ -1,3 +1,5 @@
+pragma solcore;
+
 export a.{ T };
 export b.{ T };
 

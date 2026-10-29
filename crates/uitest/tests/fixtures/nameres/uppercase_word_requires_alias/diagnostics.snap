@@ -4,10 +4,10 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/nameres/uppercase_word_requires_alias/main.sol
 ---
 error[SC0103]: undefined type constructor: Word
- --> /main/main.sol:1:19
+ --> /main/main.sol:3:19
   |
-1 | function value(x: Word) returns (word) {
+2 |
+3 | function value(x: Word) returns (word) {
   |                   ^^^^ undefined type constructor
-2 |     return 0;
-3 | }
+4 |     return 0;
   |

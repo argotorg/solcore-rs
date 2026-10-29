@@ -1,1 +1,3 @@
+pragma solcore;
+
 type Original(a) = a; export {Original};

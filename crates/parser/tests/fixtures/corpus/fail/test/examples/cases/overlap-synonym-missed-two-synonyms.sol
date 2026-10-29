@@ -1,3 +1,5 @@
+pragma solcore;
+
 type W = word;
 type V = word;
 

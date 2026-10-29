@@ -4,10 +4,10 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/shorthand_constructor_no_match/main.sol
 ---
 error[SC0101]: undefined name: Some
- --> /main/main.sol:6:13
+ --> /main/main.sol:8:13
   |
-5 | function noMatch() returns (Other) {
-6 |     return .Some(1);
+7 | function noMatch() returns (Other) {
+8 |     return .Some(1);
   |             ^^^^ unknown name
-7 | }
+9 | }
   |

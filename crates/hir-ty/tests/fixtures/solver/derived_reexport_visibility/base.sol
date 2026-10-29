@@ -1,3 +1,5 @@
+pragma solcore;
+
 import { Visible } from classes;
 
 export { Reexported };

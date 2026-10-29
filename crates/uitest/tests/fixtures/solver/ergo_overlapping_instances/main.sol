@@ -1,3 +1,5 @@
+pragma solcore;
+
 trait C<a> {
     function c(x: a) returns (word);
 }

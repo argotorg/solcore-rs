@@ -4,11 +4,11 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/solver/ergo_patterson_violation/main.sol
 ---
 error[SC0213]: impl `U: C1` does not satisfy the Patterson conditions
- --> /main/main.sol:4:9
+ --> /main/main.sol:6:9
   |
-2 | trait C2<a> {}
-3 |
-4 | impl<U> C1<U> where U: C1, U: C2 {}
+4 | trait C2<a> {}
+5 |
+6 | impl<U> C1<U> where U: C1, U: C2 {}
   |         ^^^^^ impl head violates Patterson condition
   |
   = note: each impl context must be structurally smaller than the impl head

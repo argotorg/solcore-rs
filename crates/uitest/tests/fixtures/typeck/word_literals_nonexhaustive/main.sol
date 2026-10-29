@@ -1,3 +1,5 @@
+pragma solcore;
+
 function pick(x: word) returns (word) {
     match (x) {
         case 0 {

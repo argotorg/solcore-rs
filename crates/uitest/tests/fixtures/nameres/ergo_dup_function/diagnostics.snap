@@ -4,15 +4,15 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/nameres/ergo_dup_function/main.sol
 ---
 error[SC0108]: duplicate declaration `twice` in term namespace
-  --> /main/main.sol:9:10
+  --> /main/main.sol:11:10
    |
- 1 | function twice(x: word) returns (word) {
+ 2 |
+ 3 | function twice(x: word) returns (word) {
    |          ----- previous declaration
- 2 |     return x;
- 3 | }
+ 4 |     return x;
 ...
- 8 |
- 9 | function twice(x: word) returns (word) {
+10 |
+11 | function twice(x: word) returns (word) {
    |          ^^^^^ duplicate declaration
-10 |     return x;
+12 |     return x;
    |

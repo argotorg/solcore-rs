@@ -4,9 +4,11 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/parse/data_trailing_pipe/main.sol
 ---
 error[SC0001]: parse error: unexpected `|`
- --> /main/main.sol:1:26
+ --> /main/main.sol:3:26
   |
-1 | enum Option<T> { Some(T) | }
+1 | pragma solcore;
+2 |
+3 | enum Option<T> { Some(T) | }
   |                          ^ unexpected token
   |
   = note: expecting `,`, or `}`

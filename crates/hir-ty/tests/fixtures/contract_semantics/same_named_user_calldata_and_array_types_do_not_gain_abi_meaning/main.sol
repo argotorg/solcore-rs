@@ -1,3 +1,5 @@
+pragma solcore;
+
 enum array<a> {
     array(word)
 }

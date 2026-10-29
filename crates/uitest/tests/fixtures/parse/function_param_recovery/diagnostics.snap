@@ -4,11 +4,12 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/parse/function_param_recovery/main.sol
 ---
 error[SC0001]: parse error: unexpected `,`
- --> /main/main.sol:1:16
+ --> /main/main.sol:3:16
   |
-1 | function bad(x:, y: U) {}
+2 |
+3 | function bad(x:, y: U) {}
   |                ^ unexpected token
-2 | function ok() {}
+4 | function ok() {}
   |
   = note: expecting type
   = note: while parsing function parameter

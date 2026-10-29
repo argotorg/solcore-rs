@@ -4,22 +4,22 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/parse/ergo_two_errors_recovery/main.sol
 ---
 error[SC0001]: parse error: unexpected `;`
- --> /main/main.sol:2:13
+ --> /main/main.sol:4:13
   |
-1 | function f() returns (word) {
-2 |     let x = ;
+3 | function f() returns (word) {
+4 |     let x = ;
   |             ^ unexpected token
-3 |     return 0;
+5 |     return 0;
   |
   = note: expecting expression
 ---
 
 error[SC0001]: parse error: unexpected `;`
-  --> /main/main.sol:12:14
+  --> /main/main.sol:14:14
    |
-11 | function h() returns (word) {
-12 |     return (1;
+13 | function h() returns (word) {
+14 |     return (1;
    |              ^ unexpected token
-13 | }
+15 | }
    |
    = note: expecting `&&`, `&`, `(`, `)`, `,`, `.`, `<`, `>`, `?`, `[`, `^`, `|`, or `||`

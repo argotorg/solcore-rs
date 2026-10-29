@@ -400,7 +400,7 @@ mod tests {
 
     #[test]
     fn builds_unicode_safe_leaf_to_module_chain() {
-        let source = "function main(value: word) returns (word) {\n  let café = (value + 1);\n  return café;\n}\n";
+        let source = "pragma solcore;\nfunction main(value: word) returns (word) {\n  let café = (value + 1);\n  return café;\n}\n";
         let (world, uri) = world_with_main(source);
         let line_index = world.line_index(&uri).expect("line index");
         let leaf_start = source.find("café").expect("unicode identifier");
@@ -433,7 +433,7 @@ mod tests {
 
     #[test]
     fn preserves_position_order_and_supports_incomplete_syntax() {
-        let source = "function main() {\n  let x = (1 + 2);\n  { x; }\n";
+        let source = "pragma solcore;\nfunction main() {\n  let x = (1 + 2);\n  { x; }\n";
         let (world, uri) = world_with_main(source);
         let index = world.line_index(&uri).unwrap();
         let one = index.byte_to_position(source.find('1').unwrap() as u32);
@@ -459,9 +459,9 @@ mod tests {
 
     #[test]
     fn overlapping_source_line_does_not_hide_multiline_call_selection() {
-        let source = "function main() returns (word) {\n  let x = add(\n    1,\n    2); // trailing\n  return x;\n}\n";
+        let source = "pragma solcore;\nfunction main() returns (word) {\n  let x = add(\n    1,\n    2); // trailing\n  return x;\n}\n";
         let (world, uri) = world_with_main(source);
-        let position = Position::new(3, 4);
+        let position = Position::new(4, 4);
         let ranges = handle_selection_range(&world, &uri, &[position]).expect("selection ranges");
         let mut chain = Vec::new();
         let mut current = Some(&ranges[0]);
@@ -471,14 +471,14 @@ mod tests {
         }
 
         assert!(chain.contains(&lsp_types::Range::new(
-            Position::new(1, 13),
-            Position::new(3, 6)
+            Position::new(2, 13),
+            Position::new(4, 6)
         )));
     }
 
     #[test]
     fn leaf_ranges_follow_identifier_and_operator_token_boundaries() {
-        let source = "pragma no-bounded-variable-condition;\nfunction main() returns (word) {\n  let value = 1;\n  return value-1;\n}\n";
+        let source = "pragma solcore;\npragma no-bounded-variable-condition;\nfunction main() returns (word) {\n  let value = 1;\n  return value-1;\n}\n";
         let (world, uri) = world_with_main(source);
         let index = world.line_index(&uri).unwrap();
         let pragma = source.find("no-bounded").unwrap();
@@ -519,7 +519,7 @@ mod tests {
 
     #[test]
     fn rejects_out_of_range_and_mid_surrogate_positions() {
-        let source = "// 😀\n";
+        let source = "// 😀\npragma solcore;\n";
         let (world, uri) = world_with_main(source);
 
         assert_eq!(
@@ -534,7 +534,7 @@ mod tests {
 
     #[test]
     fn empty_position_list_and_unknown_documents_are_handled() {
-        let (world, uri) = world_with_main("");
+        let (world, uri) = world_with_main("pragma solcore;\n");
         assert_eq!(handle_selection_range(&world, &uri, &[]), Some(Vec::new()));
 
         let missing = Url::parse("file:///main/missing.sol").expect("uri");

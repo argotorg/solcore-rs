@@ -1,3 +1,5 @@
+pragma solcore;
+
 trait Mem<a> {
     function size(x: a) returns (word);
 }

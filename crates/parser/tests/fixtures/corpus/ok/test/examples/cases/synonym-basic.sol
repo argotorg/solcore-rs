@@ -1,3 +1,5 @@
+pragma solcore;
+
 type Uint = word;
 type Point = pair<word, word>;
 

@@ -67,7 +67,7 @@ fn top_function<'db>(db: &'db TestDb, module: Module<'db>, name: &str) -> Functi
 fn empty_loop_post_clauses_have_valid_scope_spans() {
     for separator in ["", " ", "\n    ", " /* empty post */ "] {
         let source = format!(
-            "function f() {{ for (let i = 0; false;{separator}) {{}} while (false) {{}} }}"
+            "pragma solcore; function f() {{ for (let i = 0; false;{separator}) {{}} while (false) {{}} }}"
         );
         let db = TestDb::default();
         let (file, module) = parse_module(&db, "empty_loop_post", &source);
@@ -115,14 +115,18 @@ fn block_comments_do_not_swallow_following_items_and_unterminated_comments_diagn
     let (_, module) = parse_module(
         &db,
         "block-comment-ok",
-        "/* **/ /* outer /* inner */ done */ function f() {}",
+        "/* **/ /* outer /* inner */ done */ pragma solcore; function f() {}",
     );
     assert_eq!(
         (*top_function(&db, module, "f").sig(&db).name.atom()).text(&db),
         "f"
     );
 
-    let file = source_file(&db, "block-comment-bad", "/* unterminated\nfunction f() {}");
+    let file = source_file(
+        &db,
+        "block-comment-bad",
+        "pragma solcore;\n/* unterminated\nfunction f() {}",
+    );
     let messages = diagnostics(&db, file)
         .into_iter()
         .map(|diagnostic| diagnostic.message)
@@ -143,6 +147,7 @@ fn function_hir_retains_only_directly_leading_source_comments() {
         &db,
         "function-comments",
         r#"
+pragma solcore;
 contract C {
   // ordinary documentation
   // #[(0, 1) -> 1]
@@ -204,6 +209,7 @@ fn hir_retains_comments_for_every_item_like_declaration() {
         &db,
         "all-item-comments",
         r#"
+pragma solcore;
 // top import
 import dependency;
 // top export
@@ -269,8 +275,12 @@ function top() {}
         " top contract",
         " top function",
     ];
-    assert_eq!(module.items(&db).len(), expected_top_comments.len());
-    for (item, expected) in module.items(&db).iter().zip(expected_top_comments) {
+    // The leading `pragma solcore;` has no comment of its own.
+    let [Item::Pragma(_), items @ ..] = module.items(&db).as_slice() else {
+        panic!("expected the leading pragma solcore");
+    };
+    assert_eq!(items.len(), expected_top_comments.len());
+    for (item, expected) in items.iter().zip(expected_top_comments) {
         assert_comment_texts(item.leading_comments(&db), &[expected]);
     }
 
@@ -384,6 +394,7 @@ fn item_comments_do_not_cross_blank_lines_trailing_code_or_bodies() {
         &db,
         "item-comment-boundaries",
         r#"
+pragma solcore;
 type Owner = word; // trailing top-level comment
 enum AfterTrailing {}
 // separated top-level comment
@@ -480,6 +491,7 @@ fn recovery_items_retain_comments_without_leaking_to_following_items() {
         &db,
         "recovery-item-comments",
         r#"
+pragma solcore;
 // invalid top-level item
 unknown top;
 function valid_top() {}
@@ -491,7 +503,7 @@ contract C {
 "#,
     );
 
-    let top_error = module.items(&db)[0];
+    let top_error = module.items(&db)[1];
     assert!(matches!(top_error, Item::Error { .. }));
     assert_comment_texts(
         top_error.leading_comments(&db),
@@ -530,7 +542,7 @@ fn equivalent_type_and_predicate_refs_share_semantic_shapes_without_sharing_occu
     let (_, module) = parse_module(
         &db,
         "type-ref-shapes",
-        "trait C<self> {}
+        "pragma solcore;\ntrait C<self> {}
          function a(x: word) {}
          function b(y: word) {}
          function c<t>(x: t) where t:C {}
@@ -564,7 +576,7 @@ fn implicit_return_applies_only_to_named_function_tail_expressions() {
     let (_, module) = parse_module(
         &db,
         "implicit-return",
-        "function id(x: word) returns (word) { x }
+        "pragma solcore;\nfunction id(x: word) returns (word) { x }
          function sequence(x: word) returns (word) { let copy = x; copy }
          function discarded(x: word) { x; }
          function make() returns (function(word)) { return lam (x: word) { return x; }; }",
@@ -609,7 +621,7 @@ fn implicit_return_applies_only_to_named_function_tail_expressions() {
     let (file, _) = parse_module(
         &db,
         "lambda-tail-expression",
-        "function invalid() returns (function(word)) { return lam (x: word) { x }; }",
+        "pragma solcore; function invalid() returns (function(word)) { return lam (x: word) { x }; }",
     );
     let diagnostics = diagnostics(&db, file);
     assert!(
@@ -626,7 +638,7 @@ fn constructor_and_fallback_tail_expressions_require_semicolons() {
     let (file, _) = parse_module(
         &db,
         "entry-tail-expression",
-        "contract C {
+        "pragma solcore;\ncontract C {
            constructor() { (); }
            fallback() { () }
          }",
@@ -646,7 +658,7 @@ fn named_parameters_are_typed_while_lambda_parameters_may_be_inferred() {
     let (file, module) = parse_module(
         &db,
         "parameter-annotations",
-        "function apply(value: word) returns (word) {
+        "pragma solcore;\nfunction apply(value: word) returns (word) {
            let identity = lam (inferred) { return inferred; };
            return identity(value);
          }",
@@ -675,10 +687,13 @@ fn named_parameters_are_typed_while_lambda_parameters_may_be_inferred() {
     // These two sources intentionally omit the annotation to assert the
     // canonical named-parameter rejection rule.
     for (name, source) in [
-        ("untyped-named-parameter", "function invalid(value) {}"),
+        (
+            "untyped-named-parameter",
+            "pragma solcore; function invalid(value) {}",
+        ),
         (
             "untyped-comptime-parameter",
-            "function invalid(comptime value) {}",
+            "pragma solcore; function invalid(comptime value) {}",
         ),
     ] {
         let file = source_file(&db, name, source);
@@ -694,7 +709,7 @@ fn omitted_named_return_is_explicit_unit_even_when_the_body_returns_a_value() {
     let (file, module) = parse_module(
         &db,
         "omitted-return-is-unit",
-        "function noValue() {}
+        "pragma solcore;\nfunction noValue() {}
          function valueInBody() { return 1; }
          trait UnitMethod<T> { function unit(value: T); }",
     );
@@ -731,11 +746,11 @@ fn core_bindings_and_assignments_reject_yul_colon_equals() {
     for (name, source) in [
         (
             "colon-equals-binding",
-            "function invalid() { let value := 1; }",
+            "pragma solcore; function invalid() { let value := 1; }",
         ),
         (
             "colon-equals-assignment",
-            "function invalid() { value := 1; }",
+            "pragma solcore; function invalid() { value := 1; }",
         ),
     ] {
         let file = source_file(&db, name, source);
@@ -753,7 +768,7 @@ fn contract_fields_can_be_interleaved_and_have_initializers() {
     let (_, module) = parse_module(
         &db,
         "contract-fields",
-        "contract C {
+        "pragma solcore;\ncontract C {
            function f() {}
            x: word = 1;
          }",
@@ -782,7 +797,7 @@ fn contract_fields_can_be_interleaved_and_have_initializers() {
 #[test]
 fn top_level_recovery_resumes_at_next_item_and_preserves_body_errors() {
     let db = TestDb::default();
-    let src = "import core.math
+    let src = "pragma solcore;\nimport core.math
 function bad() {
     let x = ;
     return 1;
@@ -816,7 +831,7 @@ fn function_types_preserve_source_arity_and_explicit_tuple_domains() {
     let (_, module) = parse_module(
         &db,
         "function-types",
-        "type F = function(word) returns (function(word) returns (bool));
+        "pragma solcore;\ntype F = function(word) returns (function(word) returns (bool));
          type G = function(word, bool) returns (uint);
          type H = function((word, bool)) returns (uint);
          type I = function() returns (uint);",
@@ -869,7 +884,7 @@ fn function_types_preserve_source_arity_and_explicit_tuple_domains() {
 #[test]
 fn type_and_predicate_argument_list_spans_are_precise() {
     let db = TestDb::default();
-    let src = "trait C<self, arg> {}
+    let src = "pragma solcore;\ntrait C<self, arg> {}
 type T = Map<word, bool>;
 function f<t>(x: t) where t:C<word> {}";
     let (_, module) = parse_module(&db, "precise-type-spans", src);
@@ -910,7 +925,7 @@ fn ternary_expression_lowers_to_conditional_expression() {
     let (_, module) = parse_module(
         &db,
         "ternary",
-        "function f(x: bool) returns (word) { return x ? 1 : 0; }",
+        "pragma solcore; function f(x: bool) returns (word) { return x ? 1 : 0; }",
     );
     let function = top_function(&db, module, "f");
     let body = function.body(&db).expect("body");
@@ -930,7 +945,7 @@ fn ternary_expression_is_right_associative_and_allows_a_nested_then_arm() {
     let (file, module) = parse_module(
         &db,
         "nested-ternary",
-        "function right(x: bool, y: bool) returns (word) {
+        "pragma solcore;\nfunction right(x: bool, y: bool) returns (word) {
            return x ? 1 : y ? 2 : 3;
          }
          function nestedThen(x: bool, y: bool) returns (word) {
@@ -971,6 +986,7 @@ fn array_literals_lower_with_empty_nested_and_postfix_index_forms() {
         &db,
         "array-literals",
         r#"
+pragma solcore;
 function f(a: word, b: word) returns (word) {
   let empty = [];
   let nested = [[a], [b]];
@@ -1011,7 +1027,7 @@ fn unary_minus_lowers_literals_before_conversion_and_values_through_subtraction(
     let (file, module) = parse_module(
         &db,
         "unary-minus",
-        "function f(x: word) { let decimal = -128; let hex = -(0x80); return -x * 2; }",
+        "pragma solcore; function f(x: word) { let decimal = -128; let hex = -(0x80); return -x * 2; }",
     );
     assert!(diagnostics(&db, file).is_empty());
     let body = top_function(&db, module, "f").body(&db).expect("body");
@@ -1051,7 +1067,7 @@ fn compound_assignments_lower_through_binary_operator_calls() {
     let (file, module) = parse_module(
         &db,
         "compound-assignments",
-        "function f(x: word, y: word) {\n\
+        "pragma solcore;\nfunction f(x: word, y: word) {\n\
            x += y;\n\
            x -= y;\n\
            x *= y;\n\
@@ -1138,7 +1154,7 @@ fn unchecked_blocks_lower_arithmetic_to_unchecked_operators() {
     let (file, module) = parse_module(
         &db,
         "unchecked-block",
-        "function f(x: word, y: word) returns (word) {\n\
+        "pragma solcore;\nfunction f(x: word, y: word) returns (word) {\n\
            let a: word = x + y;\n\
            unchecked {\n\
              let b: word = x + y - x * y / y % y;\n\
@@ -1175,7 +1191,7 @@ fn lambdas_inside_unchecked_blocks_keep_checked_arithmetic() {
     let (file, module) = parse_module(
         &db,
         "unchecked-lambda",
-        "function f(x: word, y: word) returns (word) {\n\
+        "pragma solcore;\nfunction f(x: word, y: word) returns (word) {\n\
            unchecked {\n\
              let g = lam (v: word) -> word { return v + y; };\n\
              return g(x) + y;\n\
@@ -1202,7 +1218,7 @@ fn nested_unchecked_blocks_are_rejected() {
     let (file, _) = parse_module(
         &db,
         "nested-unchecked",
-        "function f(x: word) returns (word) {\n\
+        "pragma solcore;\nfunction f(x: word) returns (word) {\n\
            unchecked {\n\
              unchecked { return x + x; }\n\
            }\n\
@@ -1221,7 +1237,7 @@ fn unchecked_remains_a_valid_identifier() {
     let (file, module) = parse_module(
         &db,
         "unchecked-identifier",
-        "function unchecked(x: word) returns (word) { return x; }\n\
+        "pragma solcore;\nfunction unchecked(x: word) returns (word) { return x; }\n\
          function f(unchecked: word) returns (word) {\n\
            let r: word = unchecked;\n\
            return r;\n\
@@ -1235,7 +1251,7 @@ fn unchecked_remains_a_valid_identifier() {
 #[test]
 fn derive_attributes_lower_qualified_targets_and_precise_spans() {
     let db = TestDb::default();
-    let src = "#[derive(Eq, core.Show)] enum Top<a> { Top(a) }\n\
+    let src = "pragma solcore;\n#[derive(Eq, core.Show)] enum Top<a> { Top(a) }\n\
 contract C { #[derive(pkg.codec.Encode)] enum Local {} }";
     let (file, module) = parse_module(&db, "derive-attributes", src);
     let diagnostics = diagnostics(&db, file);
@@ -1311,6 +1327,7 @@ fn invalid_derive_attributes_diagnose_and_keep_following_declarations() {
     let db = TestDb::default();
     // syntax-migration: preserve-next-literal
     let src = r#"
+pragma solcore;
 #[derive()] enum Empty {}
 #[derive(Eq,)] enum Malformed {}
 #[derive(Eq)] function kept() {}
@@ -1382,7 +1399,7 @@ contract C {
 #[test]
 fn unclosed_derive_attribute_recovers_at_the_next_declaration() {
     let db = TestDb::default();
-    let src = "#[derive(Eq)\nenum Recovered {}\nfunction after() {}";
+    let src = "pragma solcore;\n#[derive(Eq)\nenum Recovered {}\nfunction after() {}";
     let (file, module) = parse_module(&db, "unclosed-derive-attribute", src);
     assert!(!diagnostics(&db, file).is_empty());
     assert_eq!(
@@ -1400,6 +1417,7 @@ fn unclosed_derive_attribute_recovers_at_the_next_declaration() {
 fn recovery_before_derive_preserves_top_level_and_contract_local_attributes() {
     let db = TestDb::default();
     let src = r#"
+pragma solcore;
 @ stray
 #[derive(Eq)] enum Top {}
 contract C {
@@ -1455,7 +1473,8 @@ contract C {
 #[test]
 fn derive_remains_an_ordinary_identifier_outside_attributes() {
     let db = TestDb::default();
-    let src = "enum derive {} function derive() returns (derive) { return derive; }";
+    let src =
+        "pragma solcore; enum derive {} function derive() returns (derive) { return derive; }";
     let (file, module) = parse_module(&db, "derive-soft-keyword", src);
     assert!(diagnostics(&db, file).is_empty());
     assert!(module.items(&db).iter().any(|item| {
@@ -1469,6 +1488,7 @@ fn unclosed_derive_does_not_consume_later_declarations_or_contract_fields() {
     let db = TestDb::default();
     // syntax-migration: preserve-next-literal
     let src = r#"
+pragma solcore;
 #[derive(Eq)
 function kept() {}
 ]
@@ -1501,7 +1521,7 @@ contract C {
 #[test]
 fn derive_targets_reject_reserved_identifiers() {
     let db = TestDb::default();
-    let src = "#[derive(fallback)] enum Kept {}";
+    let src = "pragma solcore; #[derive(fallback)] enum Kept {}";
     let (file, module) = parse_module(&db, "derive-reserved-target", src);
     assert!(!diagnostics(&db, file).is_empty());
     module

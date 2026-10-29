@@ -1,3 +1,5 @@
+pragma solcore;
+
 contract Option {
     enum Option<a> {
         None,

@@ -4,11 +4,11 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/parse/ergo_hull_fallback_args/main.sol
 ---
 error[SC0001]: fallback function must not declare input parameters
-  --> /main/main.sol:9:13
+  --> /main/main.sol:11:13
    |
- 8 |
- 9 |     fallback(x: uint256) {
+10 |
+11 |     fallback(x: uint256) {
    |             ^^^^^^^^^^^^
-10 |         revert("fallback-was-called");
+12 |         revert("fallback-was-called");
    |
    = note: while parsing fallback definition

@@ -1,3 +1,5 @@
+pragma solcore;
+
 enum Proxy<t> {
     Other,
     Proxy

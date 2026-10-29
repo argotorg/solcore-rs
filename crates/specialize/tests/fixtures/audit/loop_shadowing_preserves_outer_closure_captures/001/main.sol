@@ -1,3 +1,5 @@
+pragma solcore;
+
 //~ specialize: loader bare
 
 function main(x: word) returns (word) {

@@ -4,22 +4,22 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/parse/named_params_missing_types/main.sol
 ---
 error[SC0001]: named function parameter requires an explicit type
- --> /main/main.sol:2:20
+ --> /main/main.sol:4:20
   |
-1 | contract C {
-2 |   function compose(f, g) public {
+3 | contract C {
+4 |   function compose(f, g) public {
   |                    ^
-3 |     return lam (x) {
+5 |     return lam (x) {
   |
   = note: while parsing function signature
 ---
 
 error[SC0001]: named function parameter requires an explicit type
- --> /main/main.sol:2:23
+ --> /main/main.sol:4:23
   |
-1 | contract C {
-2 |   function compose(f, g) public {
+3 | contract C {
+4 |   function compose(f, g) public {
   |                       ^
-3 |     return lam (x) {
+5 |     return lam (x) {
   |
   = note: while parsing function signature

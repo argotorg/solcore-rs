@@ -1,3 +1,5 @@
+pragma solcore;
+
 enum Wrapped {
     Wrapped(word)
 }

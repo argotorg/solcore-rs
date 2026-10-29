@@ -1,3 +1,5 @@
+pragma solcore;
+
 contract Box<t> {
     enum Option<u> {
         None,

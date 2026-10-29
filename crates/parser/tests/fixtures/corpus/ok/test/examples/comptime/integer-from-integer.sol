@@ -1,3 +1,5 @@
+pragma solcore;
+
 import * from std;
 
 // Tests Num.fromInteger for word (Typedef.abs = identity) and uint256 (wraps in uint256(...)).

@@ -1,3 +1,5 @@
+pragma solcore;
+
 function hash_word(value: word) returns (word) {
     let result: word;
     assembly {

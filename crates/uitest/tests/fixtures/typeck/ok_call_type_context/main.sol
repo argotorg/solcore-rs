@@ -1,3 +1,5 @@
+pragma solcore;
+
 type Predicate = function (word) returns (bool);
 
 function aliased(g: Predicate, x: word) returns (bool) {

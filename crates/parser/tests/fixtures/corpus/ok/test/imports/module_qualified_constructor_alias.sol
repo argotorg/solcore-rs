@@ -1,3 +1,5 @@
+pragma solcore;
+
 import * as b from booldef;
 
 function mk() returns (b.Bool) {

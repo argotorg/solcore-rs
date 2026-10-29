@@ -1,3 +1,5 @@
+pragma solcore;
+
 function longerName() returns (word) { return 7; }
 function broken() returns (word) { return missing; }
 function main() returns (word) { return longerName(); }

@@ -1,3 +1,5 @@
+pragma solcore;
+
 trait CtFun<t> {
     function ct(x: t) returns (function (t) returns (t));
 }

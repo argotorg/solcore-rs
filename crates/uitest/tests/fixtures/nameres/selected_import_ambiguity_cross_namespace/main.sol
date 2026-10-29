@@ -1,3 +1,5 @@
+pragma solcore;
+
 import { T } from a;
 import { T } from b;
 

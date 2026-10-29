@@ -1,3 +1,5 @@
+pragma solcore;
+
 contract Collision {
     function collision_8764(x: word) public returns () {
         return ();

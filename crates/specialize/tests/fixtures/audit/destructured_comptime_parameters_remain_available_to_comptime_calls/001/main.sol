@@ -1,3 +1,5 @@
+pragma solcore;
+
 //~ specialize: loader std
 //~ specialize: return 3
 

@@ -1,3 +1,5 @@
+pragma solcore;
+
 import * from std;
 
 type U = word;

@@ -4,9 +4,11 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/parse/import_ctor_group_syntax/main.sol
 ---
 error[SC0001]: parse error: unexpected `(`
- --> /main/main.sol:1:10
+ --> /main/main.sol:3:10
   |
-1 | import {D(C)} from lib;
+1 | pragma solcore;
+2 |
+3 | import {D(C)} from lib;
   |          ^ unexpected token
   |
   = note: expecting `,`, `as`, or `}`

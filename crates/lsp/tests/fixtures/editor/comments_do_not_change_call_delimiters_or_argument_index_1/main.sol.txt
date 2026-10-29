@@ -1,2 +1,4 @@
+pragma solcore;
+
 function f(a: word, b: word) returns (word) { return a; }
 function main() returns (word) { return f(1 /* ) (, */,  2); }

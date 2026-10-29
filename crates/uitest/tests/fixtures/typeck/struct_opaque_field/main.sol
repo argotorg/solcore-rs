@@ -1,3 +1,5 @@
+pragma solcore;
+
 import { Secret as Opaque, makeSecret } from secret;
 import * as API from secret;
 

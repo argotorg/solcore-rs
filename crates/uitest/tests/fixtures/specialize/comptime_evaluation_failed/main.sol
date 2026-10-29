@@ -1,3 +1,5 @@
+pragma solcore;
+
 function sloadWord() returns (word) {
     let v: word;
     assembly {

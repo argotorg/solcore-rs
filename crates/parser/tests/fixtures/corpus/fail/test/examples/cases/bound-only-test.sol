@@ -1,3 +1,5 @@
+pragma solcore;
+
 // Test only bound variable check, disable Patterson
 
 trait TestBound<a> {}

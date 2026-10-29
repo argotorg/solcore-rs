@@ -1,3 +1,5 @@
+pragma solcore;
+
 // This function should be in stdlib
 function addWord(l: word, r: word) returns (word) {
     let rw: word;

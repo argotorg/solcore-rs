@@ -1,3 +1,5 @@
+pragma solcore;
+
 type U = word;
 type UnitAlias = ();
 

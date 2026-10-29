@@ -1,1 +1,3 @@
+pragma solcore;
+
 trait Eq<a> { function eq(x: a, y: a) returns (bool); } export { Eq };

@@ -1,3 +1,5 @@
+pragma solcore;
+
 // Exercises integer primitives: wordToInteger, wordFromInteger, integerAdd, integerMul.
 // Integer-typed lets are implicitly comptime; literals are polymorphic via FromInteger.
 // Expected: main() folds to word literal 100.

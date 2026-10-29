@@ -1,3 +1,5 @@
+pragma solcore;
+
 contract Order {
     function a() public returns (word) {
         return 1;

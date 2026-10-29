@@ -1,3 +1,5 @@
+pragma solcore;
+
 export { C, D, run, runBoth, relay };
 trait C<t> {
     function f(x: t) returns (word);

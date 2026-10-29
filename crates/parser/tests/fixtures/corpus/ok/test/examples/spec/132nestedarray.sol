@@ -1,3 +1,5 @@
+pragma solcore;
+
 // Nested storage arrays: `array(array(uint256))` with `grid[i][j]` used as both
 // an l-value and an r-value. The inner index desugars as an l-value, yielding the
 // `storage(array(uint256))` handle that the outer index then consumes.

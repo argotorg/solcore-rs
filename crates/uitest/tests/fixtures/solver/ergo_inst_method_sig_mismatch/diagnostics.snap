@@ -4,11 +4,11 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/solver/ergo_inst_method_sig_mismatch/main.sol
 ---
 error[SC0221]: invalid impl member signature for `size`: expected function(Bool) returns (word), got function(Bool) returns (Bool)
-  --> /main/main.sol:11:5
+  --> /main/main.sol:13:5
    |
-10 | impl Sz<Bool> {
-11 |     function size(x: Bool) returns (Bool) {
+12 | impl Sz<Bool> {
+13 |     function size(x: Bool) returns (Bool) {
    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ invalid impl method signature
-12 |         return x;
+14 |         return x;
    |
    = note: the impl method must match the trait method after substituting the impl head

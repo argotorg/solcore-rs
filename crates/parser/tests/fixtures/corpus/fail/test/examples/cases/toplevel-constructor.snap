@@ -4,9 +4,9 @@ expression: value
 input_file: crates/parser/tests/fixtures/corpus/fail/test/examples/cases/toplevel-constructor.sol
 ---
 error[SC0001]: could not parse top-level item near `constructor() {}`; expected a declaration starting with `import`, `pragma`, `type`, `enum`, `trait`, `impl`, `contract`, or `function`
- --> /toplevel-constructor.sol:3:1
+ --> /toplevel-constructor.sol:5:1
   |
-1 | // A `constructor` may only be declared inside a contract.
-2 | // At the top level this must fail to parse.
-3 | constructor() {}
+3 | // A `constructor` may only be declared inside a contract.
+4 | // At the top level this must fail to parse.
+5 | constructor() {}
   | ^^^^^^^^^^^^^^^^

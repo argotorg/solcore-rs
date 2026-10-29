@@ -1,3 +1,5 @@
+pragma solcore;
+
 function call_argument(g: function (bool) returns (word), x: word) {
     let y: word = g(x);
 }

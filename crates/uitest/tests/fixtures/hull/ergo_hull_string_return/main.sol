@@ -1,3 +1,5 @@
+pragma solcore;
+
 // A runtime function whose result type is not representable in Hull.
 import { string } from std;
 

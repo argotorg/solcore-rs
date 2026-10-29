@@ -1,3 +1,5 @@
+pragma solcore;
+
 import * as runtime from std;
 
 contract ArrayNamespaceAlias {

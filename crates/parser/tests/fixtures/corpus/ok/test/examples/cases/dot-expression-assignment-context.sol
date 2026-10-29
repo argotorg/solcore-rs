@@ -1,3 +1,5 @@
+pragma solcore;
+
 enum Option<a> {
     Some(a),
     None

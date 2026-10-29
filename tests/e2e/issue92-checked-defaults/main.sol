@@ -1,3 +1,5 @@
+pragma solcore;
+
 import * from std;
 import * from std.signed;
 import * from std.dispatch;

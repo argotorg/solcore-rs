@@ -1,3 +1,5 @@
+pragma solcore;
+
 /* Negative: runtime value passed to a comptime parameter — must fail.
    sloadWord uses sload; storage is mutable state, so its result is
    a runtime value; passing it to double's comptime param is an error.

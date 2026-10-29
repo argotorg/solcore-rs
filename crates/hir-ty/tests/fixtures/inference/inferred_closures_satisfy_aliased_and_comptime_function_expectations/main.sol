@@ -1,3 +1,5 @@
+pragma solcore;
+
 type Callback = function (word) returns (word);
 
 function staged(comptime callback: Callback, x: word) returns (word) {

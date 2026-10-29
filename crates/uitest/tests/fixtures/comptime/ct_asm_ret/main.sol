@@ -1,3 +1,5 @@
+pragma solcore;
+
 /* Negative: function annotated '-> comptime word' but body reads from
    storage via sload — storage is mutable state, never comptime.
    The verifier must reject this.

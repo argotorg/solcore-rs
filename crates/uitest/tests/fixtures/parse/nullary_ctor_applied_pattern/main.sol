@@ -1,3 +1,5 @@
+pragma solcore;
+
 enum D { C }
 
 function f(x: D) returns (word) {

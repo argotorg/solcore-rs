@@ -1797,6 +1797,7 @@ mod tests {
     #[test]
     fn preserves_source_and_builds_effective_dispatch_overlay() {
         let src = r#"
+pragma solcore;
 import * from std.dispatch;
 contract C { function answer(x: uint256) public returns (uint256) { return x; } }
 "#;
@@ -1830,6 +1831,7 @@ contract C { function answer(x: uint256) public returns (uint256) { return x; } 
     #[test]
     fn preparation_preserves_contract_and_field_comments() {
         let src = r#"
+pragma solcore;
 import * from std;
 import * from std.dispatch;
 // contract documentation
@@ -1930,7 +1932,7 @@ contract C {
     #[test]
     fn runtime_dispatch_is_implicit_and_existing_main_suppresses_it() {
         let (db, file) = db_with_main(
-            "contract C { function answer() public returns (uint256) { return uint256(1); } }",
+            "pragma solcore; contract C { function answer() public returns (uint256) { return uint256(1); } }",
         );
         let source = source_module(&db, file);
         let prepared = prepare_module(&db, source);
@@ -1949,6 +1951,7 @@ contract C {
 
         let (db, file) = db_with_main(
             r#"
+pragma solcore;
 import * from std.dispatch;
 contract C { function main() {} }
 "#,
@@ -1971,7 +1974,9 @@ contract C { function main() {} }
 
     #[test]
     fn nonempty_constructor_is_prepared_without_injecting_imports() {
-        let (db, file) = db_with_main("contract C { constructor(x:word) {} function main() {} }");
+        let (db, file) = db_with_main(
+            "pragma solcore; contract C { constructor(x:word) {} function main() {} }",
+        );
         let source = source_module(&db, file);
         let prepared = prepare_module(&db, source);
         assert_ne!(prepared.module(&db), source);
@@ -1990,6 +1995,7 @@ contract C { function main() {} }
     fn constructor_overlay_preserves_source_and_generates_deployment_entry() {
         let (db, file) = db_with_main(
             r#"
+pragma solcore;
 import * from std;
 import * from std.dispatch;
 contract C {
@@ -2047,6 +2053,7 @@ contract C {
     fn explicit_constructor_overlay_is_idempotent() {
         let (db, file) = db_with_main(
             r#"
+pragma solcore;
 import * from std;
 contract C {
   constructor(x:word) payable { let saved = x; }
@@ -2087,6 +2094,7 @@ contract C {
     #[test]
     fn constructor_body_edit_keeps_generated_wrapper_identity() {
         let before = r#"
+pragma solcore;
 import * from std;
 import * from std.dispatch;
 contract C {
@@ -2095,6 +2103,7 @@ contract C {
 }
 "#;
         let after = r#"
+pragma solcore;
 import * from std;
 import * from std.dispatch;
 contract C {
@@ -2141,6 +2150,7 @@ contract C {
     fn deduplicates_overloaded_method_name_declarations() {
         let (db, file) = db_with_main(
             r#"
+pragma solcore;
 import * from std.dispatch;
 contract C {
   function get(x:uint256) public returns (uint256) { return x; }
@@ -2165,6 +2175,7 @@ contract C {
     fn dispatch_name_types_are_injective_across_contract_method_boundaries() {
         let (db, file) = db_with_main(
             r#"
+pragma solcore;
 import * from std.dispatch;
 contract A {
   function B_C(x:uint256) public returns (uint256) { return x; }
@@ -2207,10 +2218,12 @@ contract A_B {
     #[test]
     fn omitted_return_uses_unit_and_body_edit_keeps_generated_identity() {
         let before = r#"
+pragma solcore;
 import * from std.dispatch;
 contract C { function ping() public { let x = 1; } }
 "#;
         let after = r#"
+pragma solcore;
 import * from std.dispatch;
 contract C { function ping() public { let x = 2; } }
 "#;

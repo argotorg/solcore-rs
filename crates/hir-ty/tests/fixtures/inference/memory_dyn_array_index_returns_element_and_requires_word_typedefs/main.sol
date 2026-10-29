@@ -1,3 +1,5 @@
+pragma solcore;
+
 import { memory, DynArray, uint256, Typedef } from std;
 
 function read(xs: memory<DynArray<word>>, i: uint256) returns (word) {

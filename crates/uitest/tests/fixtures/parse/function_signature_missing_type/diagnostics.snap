@@ -4,9 +4,11 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/parse/function_signature_missing_type/main.sol
 ---
 error[SC0001]: parse error: unexpected `)`
- --> /main/main.sol:1:17
+ --> /main/main.sol:3:17
   |
-1 | function bad(x: ) {}
+1 | pragma solcore;
+2 |
+3 | function bad(x: ) {}
   |                 ^ unexpected token
   |
   = note: expecting type

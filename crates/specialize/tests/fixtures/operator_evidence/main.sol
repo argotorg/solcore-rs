@@ -1,3 +1,5 @@
+pragma solcore;
+
 //~ specialize: loader fixture
 //~ specialize: frontend clean
 //~ specialize: return 21

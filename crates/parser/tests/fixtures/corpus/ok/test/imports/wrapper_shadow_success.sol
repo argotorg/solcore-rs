@@ -1,3 +1,5 @@
+pragma solcore;
+
 import booldef;
 
 function not(x: word) returns (word) {

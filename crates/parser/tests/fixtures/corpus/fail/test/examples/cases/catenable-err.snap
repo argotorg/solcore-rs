@@ -4,12 +4,12 @@ expression: value
 input_file: crates/parser/tests/fixtures/corpus/fail/test/examples/cases/catenable-err.sol
 ---
 error[SC0001]: parse error: unexpected `->`
- --> /catenable-err.sol:2:21
+ --> /catenable-err.sol:4:21
   |
-1 | trait Catenable<t> {
-2 |   function cat(x:t) -> memory(bytes)
+3 | trait Catenable<t> {
+4 |   function cat(x:t) -> memory(bytes)
   |                     ^^ unexpected token
-3 | }
+5 | }
   |
   = note: expecting `;`, `payable`, or `public`
   = note: while parsing function signature

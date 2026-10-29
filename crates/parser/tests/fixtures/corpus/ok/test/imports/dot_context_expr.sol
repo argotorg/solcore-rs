@@ -1,3 +1,5 @@
+pragma solcore;
+
 import dot_left;
 import dot_right;
 

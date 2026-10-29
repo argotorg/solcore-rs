@@ -1,3 +1,5 @@
+pragma solcore;
+
 contract Logic {
     enum Bool {
         True,

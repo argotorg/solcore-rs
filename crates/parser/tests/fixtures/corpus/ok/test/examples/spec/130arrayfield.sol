@@ -1,3 +1,5 @@
+pragma solcore;
+
 // Storage array as a contract field: `arr : array(uint256)`.
 import * from std;
 pragma no-patterson-condition;

@@ -1,3 +1,5 @@
+pragma solcore;
+
 import * from std;
 
 function fib2(n: word) returns (comptime<word>) {

@@ -1,3 +1,5 @@
+pragma solcore;
+
 // `<<` and `>>` follow Solidity: the result has the type of the shifted value,
 // the amount may be any unsigned type (here a literal `word`, `uint8` and
 // `uint256`), bits shifted past the width are discarded, and shifts never

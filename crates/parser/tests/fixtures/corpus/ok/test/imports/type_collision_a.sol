@@ -1,3 +1,5 @@
+pragma solcore;
+
 export { T(A), mk };
 
 enum T {

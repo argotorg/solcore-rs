@@ -1,3 +1,5 @@
+pragma solcore;
+
 // test constructor with multiple args
 import * from std;
 // import prelude;

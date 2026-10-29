@@ -1,3 +1,5 @@
+pragma solcore;
+
 // Tests tryResolveMPTC Template B path.
 // The class has only a method of the form (rep -> self), so Template A cannot
 // fire.  The specialiser must discover rep=word solely via Template B:

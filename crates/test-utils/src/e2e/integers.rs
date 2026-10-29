@@ -336,7 +336,7 @@ impl IntegerType {
         let family = if self.signed { "signed" } else { "unsigned" };
         let suffix = format!("{}{}", if self.signed { "I" } else { "U" }, self.bits);
         let mut source = format!(
-            "import * from std;\nimport * from std.{family};\nimport * from std.unchecked.{family};\nimport * from std.dispatch;\ncontract UncheckedOperations {{\n"
+            "pragma solcore;\nimport * from std;\nimport * from std.{family};\nimport * from std.unchecked.{family};\nimport * from std.dispatch;\ncontract UncheckedOperations {{\n"
         );
         for operation in UNCHECKED_OPERATIONS {
             for &(a, b) in operation.inputs(self.signed) {
@@ -383,7 +383,7 @@ impl IntegerType {
         let family = if self.signed { "signed" } else { "unsigned" };
         let suffix = format!("{}{}", if self.signed { "I" } else { "U" }, self.bits);
         let mut source = format!(
-            "import * from std;\nimport * from std.{family};\nimport * from std.dispatch;\ncontract IntegerOperations {{\n"
+            "pragma solcore;\nimport * from std;\nimport * from std.{family};\nimport * from std.dispatch;\ncontract IntegerOperations {{\n"
         );
         for operation in OPERATIONS {
             for &(a, b) in operation.inputs(self.signed) {

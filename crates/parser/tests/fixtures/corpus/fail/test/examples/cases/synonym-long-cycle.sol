@@ -1,3 +1,5 @@
+pragma solcore;
+
 // Longer recursive cycle should be rejected
 type A = B;
 type B = C;

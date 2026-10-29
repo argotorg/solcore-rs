@@ -4,22 +4,22 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/parse/multiple_errors_continue/main.sol
 ---
 error[SC0001]: import declaration requires trailing `;`
- --> /main/main.sol:2:1
+ --> /main/main.sol:4:1
   |
-1 | import core.math
-2 | function bad() {
+3 | import core.math
+4 | function bad() {
   | ^^^^^^^^
-3 |     let x = ;
+5 |     let x = ;
   |
   = note: while parsing import declaration
 ---
 
 error[SC0001]: parse error: unexpected `;`
- --> /main/main.sol:3:13
+ --> /main/main.sol:5:13
   |
-2 | function bad() {
-3 |     let x = ;
+4 | function bad() {
+5 |     let x = ;
   |             ^ unexpected token
-4 |     return 1;
+6 |     return 1;
   |
   = note: expecting expression

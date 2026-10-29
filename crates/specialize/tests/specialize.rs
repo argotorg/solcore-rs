@@ -204,6 +204,7 @@ fn specialize_src_with_fake_calldata_array_std(
         db,
         &std_path,
         r#"
+pragma solcore;
 export { calldata(*), array(*), uint256(*), Encoded(*), Decoded(*), Typedef, RValueIdxAccess };
 
 enum calldata<t> {calldata(word)}
@@ -271,7 +272,8 @@ fn function_names(output: &SpecializeOutput<'_>) -> Vec<String> {
 fn specializes_large_linear_body_with_indexed_frontend_lookups() {
     use std::fmt::Write as _;
 
-    let mut source = "function main() returns (word) {\n  let value0 : word = 0;\n".to_owned();
+    let mut source =
+        "pragma solcore;\nfunction main() returns (word) {\n  let value0 : word = 0;\n".to_owned();
     for index in 1..2_000 {
         writeln!(
             &mut source,
@@ -292,6 +294,7 @@ fn specializes_large_linear_body_with_indexed_frontend_lookups() {
 fn calldata_array_index_specializes_to_rvalue_lookup_call() {
     let (db, output) = specialize_src_with_fake_calldata_array_std(
         r#"
+pragma solcore;
 import * from std;
 
 function main(xs:calldata<array<Encoded>>, i:uint256) returns (Decoded) {
@@ -405,6 +408,7 @@ fn naming_matches_expected_mangling() {
 #[test]
 fn specialized_name_hash_is_independent_of_absolute_module_root() {
     let src = r#"
+pragma solcore;
 contract C {
   function main() public returns (word) { return 42; }
 }
@@ -421,6 +425,7 @@ contract C {
 fn deduplicates_identical_instantiations() {
     let (_db, output) = specialize_src(
         r#"
+pragma solcore;
 function id<a>(x:a) returns (a) { return x; }
 
 contract C {
@@ -448,6 +453,7 @@ contract C {
 fn evidence_replay_resolves_instance_and_superclass_methods() {
     let (_db, output) = specialize_src(
         r#"
+pragma solcore;
 enum Bool {True , False}
 
 trait Eq<a> {
@@ -498,6 +504,7 @@ contract C {
 fn evidence_replay_preserves_class_method_local_forall_binders() {
     let (_db, output) = specialize_src(
         r#"
+pragma solcore;
 trait IsA<b> {
   function ais<a>(x : a, witness : b) returns (a) ;
 }
@@ -531,6 +538,7 @@ contract C {
 fn field_ufcs_prepends_receiver_and_resolves_instance_method() {
     let (db, _, output) = specialize_src_with_std_and_db(
         r#"
+pragma solcore;
 import * from std;
 import * from std.dispatch;
 
@@ -622,6 +630,7 @@ contract C {
 fn local_and_parameter_ufcs_prepend_receivers_and_share_instance_method() {
     let (db, output) = specialize_src(
         r#"
+pragma solcore;
 trait Combiner<a> {
   function combine(x:a, y:word) returns (word) ;
 }
@@ -729,6 +738,7 @@ fn evidence_replay_resolves_imported_instance_methods() {
         db,
         &lib_path,
         r#"
+pragma solcore;
 export { Boxed };
 
 trait Boxed<a> {
@@ -744,6 +754,7 @@ impl Boxed<word> {
         db,
         &main_path,
         r#"
+pragma solcore;
 import {Boxed} from lib;
 
 contract C {
@@ -787,6 +798,7 @@ fn same_named_classes_in_different_modules_get_distinct_method_symbols() {
         (
             "left.sol",
             r#"
+pragma solcore;
 export { left };
 
 trait Pick<a> {
@@ -807,6 +819,7 @@ function left(x:word) returns (word) { return Pick.choose(x); }
         (
             "right.sol",
             r#"
+pragma solcore;
 export { right };
 
 trait Pick<a> {
@@ -827,6 +840,7 @@ function right(x:word) returns (word) { return Pick.choose(x); }
         (
             "main.sol",
             r#"
+pragma solcore;
 import {left} from left;
 import {right} from right;
 
@@ -878,6 +892,7 @@ fn same_named_adts_in_different_modules_get_distinct_generic_symbols() {
         (
             "common.sol",
             r#"
+pragma solcore;
 export { id };
 function id<a>(x:a) returns (a) { return x; }
 "#,
@@ -885,6 +900,7 @@ function id<a>(x:a) returns (a) { return x; }
         (
             "left.sol",
             r#"
+pragma solcore;
 import {id} from common;
 export { left };
 enum Foo {Foo(word)}
@@ -897,6 +913,7 @@ function left(x:word) returns (word) {
         (
             "right.sol",
             r#"
+pragma solcore;
 import {id} from common;
 export { right };
 enum Foo {Foo(word)}
@@ -909,6 +926,7 @@ function right(x:word) returns (word) {
         (
             "main.sol",
             r#"
+pragma solcore;
 import {left} from left;
 import {right} from right;
 contract C {
@@ -961,6 +979,7 @@ fn derived_generic_specialization_uses_the_imported_adt_definition_module() {
         db,
         &lib_path,
         r#"
+pragma solcore;
 pragma no-patterson-condition;
 pragma no-bounded-variable-condition;
 
@@ -983,6 +1002,7 @@ function exercise(x:Box) returns (Box) {
         db,
         &main_path,
         r#"
+pragma solcore;
 import * from lib;
 
 contract C {
@@ -1018,6 +1038,7 @@ contract C {
 fn invokable_invoke_replays_call_site_evidence() {
     let (_db, output) = specialize_src(
         r#"
+pragma solcore;
 function app<a,b,c>(f : c, x : a) returns (b) where c : invokable<a, b> {
   return invokable.invoke(f, x);
 }
@@ -1068,6 +1089,7 @@ contract C {
 fn mptc_phantom_extras_recovered_before_naming_and_body_lowering() {
     let (_db, output) = specialize_src(
         r#"
+pragma solcore;
 enum Foo {Foo(word)}
 
 trait Encoder<self,rep> {
@@ -1133,6 +1155,7 @@ contract C {
 fn instance_method_names_include_the_complete_class_head() {
     let (_db, output) = specialize_src(
         r#"
+pragma solcore;
 enum Box {Box(word)}
 
 trait Convert<self,rep> {
@@ -1185,6 +1208,7 @@ contract C {
 fn ensure_closed_failure_aborts_that_specialization() {
     let (_db, output) = specialize_src(
         r#"
+pragma solcore;
 function leak<a>() returns (a) {
   let y : a;
   return y;
@@ -1219,6 +1243,7 @@ contract C {
 #[test]
 fn generated_contract_dispatch_uses_explicit_std_dispatch_import() {
     let source = r#"
+pragma solcore;
 import * from std;
 import * from std.dispatch;
 
@@ -1256,6 +1281,7 @@ contract C {
 fn generated_contract_dispatch_rejects_public_comptime_params_before_runtime_rooting() {
     let output = specialize_src_with_std(
         r#"
+pragma solcore;
 import * from std;
 import * from std.dispatch;
 
@@ -1302,6 +1328,7 @@ contract C {
 #[test]
 fn generated_contract_dispatch_keeps_the_original_source_file() {
     let src = r#"
+pragma solcore;
 import * from std;
 import * from std.dispatch;
 
@@ -1371,6 +1398,7 @@ contract C {
 #[test]
 fn already_prepared_input_keeps_std_dispatch_origin() {
     let src = r#"
+pragma solcore;
 import * from std;
 import * from std.dispatch;
 
@@ -1410,6 +1438,7 @@ contract C {
 fn source_names_are_qualified_across_contracts() {
     let (_db, output) = specialize_src(
         r#"
+pragma solcore;
 contract A { function main() public returns (word) { return 1; } }
 contract B { function main() public returns (word) { return 2; } }
 "#,
@@ -1454,6 +1483,7 @@ contract B { function main() public returns (word) { return 2; } }
 fn dispatch_abi_shape_is_preserved_in_std_dispatch_mono_ir() {
     let output = specialize_src_with_std(
         r#"
+pragma solcore;
 import * from std;
 import * from std.dispatch;
 
@@ -1521,6 +1551,7 @@ contract PayableTest {
 fn tuple_dispatch_uses_the_canonical_abi_selector() {
     let output = specialize_src_with_std(
         r#"
+pragma solcore;
 import * from std;
 import * from std.dispatch;
 
@@ -1561,6 +1592,7 @@ contract TupleSelector {
 fn dispatch_selector_patch_uses_identity_safe_method_markers() {
     let output = specialize_src_with_std(
         r#"
+pragma solcore;
 import * from std;
 import * from std.dispatch;
 import * from std.Generic;
@@ -1675,6 +1707,7 @@ contract A_B {
 fn constructor_overlay_roots_three_argument_deployment_main() {
     let output = specialize_src_with_std(
         r#"
+pragma solcore;
 import * from std;
 import * from std.dispatch;
 
@@ -1736,6 +1769,7 @@ fn mono_ir_carries_frontend_desugar_hook_plan() {
     );
     let (_if_db, if_output) = specialize_src(
         r#"
+pragma solcore;
 contract C {
   function main() public returns (word) {
     if (true) { return 1; } else { return 0; }
@@ -1789,6 +1823,7 @@ contract C {
 fn tuple_syntax_specializes_through_product_constructors() {
     let (_db, output) = specialize_src(
         r#"
+pragma solcore;
 contract C {
   function main(x:word, y:word, z:word) public returns (pair<word, pair<word, word>>) {
     let t = (x, y, z);
@@ -1949,6 +1984,7 @@ fn closure_specialization_respects_the_global_clone_budget() {
     let module = parse_module(
         &db,
         r#"
+pragma solcore;
 function apply(f: function(word) returns (word), x: word) returns (word) { return f(x); }
 function main(x: word) returns (word) {
   return apply(lam (v: word) -> word { return v; }, x);
@@ -1985,6 +2021,7 @@ fn folds_direct_function_compose_closure_fixture() {
 }
 
 const OPERATOR_CUSTOM_UINT_ADD: &str = r#"
+pragma solcore;
 import * from std;
 
 enum uint {u(word)}
@@ -2011,6 +2048,7 @@ contract C {
 "#;
 
 const OPERATOR_METERS_ADD: &str = r#"
+pragma solcore;
 import * from std;
 
 enum meters {meters(word)}
@@ -2038,6 +2076,7 @@ contract C {
 "#;
 
 const OPERATOR_METERS_ORD: &str = r#"
+pragma solcore;
 import * from std;
 
 enum meters {meters(word)}
@@ -2070,6 +2109,7 @@ contract C {
 "#;
 
 const OPERATOR_CUSTOM_MUL: &str = r#"
+pragma solcore;
 import * from std;
 
 enum Weird {Weird(word)}
@@ -2089,6 +2129,7 @@ contract C {
 "#;
 
 const OPERATOR_CUSTOM_EQ: &str = r#"
+pragma solcore;
 import * from std;
 
 enum Weird {Weird(word)}
@@ -2107,6 +2148,7 @@ contract C {
 "#;
 
 const OPERATOR_VISIBLE_BOOL_FUNCTIONS: &str = r#"
+pragma solcore;
 function and(x:bool, y:bool) returns (bool) { return false; }
 function or(x:bool, y:bool) returns (bool) { return false; }
 function not(x:bool) returns (bool) { return true; }
@@ -2119,6 +2161,7 @@ contract C {
 "#;
 
 const OPERATOR_WORD_ADD: &str = r#"
+pragma solcore;
 import * from std;
 
 contract C {
@@ -2167,6 +2210,7 @@ fn every_audited_operator_uses_its_selected_semantics() {
     ] {
         let src = format!(
             r#"
+pragma solcore;
 import * from std;
 enum Weird {{ Weird(word) }}
 impl {class}<Weird> {{
@@ -2191,6 +2235,7 @@ contract C {{
 
     let not_eq = specialize_src_with_std(
         r#"
+pragma solcore;
 import * from std;
 enum Weird {Weird(word)}
 impl Eq<Weird> {
@@ -2209,19 +2254,19 @@ contract C {
     for (label, definition, expression, expected) in [
         (
             "And",
-            "function and(x:bool, y:bool) returns (bool) { return false; }",
+            "pragma solcore; function and(x:bool, y:bool) returns (bool) { return false; }",
             "true && true",
             "97",
         ),
         (
             "Or",
-            "function or(x:bool, y:bool) returns (bool) { return false; }",
+            "pragma solcore; function or(x:bool, y:bool) returns (bool) { return false; }",
             "false || true",
             "97",
         ),
         (
             "Not",
-            "function not(x:bool) returns (bool) { return true; }",
+            "pragma solcore; function not(x:bool) returns (bool) { return true; }",
             "!true",
             "97",
         ),
@@ -2250,6 +2295,7 @@ contract C {{
 fn comptime_obligations_are_carried_into_mono_side_table() {
     let (_db, output) = specialize_src(
         r#"
+pragma solcore;
 function need(comptime x : word) returns (word) { return x; }
 
 contract C {
@@ -2289,6 +2335,7 @@ contract C {
 fn derived_generic_evidence_generates_from_body() {
     let (_db, output) = specialize_src(
         r#"
+pragma solcore;
 enum Pair {Pair(word, word)}
 
 trait Generic<a,rep> {
@@ -2316,6 +2363,7 @@ contract C {
 fn derived_class_wrapper_converts_exact_self_arguments_and_returns() {
     let (db, output) = specialize_src(
         r#"
+pragma solcore;
 pragma no-patterson-condition;
 pragma no-bounded-variable-condition;
 
@@ -2394,6 +2442,7 @@ function main(x:Box) returns (Box) {
 fn derived_class_wrapper_keeps_method_binders_distinct_from_self() {
     let (db, output) = specialize_src(
         r#"
+pragma solcore;
 pragma no-patterson-condition;
 pragma no-bounded-variable-condition;
 
@@ -2470,6 +2519,7 @@ function main(value:Box, witness:Box) returns (Box) {
 fn derived_class_wrapper_respects_a_manual_generic_instance() {
     let (_db, output) = specialize_src(
         r#"
+pragma solcore;
 pragma no-patterson-condition;
 pragma no-bounded-variable-condition;
 pragma no-generic-instance-for Box;
@@ -2538,6 +2588,7 @@ fn derived_class_wrapper_uses_the_imported_definition_environment() {
         db,
         &lib_path,
         r#"
+pragma solcore;
 pragma no-patterson-condition;
 pragma no-bounded-variable-condition;
 
@@ -2568,6 +2619,7 @@ function cloneBox(x:Box) returns (Box) {
         db,
         &main_path,
         r#"
+pragma solcore;
 import lib;
 
 trait CloneLike<a> {
@@ -2626,6 +2678,7 @@ fn derived_class_and_instance_specializations_are_proof_aware_across_modules() {
         (
             "lib.sol",
             r#"
+pragma solcore;
 pragma no-patterson-condition;
 pragma no-bounded-variable-condition;
 
@@ -2660,6 +2713,7 @@ enum Wrap<a> {Wrap(a, a)}
         (
             "left.sol",
             r#"
+pragma solcore;
 import * from lib;
 export { left };
 
@@ -2679,6 +2733,7 @@ function left(x:Wrap<word>) returns (word) {
         (
             "right.sol",
             r#"
+pragma solcore;
 import * from lib;
 export { right };
 
@@ -2698,6 +2753,7 @@ function right(x:Wrap<word>) returns (word) {
         (
             "main.sol",
             r#"
+pragma solcore;
 import * from lib;
 import {left} from left;
 import {right} from right;
@@ -2825,6 +2881,7 @@ contract C {
 fn derived_class_wrapper_preserves_adt_arguments_and_reuses_proofs() {
     let (db, output) = specialize_src(
         r#"
+pragma solcore;
 pragma no-patterson-condition;
 pragma no-bounded-variable-condition;
 
@@ -2894,6 +2951,7 @@ function main(x:Wrap<word>) returns (Wrap<word>) {
 fn derived_class_wrapper_reuses_its_reservation_for_recursive_adts() {
     let output = specialize_src_with_std(
         r#"
+pragma solcore;
 import * from std;
 import * from std.Generic;
 
@@ -2932,6 +2990,7 @@ function main(x:List) returns (bool) {
 fn derived_class_wrapper_rejects_nested_self_without_emitting_unchecked_ir() {
     let (_db, output) = specialize_src(
         r#"
+pragma solcore;
 pragma no-patterson-condition;
 pragma no-bounded-variable-condition;
 
@@ -2973,6 +3032,7 @@ function main(x:Box) returns (bool) {
 fn derived_class_wrapper_uses_absurd_for_an_empty_adt() {
     let output = specialize_src_with_std(
         r#"
+pragma solcore;
 import * from std;
 
 trait Make<a> {
@@ -3021,6 +3081,7 @@ function main() returns (Never) {
 fn snapshot_small_specialized_module() {
     let (db, output) = specialize_src(
         r#"
+pragma solcore;
 function id<a>(x:a) returns (a) { return x; }
 
 contract C {
@@ -3096,6 +3157,7 @@ fn specializes_comptime_evaluation_corpus_verdicts() {
 fn folds_recursive_comptime_integer_function() {
     let (_db, output) = specialize_src(
         r#"
+pragma solcore;
 function fib(comptime n : integer) returns (comptime<integer>) {
   if (integerLt(n, 2)) {
     return n;
@@ -3130,6 +3192,7 @@ contract C {
 fn folds_comptime_yul_mstore_mload_subset() {
     let (_db, output) = specialize_src(
         r#"
+pragma solcore;
 function storeLoad(x : word) returns (word) {
   let r : word;
   assembly {
@@ -3156,6 +3219,7 @@ contract C {
 fn checked_uint256_arithmetic_folds_at_comptime() {
     let output = specialize_src_with_std(
         r#"
+pragma solcore;
 import * from std;
 
 function double(comptime value: uint256) returns (comptime<uint256>) {
@@ -3179,6 +3243,7 @@ contract C {
 fn checked_uint256_overflow_at_comptime_is_a_comptime_failure() {
     let output = specialize_src_with_std(
         r#"
+pragma solcore;
 import * from std;
 
 function double(comptime value: uint256) returns (comptime<uint256>) {
@@ -3208,6 +3273,7 @@ contract C {
 fn checked_arithmetic_folds_only_when_its_guard_is_statically_false() {
     let output = specialize_src_with_std(
         r#"
+pragma solcore;
 import * from std;
 
 contract C {
@@ -3222,6 +3288,7 @@ contract C {
 
     let output = specialize_src_with_std(
         r#"
+pragma solcore;
 import * from std;
 
 contract C {
@@ -3245,6 +3312,7 @@ contract C {
 fn unchecked_block_arithmetic_folds_with_wrapping() {
     let output = specialize_src_with_std(
         r#"
+pragma solcore;
 import * from std;
 import * from std.unchecked.unsigned;
 
@@ -3266,6 +3334,7 @@ contract C {
 fn constant_shifts_fold() {
     let output = specialize_src_with_std(
         r#"
+pragma solcore;
 import * from std;
 
 contract C {
@@ -3322,6 +3391,7 @@ fn signed_right_shifts_fold_at_comptime() {
             .collect::<String>();
         let source = format!(
             r#"
+pragma solcore;
 import * from std;
 import * from std.signed;
 
@@ -3349,6 +3419,7 @@ contract C {{
 fn signed_right_shifts_fold_int256_bounds_at_comptime() {
     let output = specialize_src_with_std(
         r#"
+pragma solcore;
 import * from std;
 import * from std.signed;
 
@@ -3377,6 +3448,7 @@ contract C {
 fn unfolding_never_discards_an_unused_checked_operation() {
     let output = specialize_src_with_std(
         r#"
+pragma solcore;
 import * from std;
 
 function k(u: uint256) returns (uint256) {
@@ -3406,6 +3478,7 @@ contract C {
 fn assembly_substitution_does_not_reuse_values_after_an_in_block_write() {
     let (db, output) = specialize_src(
         r#"
+pragma solcore;
 contract C {
   function main(x: word) public returns (word) {
     let a: word = 1;
@@ -3452,6 +3525,7 @@ contract C {
 fn assembly_substitution_does_not_capture_same_named_function_parameters() {
     let (db, output) = specialize_src(
         r#"
+pragma solcore;
 contract C {
   function main() public returns (word) {
     let x : word = 1;
@@ -3520,6 +3594,7 @@ contract C {
 fn does_not_fold_user_function_shadowing_std_literal_intrinsic() {
     let (_db, output) = specialize_src(
         r#"
+pragma solcore;
 function keccakLit(a:string) returns (word) {
   return 0;
 }
@@ -3558,6 +3633,7 @@ fn folds_resolved_std_string_keccak_literal_intrinsic() {
 fn clones_and_deduplicates_folded_comptime_string_arguments() {
     let (db, _, output) = specialize_src_with_std_and_db(
         r#"
+pragma solcore;
 import * from std;
 
 function consume(s:string, x:word) returns (word) {
@@ -3606,6 +3682,7 @@ contract C {
 fn user_str_instance_clone_leaves_only_a_literal_materializer_call() {
     let output = specialize_src_with_std(
         r#"
+pragma solcore;
 import * from std;
 
 enum Wrapped {Wrapped(memory<string>)}
@@ -3650,6 +3727,7 @@ contract C {
 fn require_accepts_a_string_literal_via_the_std_error_str_instance() {
     let output = specialize_src_with_std(
         r#"
+pragma solcore;
 import * from std;
 
 contract C {
@@ -3679,6 +3757,7 @@ contract C {
 fn materializes_a_string_literal_through_a_memory_string_alias() {
     let output = specialize_src_with_std(
         r#"
+pragma solcore;
 import * from std;
 
 type Text = memory<string>;
@@ -3713,6 +3792,7 @@ contract C {
 fn string_clone_worklist_evaluates_clones_that_spawn_clones() {
     let output = specialize_src_with_std(
         r#"
+pragma solcore;
 import * from std;
 
 function inner(s:string, x:word) returns (word) {
@@ -3766,6 +3846,7 @@ contract C {
 fn recursive_string_clone_creation_consumes_global_fuel() {
     let output = specialize_src_with_std_options(
         r#"
+pragma solcore;
 import * from std;
 
 function grow(s:string, x:word) returns (word) {
@@ -3815,6 +3896,7 @@ contract C {
 fn desugars_memory_and_storage_array_literals_to_runtime_builders() {
     let output = specialize_src_with_std(
         r#"
+pragma solcore;
 import * from std;
 
 contract ArrayLit {
@@ -3867,6 +3949,7 @@ contract ArrayLit {
 fn routes_whole_storage_array_assignment_through_assign_instance() {
     let output = specialize_src_with_std(
         r#"
+pragma solcore;
 import * from std;
 
 contract ArrayCopy {
@@ -3901,6 +3984,7 @@ contract ArrayCopy {
 fn contract_fields_lower_through_storage_classes_and_prefix_offsets() {
     let (db, main_file, output) = specialize_src_with_std_and_db(
         r#"
+pragma solcore;
 import * from std;
 
 contract FieldAccess {
@@ -4031,6 +4115,7 @@ contract FieldAccess {
 fn partial_contract_field_support_does_not_fall_back_to_legacy_slots() {
     let read = specialize_src_with_std(
         r#"
+pragma solcore;
 import {Proxy, storage, StorageSize} from std;
 
 contract C {
@@ -4051,6 +4136,7 @@ contract C {
 
     let write = specialize_src_with_std(
         r#"
+pragma solcore;
 import {Proxy, storage, StorageSize, CanStore} from std;
 
 contract C {
@@ -4077,6 +4163,7 @@ contract C {
 fn array_indexes_preserve_non_identity_typedef_representations() {
     let (db, main_file, output) = specialize_src_with_std_and_db(
         r#"
+pragma solcore;
 import * from std;
 
 enum Shifted {Shifted(word)}
@@ -4152,6 +4239,7 @@ contract ReprArray {
 fn public_dynamic_array_return_reaches_abi_encoder() {
     let output = specialize_src_with_std(
         r#"
+pragma solcore;
 import * from std;
 import * from std.dispatch;
 
@@ -4185,6 +4273,7 @@ contract PublicArray {
 fn bool_and_nested_dynamic_storage_arrays_resolve_storage_conversions() {
     let output = specialize_src_with_std(
         r#"
+pragma solcore;
 import * from std;
 
 contract CollectionArray {
@@ -4235,6 +4324,7 @@ contract CollectionArray {
 fn nested_bool_array_write_composes_storage_refs_without_intermediate_copy() {
     let output = specialize_src_with_std(
         r#"
+pragma solcore;
 import * from std;
 
 contract NestedBool {
@@ -4281,6 +4371,7 @@ contract NestedBool {
 fn folds_resolved_std_word_keccak_literal_intrinsic() {
     let output = specialize_src_with_std(
         r#"
+pragma solcore;
 import * from std;
 
 contract C {
@@ -4305,6 +4396,7 @@ contract C {
 fn folds_erc7201_namespace_to_a_single_constant() {
     let output = specialize_src_with_std(
         r#"
+pragma solcore;
 import * from std;
 
 contract C {
@@ -4331,6 +4423,7 @@ contract C {
 fn does_not_fold_user_addword_shadowing_builtin_wrapper_name() {
     let (_db, output) = specialize_src(
         r#"
+pragma solcore;
 function addWord(x: word, y: word) returns (word) {
   let r : word;
   assembly { r := sload(0) }
@@ -4364,6 +4457,7 @@ fn assignment_lhs_root_is_not_substituted() {
 fn compound_assignment_invalidates_lhs_root() {
     let (_db, output) = specialize_src(
         r#"
+pragma solcore;
 trait Add<t> {
   function add(l:t, r:t) returns (t) ;
 }
@@ -4394,6 +4488,7 @@ contract C {
 fn unknown_if_invalidates_assignments_from_both_branches() {
     let (_db, output) = specialize_src(
         r#"
+pragma solcore;
 contract C {
   function main(c: bool) public returns (word) {
     let x : word = 1;
@@ -4415,6 +4510,7 @@ contract C {
 fn if_statement_preserves_lexical_blocks_through_pre_typeck_view() {
     let (_db, output) = specialize_src(
         r#"
+pragma solcore;
 contract C {
   function main(c: bool) public returns (word) {
     let x : word = 1;
@@ -4471,6 +4567,7 @@ contract C {
 fn if_expression_specializes_through_pre_typeck_match_view() {
     let (_db, output) = specialize_src(
         r#"
+pragma solcore;
 contract C {
   function main(c: bool) public returns (word) {
     let x : word = ((c) ? 2 : 3);
@@ -4511,6 +4608,7 @@ contract C {
 fn bool_constructors_specialize_through_pre_typeck_unit_sum_view() {
     let (_true_db, true_output) = specialize_src(
         r#"
+pragma solcore;
 contract C {
   function main() public returns (bool) {
     return true;
@@ -4520,6 +4618,7 @@ contract C {
     );
     let (_false_db, false_output) = specialize_src(
         r#"
+pragma solcore;
 contract C {
   function main() public returns (bool) {
     return false;
@@ -4544,6 +4643,7 @@ contract C {
 fn unknown_match_pattern_binders_shadow_outer_constants() {
     let (_db, output) = specialize_src(
         r#"
+pragma solcore;
 contract C {
   function main(n: word) public returns (word) {
     let x : word = 1;
@@ -5485,6 +5585,7 @@ fn repo_root() -> PathBuf {
 fn constructor_fold_is_not_confused_by_underscored_names() {
     let (_db, output) = specialize_src(
         r#"
+pragma solcore;
 enum D {Suf , Pre_Suf}
 
 function pick(d:D) returns (word) {
@@ -5519,6 +5620,7 @@ contract C {
 fn for_loop_post_assignments_are_not_folded_to_preloop_constants() {
     let (_db, output) = specialize_src(
         r#"
+pragma solcore;
 enum Flag {On , Off}
 
 function isOn(f: Flag) returns (bool) {
@@ -5568,6 +5670,7 @@ contract C {
 fn non_contract_main_survives_dead_function_elimination_after_name_mangling() {
     let (_db, output) = specialize_src(
         r#"
+pragma solcore;
 function answer() returns (word) { return 42; }
 function main() returns (word) { return answer(); }
 "#,
@@ -5595,6 +5698,7 @@ fn evaluator_fuel_bounds_total_inline_fanout_work() {
     let module = parse_module(
         db,
         r#"
+pragma solcore;
 function g2() returns (word) { return 1; }
 function g1() returns (word) { return g2() + g2(); }
 function g0() returns (word) { return g1() + g1(); }
@@ -5670,6 +5774,7 @@ fn default_fuel_handles_the_e136_basic_dispatch_surface() {
 fn dead_function_elimination_traces_calls_inside_residual_lambdas() {
     let (_db, output) = specialize_src(
         r#"
+pragma solcore;
 enum Box<f> {Box(f)}
 
 function target(x : word) returns (word) {
@@ -5698,6 +5803,7 @@ function main() returns (Box<function(word) returns(word)>) {
 fn dead_function_elimination_keeps_function_values_nested_in_constructors() {
     let (_db, output) = specialize_src(
         r#"
+pragma solcore;
 enum Box<f> {Box(f)}
 
 function target(x : word) returns (word) {
@@ -5746,6 +5852,7 @@ fn user_path_suffix_does_not_grant_std_dispatch_inlining() {
         Path::new("/main"),
         "mystd/dispatch.sol",
         r#"
+pragma solcore;
 function clobber(value : word) returns () {
   let observed : word;
   assembly { observed := callvalue() }
@@ -5790,6 +5897,7 @@ fn std_dispatch_statement_inlining_preserves_lexical_scope() {
         db,
         &path,
         r#"
+pragma solcore;
 function clobber() returns () {
   let x : word = 1;
   assembly { mstore(x, x) }
@@ -5839,6 +5947,7 @@ function main(x : word) returns (word) {
 fn class_method_values_resolve_to_the_specialized_instance_method() {
     let (_db, output) = specialize_src(
         r#"
+pragma solcore;
 trait Pick<t> {
   function pick(x : t) returns (t) ;
 }
@@ -5881,6 +5990,7 @@ function main(x : word) returns (word) {
 fn derived_abi_wrappers_delegate_to_the_generic_representation_once() {
     let (db, output) = specialize_src(
         r#"
+pragma solcore;
 pragma no-patterson-condition;
 pragma no-bounded-variable-condition;
 pragma no-coverage-condition;
@@ -6089,6 +6199,7 @@ fn variant_abi_helpers_support_overlapping_main_and_std_roots() {
             let key = module_key_for_path(LibraryId::Main, &root, &path).unwrap();
             let source = format!(
                 r#"
+pragma solcore;
 import * from std;
 import * from std.dispatch;
 import * from std.Generic;
@@ -6133,6 +6244,7 @@ function main(input: calldata<bytes>) returns (memory<bytes>) {{
 fn direct_adt_abi_specializations_keep_sum_representations_separate() {
     let (db, _, output) = specialize_src_with_std_and_db(
         r#"
+pragma solcore;
 import * from std;
 import * from std.dispatch;
 import * from std.Generic;
@@ -6265,6 +6377,7 @@ contract Sums {
 fn derived_storage_wrappers_delegate_to_the_generic_representation_once() {
     let (db, output) = specialize_src(
         r#"
+pragma solcore;
 pragma no-patterson-condition;
 pragma no-bounded-variable-condition;
 pragma no-coverage-condition;
@@ -6409,6 +6522,7 @@ function main(r:storage<Box<word>>, v:Box<word>) returns (Box<word>) {
 fn derived_can_store_rejects_a_mapping_value_leaf_during_specialization() {
     let (_db, output) = specialize_src(
         r#"
+pragma solcore;
 pragma no-patterson-condition;
 pragma no-bounded-variable-condition;
 pragma no-coverage-condition;

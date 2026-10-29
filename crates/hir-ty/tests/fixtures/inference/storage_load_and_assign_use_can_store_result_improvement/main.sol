@@ -1,3 +1,5 @@
+pragma solcore;
+
 import { memory, storage, CanStore } from std;
 
 enum Blob {}

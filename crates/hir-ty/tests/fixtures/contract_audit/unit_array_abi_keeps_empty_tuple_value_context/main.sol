@@ -1,3 +1,5 @@
+pragma solcore;
+
 import * from std;
 type UnitAlias = ();
 type Units = calldata<array<UnitAlias>>;

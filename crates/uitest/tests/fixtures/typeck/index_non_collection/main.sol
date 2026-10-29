@@ -1,3 +1,5 @@
+pragma solcore;
+
 type Callback = function (word) returns (word);
 
 function parameter(g: function (word) returns (word), x: word) returns (word) {

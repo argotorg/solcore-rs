@@ -1,3 +1,5 @@
+pragma solcore;
+
 import { array, storage } from std;
 
 trait Stamp<self> {

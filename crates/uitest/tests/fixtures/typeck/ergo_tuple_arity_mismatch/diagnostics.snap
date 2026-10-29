@@ -4,12 +4,12 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/ergo_tuple_arity_mismatch/main.sol
 ---
 error[SC0201]: type mismatch: expected pair<word, word>, found numeric
- --> /main/main.sol:2:16
+ --> /main/main.sol:4:16
   |
-1 | function f() returns (word, word, word) {
-2 |     return (1, 2);
+3 | function f() returns (word, word, word) {
+4 |     return (1, 2);
   |                ^ expression has mismatched type
-3 | }
+5 | }
   |
   = note: expected type: pair<word, word>
   = note: found type: numeric

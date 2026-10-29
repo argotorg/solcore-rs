@@ -1,3 +1,5 @@
+pragma solcore;
+
 import * as m1 from dupqual_a;
 import * as m2 from dupqual_b;
 

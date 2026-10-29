@@ -11,7 +11,7 @@ fn inline_yul_functions_cannot_shadow_builtins() {
     for name in ["add", "sstore", "stop", "revert", "memoryguard", "clz"] {
         let db = TestDb::default();
         let source = format!(
-            "function f() {{ assembly {{ function {name}(a, b) -> result {{ result := 9 }} }} }}"
+            "pragma solcore; function f() {{ assembly {{ function {name}(a, b) -> result {{ result := 9 }} }} }}"
         );
         let module = parse_module(&db, &source);
         let (_, result) = infer_function(&db, module, "f");
@@ -31,7 +31,7 @@ fn ordinary_inline_yul_functions_remain_callable_in_nested_scopes() {
     let db = TestDb::default();
     let module = parse_module(
         &db,
-        "function f() returns (word) {
+        "pragma solcore;\nfunction f() returns (word) {
             let value: word;
             assembly {
                 function customAdd(a, b) -> result { result := add(a, b) }

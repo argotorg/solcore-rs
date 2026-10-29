@@ -1,3 +1,5 @@
+pragma solcore;
+
 import foo;
 import * as Bar from foo.bar;
 

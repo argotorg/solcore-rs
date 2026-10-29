@@ -233,7 +233,7 @@ mod tests {
         // currently fail name resolution before reaching layout lowering.
         let key = load_main_source(
             &mut db,
-            "enum A<a> { A(a) } enum B<b> { B(b) } enum Box<a> { Box(a) }",
+            "pragma solcore; enum A<a> { A(a) } enum B<b> { B(b) } enum Box<a> { Box(a) }",
         );
         let entry = module_id_from_key(&db, &key);
         let file = db.module_file(entry).unwrap();

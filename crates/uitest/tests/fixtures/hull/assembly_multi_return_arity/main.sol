@@ -1,3 +1,5 @@
+pragma solcore;
+
 contract YulMultiRetBad {
     function main() public returns (word) {
         let x: word;

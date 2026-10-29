@@ -1,3 +1,5 @@
+pragma solcore;
+
 trait C<a> {}
 trait Seed<a> where a: C {}
 trait Sub<a, r> where a: C {}

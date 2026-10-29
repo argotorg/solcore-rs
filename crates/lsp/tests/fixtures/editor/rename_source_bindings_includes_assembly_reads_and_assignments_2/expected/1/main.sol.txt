@@ -1,1 +1,3 @@
+pragma solcore;
+
 function main(renamed: word) returns (word) { assembly { renamed := add(renamed, 1) } return renamed; }

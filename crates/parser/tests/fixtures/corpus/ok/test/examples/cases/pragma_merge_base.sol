@@ -1,3 +1,5 @@
+pragma solcore;
+
 // Test base file for pragma merging functionality
 // This file contains violations of all three condition types with pragmas to disable checks
 

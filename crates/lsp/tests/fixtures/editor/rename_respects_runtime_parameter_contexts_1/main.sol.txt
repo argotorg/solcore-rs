@@ -1,1 +1,3 @@
+pragma solcore;
+
 function id(value: word) returns (word) { return value; }

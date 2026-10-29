@@ -1,3 +1,5 @@
+pragma solcore;
+
 trait Leaf<a> {}
 trait Left<a> {}
 trait Right<a> {}

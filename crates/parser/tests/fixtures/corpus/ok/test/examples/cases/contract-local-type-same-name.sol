@@ -1,3 +1,5 @@
+pragma solcore;
+
 // Two contracts each declare a type named `T`, with DIFFERENT constructors.
 // Contract-local types are qualified by their contract (A.T vs B.T), so the two
 // declarations are distinct and neither the type names nor the constructor

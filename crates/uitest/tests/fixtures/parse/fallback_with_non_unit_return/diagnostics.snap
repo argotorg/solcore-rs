@@ -4,12 +4,12 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/parse/fallback_with_non_unit_return/main.sol
 ---
 error[SC0001]: parse error: unexpected identifier `returns`
- --> /main/main.sol:2:14
+ --> /main/main.sol:4:14
   |
-1 | contract Bad {
-2 |   fallback() returns (word) {}
+3 | contract Bad {
+4 |   fallback() returns (word) {}
   |              ^^^^^^^ unexpected token
-3 |
+5 |
   |
   = note: expecting `payable`, `public`, or `{`
   = note: while parsing fallback definition

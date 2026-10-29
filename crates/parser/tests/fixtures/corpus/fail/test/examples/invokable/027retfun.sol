@@ -1,3 +1,5 @@
+pragma solcore;
+
 /* Manual translation of:
 contract Id1 {
 

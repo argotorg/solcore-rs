@@ -1,3 +1,5 @@
+pragma solcore;
+
 import * from std;
 
 function countdown(n: word) returns (word) {

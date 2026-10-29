@@ -1,3 +1,5 @@
+pragma solcore;
+
 enum Bool {
     True,
     False

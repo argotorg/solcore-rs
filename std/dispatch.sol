@@ -1,3 +1,5 @@
+pragma solcore;
+
 import * from std;
 import { callvalue, calldatasize, calldataload, shr, return_ } from std.opcodes;
 import * from std.Generic;

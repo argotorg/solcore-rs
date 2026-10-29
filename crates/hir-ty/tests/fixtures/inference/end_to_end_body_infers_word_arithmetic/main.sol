@@ -1,3 +1,5 @@
+pragma solcore;
+
 trait Add<t> {
     function add(l: t, r: t) returns (t);
 }

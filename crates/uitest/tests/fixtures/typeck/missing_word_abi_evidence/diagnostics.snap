@@ -4,12 +4,12 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/missing_word_abi_evidence/main.sol
 ---
 error[SC0207]: cannot satisfy trait constraint: Contract<Method<DispatchNameTy_WordAbiProbe_echo, NonPayable, word, word, function(word) returns (word)>, Fallback<NonPayable, (), (), function() returns (())>>: RunContract
- --> /main/main.sol:7:10
-  |
-6 | // with a bounded solver diagnostic while that evidence is missing.
-7 | contract WordAbiProbe {
-  |          ^^^^^^^^^^^^ constraint originates here
-8 |     function echo(value: word) public returns (word) {
-  |
-  = note: no visible impl matches `Contract<Method<DispatchNameTy_WordAbiProbe_echo, NonPayable, word, word, function(word) returns (word)>, Fallback<NonPayable, (), (), function() returns (())>>: RunContract`
-  = help: add a matching impl or strengthen the surrounding type context
+  --> /main/main.sol:9:10
+   |
+ 8 | // with a bounded solver diagnostic while that evidence is missing.
+ 9 | contract WordAbiProbe {
+   |          ^^^^^^^^^^^^ constraint originates here
+10 |     function echo(value: word) public returns (word) {
+   |
+   = note: no visible impl matches `Contract<Method<DispatchNameTy_WordAbiProbe_echo, NonPayable, word, word, function(word) returns (word)>, Fallback<NonPayable, (), (), function() returns (())>>: RunContract`
+   = help: add a matching impl or strengthen the surrounding type context

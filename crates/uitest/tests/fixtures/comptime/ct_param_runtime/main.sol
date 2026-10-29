@@ -1,3 +1,5 @@
+pragma solcore;
+
 /* Negative: non-comptime function parameter passed to a comptime parameter.
    Caught by the SAIL-level check: 'process' CAN be called with an argument
    not known at compile time, which would violate the comptime requirement

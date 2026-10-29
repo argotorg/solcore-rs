@@ -1,3 +1,5 @@
+pragma solcore;
+
 /* Positive: comptime result threaded through two comptime functions.
    increment(20) is comptime, so it can be passed to double's comptime param.
 */

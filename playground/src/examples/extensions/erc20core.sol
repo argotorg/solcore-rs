@@ -1,3 +1,5 @@
+pragma solcore;
+
 import * from std;
 
 export { Change(*), apply };

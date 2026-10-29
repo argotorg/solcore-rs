@@ -1,3 +1,5 @@
+pragma solcore;
+
 type comptime = word;
 
 contract ComptimeModifier {

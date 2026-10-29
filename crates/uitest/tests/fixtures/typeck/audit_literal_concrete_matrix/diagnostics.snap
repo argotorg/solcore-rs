@@ -4,121 +4,121 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/audit_literal_concrete_matrix/main.sol
 ---
 error[SC0201]: type mismatch: expected Opt, found numeric
-  --> /main/main.sol:12:12
+  --> /main/main.sol:14:12
    |
-11 | function opt_ret() returns (Opt) {
-12 |     return 1;
+13 | function opt_ret() returns (Opt) {
+14 |     return 1;
    |            ^ expression has mismatched type
-13 | }
+15 | }
    |
    = note: expected type: Opt
    = note: found type: numeric
 ---
 
 error[SC0201]: type mismatch: expected bool, found numeric
-  --> /main/main.sol:16:12
+  --> /main/main.sol:18:12
    |
-15 | function bool_ret() returns (bool) {
-16 |     return 1;
+17 | function bool_ret() returns (bool) {
+18 |     return 1;
    |            ^ expression has mismatched type
-17 | }
+19 | }
    |
    = note: expected type: bool
    = note: found type: numeric
 ---
 
 error[SC0103]: undefined type constructor: string
-  --> /main/main.sol:19:32
+  --> /main/main.sol:21:32
    |
-18 |
-19 | function string_ret() returns (string) {
+20 |
+21 | function string_ret() returns (string) {
    |                                ^^^^^^ undefined type constructor
-20 |     return 1;
+22 |     return 1;
    |
 ---
 
 error[SC0299]: ambiguous inferred type
-  --> /main/main.sol:19:40
+  --> /main/main.sol:21:40
    |
-18 |
-19 |   function string_ret() returns (string) {
+20 |
+21 |   function string_ret() returns (string) {
    |  ________________________________________^
-20 | |     return 1;
-21 | | }
+22 | |     return 1;
+23 | | }
    | |_^ ambiguous inferred type
-22 |
+24 |
    |
    = note: <_> function() returns (<error>) where _: Int
    = help: add a type annotation or a matching impl to fix the ambiguous type variable
 ---
 
 error[SC0201]: type mismatch: expected (), found numeric
-  --> /main/main.sol:24:12
+  --> /main/main.sol:26:12
    |
-23 | function unit_ret() {
-24 |     return 1;
+25 | function unit_ret() {
+26 |     return 1;
    |            ^ expression has mismatched type
-25 | }
+27 | }
    |
    = note: expected type: ()
    = note: found type: numeric
 ---
 
 error[SC0201]: type mismatch: expected K, found numeric
-  --> /main/main.sol:28:12
+  --> /main/main.sol:30:12
    |
-27 | function contract_ret() returns (K) {
-28 |     return 1;
+29 | function contract_ret() returns (K) {
+30 |     return 1;
    |            ^ expression has mismatched type
-29 | }
+31 | }
    |
    = note: expected type: K
    = note: found type: numeric
 ---
 
 error[SC0201]: type mismatch: expected pair<word, word>, found numeric
-  --> /main/main.sol:32:12
+  --> /main/main.sol:34:12
    |
-31 | function pair_ret() returns (pair<word, word>) {
-32 |     return 1;
+33 | function pair_ret() returns (pair<word, word>) {
+34 |     return 1;
    |            ^ expression has mismatched type
-33 | }
+35 | }
    |
    = note: expected type: pair<word, word>
    = note: found type: numeric
 ---
 
 error[SC0201]: type mismatch: expected sum<word, word>, found numeric
-  --> /main/main.sol:36:12
+  --> /main/main.sol:38:12
    |
-35 | function sum_ret() returns (sum<word, word>) {
-36 |     return 1;
+37 | function sum_ret() returns (sum<word, word>) {
+38 |     return 1;
    |            ^ expression has mismatched type
-37 | }
+39 | }
    |
    = note: expected type: sum<word, word>
    = note: found type: numeric
 ---
 
 error[SC0201]: type mismatch: expected (word, word), found numeric
-  --> /main/main.sol:40:12
+  --> /main/main.sol:42:12
    |
-39 | function tuple_ret() returns (word, word) {
-40 |     return 1;
+41 | function tuple_ret() returns (word, word) {
+42 |     return 1;
    |            ^ expression has mismatched type
-41 | }
+43 | }
    |
    = note: expected type: (word, word)
    = note: found type: numeric
 ---
 
 error[SC0201]: type mismatch: expected function() returns (word), found numeric
-  --> /main/main.sol:44:12
+  --> /main/main.sol:46:12
    |
-43 | function function_ret() returns (function () returns (word)) {
-44 |     return 1;
+45 | function function_ret() returns (function () returns (word)) {
+46 |     return 1;
    |            ^ expression has mismatched type
-45 | }
+47 | }
    |
    = note: expected type: function() returns (word)
    = note: found type: numeric

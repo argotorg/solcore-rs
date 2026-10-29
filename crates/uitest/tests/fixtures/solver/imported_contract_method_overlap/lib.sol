@@ -1,3 +1,5 @@
+pragma solcore;
+
 import * from std;
 import { sstore } from std.opcodes;
 

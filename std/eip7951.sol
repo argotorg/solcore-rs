@@ -1,3 +1,5 @@
+pragma solcore;
+
 import * from std;
 import { mstore, mload, gas, staticcall } from std.opcodes;
 

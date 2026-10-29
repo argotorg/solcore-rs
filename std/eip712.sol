@@ -1,3 +1,5 @@
+pragma solcore;
+
 import * from std;
 import { mstore, keccak256, shl } from std.opcodes;
 

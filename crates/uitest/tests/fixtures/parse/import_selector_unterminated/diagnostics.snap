@@ -4,9 +4,11 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/parse/import_selector_unterminated/main.sol
 ---
 error[SC0001]: parse error: unexpected end of input
- --> /main/main.sol:1:10
+ --> /main/main.sol:3:10
   |
-1 | import {
+1 | pragma solcore;
+2 |
+3 | import {
   |         ^ unexpected token
   |
   = note: expecting selector name

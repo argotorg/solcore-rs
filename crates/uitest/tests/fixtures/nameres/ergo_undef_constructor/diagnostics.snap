@@ -4,11 +4,11 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/nameres/ergo_undef_constructor/main.sol
 ---
 error[SC0101]: undefined name: Option.Nope
- --> /main/main.sol:8:21
-  |
-7 |     match (o) {
-8 |         case Option.Nope {
-  |                     ^^^^ unknown name
-9 |             return 0;
-  |
-  = help: did you mean `Option.None`?
+  --> /main/main.sol:10:21
+   |
+ 9 |     match (o) {
+10 |         case Option.Nope {
+   |                     ^^^^ unknown name
+11 |             return 0;
+   |
+   = help: did you mean `Option.None`?

@@ -1,3 +1,5 @@
+pragma solcore;
+
 import * as Vendor from vendor.math.api;
 import * as Mirror from mirror.api;
 

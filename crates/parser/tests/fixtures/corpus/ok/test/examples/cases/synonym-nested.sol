@@ -1,3 +1,5 @@
+pragma solcore;
+
 // Deeply nested synonyms (synonym of synonym of synonym)
 type Word1 = word;
 type Word2 = Word1;

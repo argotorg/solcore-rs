@@ -4,21 +4,21 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/parse/ergo_assembly_unclosed_call/main.sol
 ---
 error[SC0001]: parse error: unexpected `(`
- --> /main/main.sol:4:17
+ --> /main/main.sol:6:17
   |
-3 |     assembly {
-4 |         r := add(1,
+5 |     assembly {
+6 |         r := add(1,
   |                 ^ unexpected token
-5 |     }
+7 |     }
   |
 ---
 
 error[SC0001]: parse error: unexpected `,`
- --> /main/main.sol:4:19
+ --> /main/main.sol:6:19
   |
-3 |     assembly {
-4 |         r := add(1,
+5 |     assembly {
+6 |         r := add(1,
   |                   ^ unexpected token
-5 |     }
+7 |     }
   |
   = note: expecting `break`, `continue`, `for`, `function`, `if`, `leave`, `let`, `return`, `switch`, `{`, or assembly expression

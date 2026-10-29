@@ -1,3 +1,5 @@
+pragma solcore;
+
 export { Token(Ok), mkErr };
 
 enum Token {

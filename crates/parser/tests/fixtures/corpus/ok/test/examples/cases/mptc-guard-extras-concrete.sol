@@ -1,3 +1,5 @@
+pragma solcore;
+
 // Tests the guard in resolveMPTCFromPreds that skips tryResolveMPTC when all
 // extras are already fully concrete.  Here rep is written as the concrete type
 // `word` directly in the constraint, so freetv extras = [] and the function

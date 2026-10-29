@@ -1,3 +1,5 @@
+pragma solcore;
+
 // Comptime-only parameters are erased by substituting their literal argument.
 //
 // A source `Str` instance that *materializes* its argument only works if the

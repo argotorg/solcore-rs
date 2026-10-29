@@ -4,10 +4,10 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/shorthand_constructor_no_context/main.sol
 ---
 error[SC0224]: cannot resolve shorthand constructor `.Some`: cannot resolve without expected constructor type
- --> /main/main.sol:7:13
-  |
-6 | function noContext() returns (word) {
-7 |     let x = .Some(1);
-  |             ^^^^^^^^ shorthand constructor
-8 |     return 0;
-  |
+  --> /main/main.sol:9:13
+   |
+ 8 | function noContext() returns (word) {
+ 9 |     let x = .Some(1);
+   |             ^^^^^^^^ shorthand constructor
+10 |     return 0;
+   |

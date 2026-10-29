@@ -1,3 +1,5 @@
+pragma solcore;
+
 import * from std;
 
 function deposit(pubkey: memory<string>, withdrawal_credentials: memory<string>, signature: memory<string>, deposit_data_root: uint256) {

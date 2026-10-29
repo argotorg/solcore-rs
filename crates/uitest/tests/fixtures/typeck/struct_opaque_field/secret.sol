@@ -1,3 +1,5 @@
+pragma solcore;
+
 export { Secret, makeSecret };
 
 struct Secret {

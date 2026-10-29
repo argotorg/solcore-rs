@@ -1,3 +1,5 @@
+pragma solcore;
+
 export ambA.{ pick };
 export ambB.{ pick };
 

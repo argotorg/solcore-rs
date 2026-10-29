@@ -26,7 +26,7 @@ fn class_id<'db>(db: &'db TestDb, module: Module<'db>, name: &str) -> ClassId<'d
             }
             _ => None,
         })
-        .unwrap_or_else(|| panic!("class {name}"))
+        .unwrap_or_else(|| panic!("pragma solcore; class {name}"))
 }
 
 fn adt_def<'db>(db: &'db TestDb, module: Module<'db>, name: &str) -> DefId<'db> {
@@ -39,7 +39,7 @@ fn adt_def<'db>(db: &'db TestDb, module: Module<'db>, name: &str) -> DefId<'db> 
             }
             _ => None,
         })
-        .unwrap_or_else(|| panic!("data type {name}"))
+        .unwrap_or_else(|| panic!("pragma solcore; data type {name}"))
 }
 
 fn adt_ty<'db>(db: &'db TestDb, module: Module<'db>, name: &str, args: Vec<Ty<'db>>) -> Ty<'db> {

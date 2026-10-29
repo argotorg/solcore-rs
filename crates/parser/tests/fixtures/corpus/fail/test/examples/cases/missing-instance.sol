@@ -1,3 +1,5 @@
+pragma solcore;
+
 // Note: this class has no instances!
 trait Typedef<abs, rep> {
     function rep(x: abs) returns (rep);

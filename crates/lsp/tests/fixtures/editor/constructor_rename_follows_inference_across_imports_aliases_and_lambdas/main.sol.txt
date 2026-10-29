@@ -1,3 +1,5 @@
+pragma solcore;
+
 import {Choice as Renamed} from math;
 type Alias = Renamed;
 function main() returns (word) {

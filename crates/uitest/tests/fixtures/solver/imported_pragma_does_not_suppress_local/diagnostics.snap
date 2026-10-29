@@ -9,21 +9,21 @@ error[SC0212]: Coverage condition fails for trait:
                List<b>
                does not determine:
                a
-  --> /main/main.sol:10:12
+  --> /main/main.sol:12:12
    |
- 9 |
-10 | impl<a, b> C<List<b>, a, List<a>> {}
+11 |
+12 | impl<a, b> C<List<b>, a, List<a>> {}
    |            ^^^^^^^^^^^^^^^^^^^^^^ impl head does not determine these variables
-11 | impl<x> C<x, word, word> where x: C<word, word> {}
+13 | impl<x> C<x, word, word> where x: C<word, word> {}
    |
 ---
 
 error[SC0213]: impl `x: C<word, word>` does not satisfy the Patterson conditions
-  --> /main/main.sol:11:9
+  --> /main/main.sol:13:9
    |
- 9 |
-10 | impl<a, b> C<List<b>, a, List<a>> {}
-11 | impl<x> C<x, word, word> where x: C<word, word> {}
+11 |
+12 | impl<a, b> C<List<b>, a, List<a>> {}
+13 | impl<x> C<x, word, word> where x: C<word, word> {}
    |         ^^^^^^^^^^^^^^^^ impl head violates Patterson condition
    |
    = note: each impl context must be structurally smaller than the impl head
@@ -35,10 +35,10 @@ error[SC0218]: Overlapping impls are not supported
                x: C<word, word>
                overlaps with:
                List<_>: C<_, List<_>>
-  --> /main/main.sol:11:9
+  --> /main/main.sol:13:9
    |
- 9 |
-10 | impl<a, b> C<List<b>, a, List<a>> {}
+11 |
+12 | impl<a, b> C<List<b>, a, List<a>> {}
    |            ---------------------- previous overlapping impl
-11 | impl<x> C<x, word, word> where x: C<word, word> {}
+13 | impl<x> C<x, word, word> where x: C<word, word> {}
    |         ^^^^^^^^^^^^^^^^ overlapping impl

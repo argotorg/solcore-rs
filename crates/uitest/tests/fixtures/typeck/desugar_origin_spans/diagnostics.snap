@@ -4,48 +4,48 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/desugar_origin_spans/main.sol
 ---
 error[SC0201]: type mismatch: expected word, found bool
- --> /main/main.sol:5:25
+ --> /main/main.sol:7:25
   |
-4 |     }
-5 |     seed: word = true ? false : 1;
+6 |     }
+7 |     seed: word = true ? false : 1;
   |                         ^^^^^ expression has mismatched type
-6 | }
+8 | }
   |
   = note: expected type: word
   = note: found type: bool
 ---
 
 error[SC0203]: tuple pattern expects 2 arguments, but 3 were provided
-  --> /main/main.sol:10:14
+  --> /main/main.sol:12:14
    |
- 9 |     match (p) {
-10 |         case (a, b, c) {
+11 |     match (p) {
+12 |         case (a, b, c) {
    |              ^^^^^^^^^ wrong number of arguments
-11 |             return a;
+13 |             return a;
    |
    = note: expected 2 arguments
    = note: found 3 arguments
 ---
 
 error[SC0201]: type mismatch: expected word, found bool
-  --> /main/main.sol:17:20
+  --> /main/main.sol:19:20
    |
-16 | function if_source(b: bool) returns (word) {
-17 |     return b ? 1 : false;
+18 | function if_source(b: bool) returns (word) {
+19 |     return b ? 1 : false;
    |                    ^^^^^ expression has mismatched type
-18 | }
+20 | }
    |
    = note: expected type: word
    = note: found type: bool
 ---
 
 error[SC0201]: type mismatch: expected word, found bool
-  --> /main/main.sol:21:12
+  --> /main/main.sol:23:12
    |
-20 | function bool_source() returns (word) {
-21 |     return true;
+22 | function bool_source() returns (word) {
+23 |     return true;
    |            ^^^^ expression has mismatched type
-22 | }
+24 | }
    |
    = note: expected type: word
    = note: found type: bool

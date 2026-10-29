@@ -1,3 +1,5 @@
+pragma solcore;
+
 import { Typedef, maxWord, minWord, uint256 } from std;
 
 function minUint(a: uint256, b: uint256) returns (uint256) {

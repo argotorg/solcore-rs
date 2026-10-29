@@ -1,3 +1,5 @@
+pragma solcore;
+
 // A constant-product pool behind an opaque type: Pool is exported without
 // its constructor, so a Pool can only be created or changed through the
 // functions in this module.

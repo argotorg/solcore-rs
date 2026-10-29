@@ -1,3 +1,5 @@
+pragma solcore;
+
 //~ specialize: loader std
 //~ specialize: frontend clean
 //~ specialize: return 9

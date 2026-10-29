@@ -1,3 +1,5 @@
+pragma solcore;
+
 import { RValueIdxAccess } from std;
 
 enum calldata<t> {

@@ -1,3 +1,5 @@
+pragma solcore;
+
 // Exercises checked (reverting) integer arithmetic in std.signed / std.unsigned
 // and uint256 in std. Every value-producing op (+ - * / %) reverts with a
 // Solidity Panic on overflow/underflow (code 0x11) or division/modulo by zero

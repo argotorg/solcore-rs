@@ -1,3 +1,5 @@
+pragma solcore;
+
 function uncurry(f: word, p: (word, word)) returns (word) {
     match (p) {
         case (x, y) {

@@ -1,3 +1,5 @@
+pragma solcore;
+
 function main() returns (word) {
     let b: bool = .true;
     match (b) {

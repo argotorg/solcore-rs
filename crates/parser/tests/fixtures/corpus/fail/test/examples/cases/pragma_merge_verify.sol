@@ -1,3 +1,5 @@
+pragma solcore;
+
 // Verification file for pragma merging
 // This file imports pragma_merge_base but has no pragmas of its own
 // Tests that pragmas from imported files are properly inherited

@@ -1,3 +1,5 @@
+pragma solcore;
+
 import * from globlib hiding { idWord };
 
 function main(x: word) returns (word) {

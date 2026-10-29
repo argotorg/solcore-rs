@@ -1,3 +1,5 @@
+pragma solcore;
+
 trait Test<self> {
     function f(x: self);
 }

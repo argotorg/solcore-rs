@@ -1,3 +1,5 @@
+pragma solcore;
+
 import private_helper_a;
 
 function main(x: word) returns (word) {

@@ -4,10 +4,10 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/specialize/comptime_return_evaluation_failed/main.sol
 ---
 error[SC0409]: comptime evaluation failed: function annotated '-> comptime' returns a runtime expression
-  --> /main/main.sol:10:5
+  --> /main/main.sol:12:5
    |
- 9 | function leak(comptime x: word) returns (comptime<word>) {
-10 |     return sloadWord();
+11 | function leak(comptime x: word) returns (comptime<word>) {
+12 |     return sloadWord();
    |     ^^^^^^^^^^^^^^^^^^^ comptime evaluation failed here
-11 | }
+13 | }
    |

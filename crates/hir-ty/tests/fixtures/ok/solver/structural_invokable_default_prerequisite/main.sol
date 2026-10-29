@@ -1,3 +1,5 @@
+pragma solcore;
+
 // A skipped default must not force its non-terminating prerequisite.
 pragma no-patterson-condition;
 pragma no-coverage-condition;

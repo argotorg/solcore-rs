@@ -1,1 +1,3 @@
+pragma solcore;
+
 export {target}; function target() returns (word) { return 1; }

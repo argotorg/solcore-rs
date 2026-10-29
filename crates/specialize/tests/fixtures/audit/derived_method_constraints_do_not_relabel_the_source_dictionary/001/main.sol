@@ -1,3 +1,5 @@
+pragma solcore;
+
 //~ specialize: loader std
 //~ specialize: frontend clean
 //~ specialize: diagnostic missing-evidence = derived f: word: P

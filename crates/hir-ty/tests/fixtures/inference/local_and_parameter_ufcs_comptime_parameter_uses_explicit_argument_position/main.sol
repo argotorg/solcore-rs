@@ -1,3 +1,5 @@
+pragma solcore;
+
 trait Stamp<self> {
     function stamp(value: self, comptime tag: word) returns (word);
 }

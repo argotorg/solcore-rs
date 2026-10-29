@@ -1,1 +1,3 @@
+pragma solcore;
+
 type Target = word; trait Wrap<a> { function value(x: Target) returns (a); }

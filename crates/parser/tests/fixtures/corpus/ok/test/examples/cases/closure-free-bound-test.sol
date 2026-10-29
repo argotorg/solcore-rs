@@ -1,3 +1,5 @@
+pragma solcore;
+
 function foo(b: bool) {
     let y: word;
     let f = lam (x: word) {

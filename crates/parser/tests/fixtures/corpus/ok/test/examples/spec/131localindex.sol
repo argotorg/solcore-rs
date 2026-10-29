@@ -1,3 +1,5 @@
+pragma solcore;
+
 // `arr[i]` on a *local* storage-array reference, not a contract field.
 // The local already holds the storage reference, so the desugaring emits
 // `ridx(arr, i)` / `lidx(arr, i)` directly (cf. 129arraystorage.sol, which

@@ -1,3 +1,5 @@
+pragma solcore;
+
 import { T as U, mkT } from opaque_dep_base;
 
 export { make };

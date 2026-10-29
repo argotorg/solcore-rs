@@ -1,3 +1,5 @@
+pragma solcore;
+
 enum storage<t> {
     storage(word)
 }

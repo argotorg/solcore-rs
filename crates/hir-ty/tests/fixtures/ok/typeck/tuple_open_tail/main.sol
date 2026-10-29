@@ -1,3 +1,5 @@
+pragma solcore;
+
 type Tail = (word, word);
 
 function keep<a>(value: (word, a)) returns ((word, a)) {

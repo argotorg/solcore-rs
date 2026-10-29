@@ -4,33 +4,33 @@ expression: value
 input_file: crates/parser/tests/fixtures/corpus/fail/test/examples/cases/StructMembers.sol
 ---
 error[SC0001]: parse error: unexpected `;`
-  --> /StructMembers.sol:77:40
+  --> /StructMembers.sol:79:40
    |
-76 |         let szb = memorySize(pb);
-77 |         assembly { sz := add(sz, szb) }; // TODO: bounds check?
+78 |         let szb = memorySize(pb);
+79 |         assembly { sz := add(sz, szb) }; // TODO: bounds check?
    |                                        ^ unexpected token
-78 |         return sz;
+80 |         return sz;
    |
    = note: expecting statement
 ---
 
 error[SC0001]: parse error: unexpected `;`
-  --> /StructMembers.sol:91:37
+  --> /StructMembers.sol:93:37
    |
-90 |         let v;
-91 |         assembly { v := mload(off) };
+92 |         let v;
+93 |         assembly { v := mload(off) };
    |                                     ^ unexpected token
-92 |         return Uint256(v);
+94 |         return Uint256(v);
    |
    = note: expecting statement
 ---
 
 error[SC0001]: parse error: unexpected `;`
-   --> /StructMembers.sol:121:45
+   --> /StructMembers.sol:123:45
     |
-120 |
-121 |         assembly { ptr := add(ptr, offset) };
-    |                                             ^ unexpected token
 122 |
+123 |         assembly { ptr := add(ptr, offset) };
+    |                                             ^ unexpected token
+124 |
     |
     = note: expecting statement

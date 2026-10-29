@@ -1,3 +1,5 @@
+pragma solcore;
+
 enum W<a> {
     W(a)
 }

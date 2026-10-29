@@ -1,3 +1,5 @@
+pragma solcore;
+
 trait Wrap<t> {
     function unwrap(comptime x: t) returns (comptime<word>);
 }

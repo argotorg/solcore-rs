@@ -1,3 +1,5 @@
+pragma solcore;
+
 // Two independent Hull-level problems in separate contracts:
 // string literals are not representable in Hull.
 contract First {

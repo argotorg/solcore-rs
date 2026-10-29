@@ -1,3 +1,5 @@
+pragma solcore;
+
 import booldef;
 
 function main(x: booldef.Bool) returns (word) {

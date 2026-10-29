@@ -1,3 +1,5 @@
+pragma solcore;
+
 type StaticPair = comptime<(word, word)>;
 function get(value: StaticPair) returns (word) {
     match (value) {

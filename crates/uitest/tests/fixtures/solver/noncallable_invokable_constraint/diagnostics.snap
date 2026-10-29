@@ -4,10 +4,10 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/solver/noncallable_invokable_constraint/main.sol
 ---
 error[SC0206]: non-callable value of type word
- --> /main/main.sol:3:12
+ --> /main/main.sol:5:12
   |
-2 |     let x: word = 1;
-3 |     return x();
+4 |     let x: word = 1;
+5 |     return x();
   |            ^ callee is not callable
-4 | }
+6 | }
   |

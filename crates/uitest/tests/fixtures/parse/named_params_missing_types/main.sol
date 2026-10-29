@@ -1,3 +1,5 @@
+pragma solcore;
+
 contract C {
   function compose(f, g) public {
     return lam (x) {

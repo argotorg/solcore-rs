@@ -1,3 +1,5 @@
+pragma solcore;
+
 // All elements of an array literal must share one type: unifying uint256 with
 // address must fail.
 import * from std;

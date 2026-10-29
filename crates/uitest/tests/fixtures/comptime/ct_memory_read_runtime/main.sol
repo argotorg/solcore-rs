@@ -1,3 +1,5 @@
+pragma solcore;
+
 function readMem() returns (word) {
     let value: word;
     assembly {

@@ -611,6 +611,7 @@ mod tests {
     }
 
     const SOURCE: &str = r#"
+pragma solcore;
 import * from std;
 import * from std.dispatch;
 contract Counter {
@@ -855,6 +856,7 @@ contract Counter {
     fn each_call_runs_as_the_chosen_caller() {
         clear();
         let source = r#"
+pragma solcore;
 import * from std;
 import * from std.dispatch;
 import {caller} from std.opcodes;

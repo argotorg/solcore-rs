@@ -1,3 +1,5 @@
+pragma solcore;
+
 trait C<a> {}
 trait Sub<a> where a: C {}
 enum Box<a> {

@@ -1,1 +1,3 @@
+pragma solcore;
+
 type Original = word; function main(value: word) returns (word) { let f = lam (item: Original) -> Original { return item; }; return f(value); }

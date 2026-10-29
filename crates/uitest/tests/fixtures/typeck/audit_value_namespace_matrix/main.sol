@@ -1,3 +1,5 @@
+pragma solcore;
+
 import * as U from util;
 
 enum Opt {

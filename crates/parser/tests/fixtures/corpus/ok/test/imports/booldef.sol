@@ -1,3 +1,5 @@
+pragma solcore;
+
 export { Bool(*), not, C, D, id };
 
 enum Bool {

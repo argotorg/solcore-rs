@@ -53,7 +53,7 @@ fn standard_json_compiles_checked_hull_without_polluting_stdout() {
     let output = run_standard_json(json!({
         "language": "Solcore",
         "sources": {
-            "main.sol": {"content": "function id(x: word) returns (word) { return x; }\n"}
+            "main.sol": {"content": "pragma solcore;\nfunction id(x: word) returns (word) { return x; }\n"}
         },
         "settings": {"solcore": {"entrypoint": "main.sol", "stage": "hull"}},
     }));
@@ -68,8 +68,8 @@ fn standard_json_loads_multiple_virtual_source_files() {
     let output = run_standard_json(json!({
         "language": "Solcore",
         "sources": {
-            "main.sol": {"content": "import {id} from helper;\nfunction main() returns (word) { return id(0); }\n"},
-            "helper.sol": {"content": "export { id };\nfunction id(x: word) returns (word) { return x; }\n"},
+            "main.sol": {"content": "pragma solcore;\nimport {id} from helper;\nfunction main() returns (word) { return id(0); }\n"},
+            "helper.sol": {"content": "pragma solcore;\nexport { id };\nfunction id(x: word) returns (word) { return x; }\n"},
         },
         "settings": {"solcore": {"entrypoint": "main.sol", "stage": "frontend"}},
     }));
@@ -82,7 +82,7 @@ fn standard_json_loads_multiple_virtual_source_files() {
 fn standard_json_reports_request_errors_in_json() {
     let output = run_standard_json(json!({
         "language": "Solcore",
-        "sources": {"../escape.sol": {"content": "function main() returns (word) { return 0; }"}},
+        "sources": {"../escape.sol": {"content": "pragma solcore; function main() returns (word) { return 0; }"}},
     }));
     let response = response(&output);
 
@@ -96,8 +96,8 @@ fn standard_json_rejects_source_aliases_instead_of_compiling_the_wrong_file() {
         let output = run_standard_json(json!({
             "language": "Solcore",
             "sources": {
-                alias: {"content": "function main() returns (word) { return missing; }"},
-                "dir/main.sol": {"content": "function main() returns (word) { return 0; }"},
+                alias: {"content": "pragma solcore; function main() returns (word) { return missing; }"},
+                "dir/main.sol": {"content": "pragma solcore; function main() returns (word) { return 0; }"},
             },
             "settings": {"solcore": {"entrypoint": alias, "stage": "frontend"}},
         }));

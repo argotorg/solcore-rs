@@ -1,3 +1,5 @@
+pragma solcore;
+
 function main(x: mod.Type.Bool) returns (word) {
     match (x) {
         case mod.Type.True {

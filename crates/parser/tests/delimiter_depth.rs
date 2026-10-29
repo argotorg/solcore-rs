@@ -30,7 +30,7 @@ fn mismatched_closing_delimiters_cannot_hide_nested_statement_scopes() {
     // recursion unbounded and aborting the formatter on its default stack.
     for closer in [")", "]"] {
         let source = format!(
-            "function main() {{ {}; {} }}",
+            "pragma solcore; function main() {{ {}; {} }}",
             format!("if (true) {{ {closer} ").repeat(512),
             "}".repeat(512),
         );
@@ -54,7 +54,7 @@ fn mismatched_closing_delimiters_cannot_hide_nested_statement_scopes() {
 #[test]
 fn matching_delimiters_release_the_nesting_budget() {
     let source = format!(
-        "function main() {{ {} }}",
+        "pragma solcore; function main() {{ {} }}",
         "if (true) { let values = [1, 2]; } ".repeat(512),
     );
     assert!(solcore_parser::format::format_source(&source, &Default::default()).is_ok());

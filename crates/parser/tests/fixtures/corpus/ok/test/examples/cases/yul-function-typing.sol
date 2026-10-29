@@ -1,3 +1,5 @@
+pragma solcore;
+
 function foo(length: word, pos: word) returns (word) {
     let ret: word;
     assembly {

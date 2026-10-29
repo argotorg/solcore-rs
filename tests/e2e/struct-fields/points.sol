@@ -1,3 +1,5 @@
+pragma solcore;
+
 export { Point(*), Line(*) };
 
 struct Point<T> {

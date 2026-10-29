@@ -1,3 +1,5 @@
+pragma solcore;
+
 function main_a() returns (word) {
     let x: word;
     assembly {

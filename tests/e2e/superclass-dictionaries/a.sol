@@ -1,3 +1,5 @@
+pragma solcore;
+
 import * from base;
 import * from shared;
 export { allA };

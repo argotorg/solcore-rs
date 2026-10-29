@@ -1,3 +1,5 @@
+pragma solcore;
+
 // INCORRECT: the signature promises a one-argument function (word) -> word,
 // but the returned lambda takes two arguments.
 function makeF(x: word) returns (function (word) returns (word)) {

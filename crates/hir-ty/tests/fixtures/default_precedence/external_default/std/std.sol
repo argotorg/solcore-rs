@@ -1,3 +1,5 @@
+pragma solcore;
+
 export { Choice, Helper, Outer };
 trait Choice<a> {}
 trait Helper<a> {}

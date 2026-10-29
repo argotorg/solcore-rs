@@ -1,1 +1,3 @@
+pragma solcore;
+
 export {read}; function read() returns (word) { return 42; }

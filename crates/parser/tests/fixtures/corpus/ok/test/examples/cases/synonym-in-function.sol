@@ -1,3 +1,5 @@
+pragma solcore;
+
 // Synonyms in function parameter and return types
 type Int = word;
 type Point = pair<Int, Int>;

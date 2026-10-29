@@ -1,3 +1,5 @@
+pragma solcore;
+
 //~ layout: unsupported-recursive
 enum Box<a> {
     Box(a)

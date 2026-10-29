@@ -529,7 +529,7 @@ mod tests {
 
     #[test]
     fn definition_of_parameter_use_points_to_parameter_name() {
-        let source = "function id(x: word) returns (word) {\n  return x;\n}\n";
+        let source = "pragma solcore;\nfunction id(x: word) returns (word) {\n  return x;\n}\n";
         let (world, uri) = world_with_main(source);
         let use_offset = (source.find("return x").expect("return") + "return ".len()) as u32;
         let param_offset = source.find("x: word").expect("param") as u32;
@@ -550,10 +550,8 @@ mod tests {
 
     #[test]
     fn definition_of_import_selector_name_points_to_imported_declaration() {
-        let main =
-            "import {double} from math;\nfunction main() returns (word) { return double(21); }\n";
-        let math =
-            "function double(x: word) returns (word) { return x + x; }\nexport { double };\n";
+        let main = "pragma solcore;\nimport {double} from math;\nfunction main() returns (word) { return double(21); }\n";
+        let math = "pragma solcore;\nfunction double(x: word) returns (word) { return x + x; }\nexport { double };\n";
         let (world, main_uri, math_uri) = world_with_main_and_math(main, math);
         let main_index = world.line_index(&main_uri).expect("main line index");
         let math_index = world.line_index(&math_uri).expect("math line index");
@@ -575,7 +573,7 @@ mod tests {
 
     #[test]
     fn definition_in_embedded_std_is_not_returned_as_an_unopenable_uri() {
-        let source = "import {addWord} from std;\nfunction main() returns (word) { return addWord(1, 2); }\n";
+        let source = "pragma solcore;\nimport {addWord} from std;\nfunction main() returns (word) { return addWord(1, 2); }\n";
         let (world, uri) = world_with_main(source);
         let line_index = world.line_index(&uri).expect("line index");
         let call = source.rfind("addWord").expect("call") as u32;
@@ -588,8 +586,8 @@ mod tests {
 
     #[test]
     fn definition_of_cross_file_type_ref_points_to_type_declaration() {
-        let main = "import {Box} from models;\nfunction wrap(value: word) returns (Box) {\n  let boxed: Box = Box(value);\n  return boxed;\n}\n";
-        let models = "enum Box {Box(word)}\nexport { Box };\n";
+        let main = "pragma solcore;\nimport {Box} from models;\nfunction wrap(value: word) returns (Box) {\n  let boxed: Box = Box(value);\n  return boxed;\n}\n";
+        let models = "pragma solcore;\nenum Box {Box(word)}\nexport { Box };\n";
         let (world, main_uri, models_uri) = world_with_main_and_nested(main, "models", models);
         let models_index = world.line_index(&models_uri).expect("models line index");
         let type_ref = (main.find("boxed: Box").expect("local type") + "boxed: ".len()) as u32;
@@ -606,7 +604,7 @@ mod tests {
 
     #[test]
     fn definition_on_type_declaration_points_to_itself() {
-        let source = "enum Choice {Left , Right}\n";
+        let source = "pragma solcore;\nenum Choice {Left , Right}\n";
         let (world, uri) = world_with_main(source);
         let line_index = world.line_index(&uri).expect("line index");
         let declaration = source.find("Choice").expect("declaration") as u32;
@@ -622,7 +620,7 @@ mod tests {
 
     #[test]
     fn definition_of_predicate_points_to_trait_declaration() {
-        let source = "trait Comparable<a> {\n  function compare(x: a, y: a) returns (word) ;\n}\n\nfunction keep<a>(x: a) returns (a) where a: Comparable { return x; }\n";
+        let source = "pragma solcore;\ntrait Comparable<a> {\n  function compare(x: a, y: a) returns (word) ;\n}\n\nfunction keep<a>(x: a) returns (a) where a: Comparable { return x; }\n";
         let (world, uri) = world_with_main(source);
         let line_index = world.line_index(&uri).expect("line index");
         let declaration = source.find("Comparable").expect("trait declaration") as u32;
@@ -639,7 +637,7 @@ mod tests {
 
     #[test]
     fn definition_of_constructor_pattern_points_to_constructor_declaration() {
-        let source = "enum Choice {Left(word) , Right}\n\nfunction unwrap(value: Choice) returns (word) {\n  match (value) {\n  case Choice.Left(x) { return x; }\ncase Choice.Right { return 0; }}\n}\n";
+        let source = "pragma solcore;\nenum Choice {Left(word) , Right}\n\nfunction unwrap(value: Choice) returns (word) {\n  match (value) {\n  case Choice.Left(x) { return x; }\ncase Choice.Right { return 0; }}\n}\n";
         let (world, uri) = world_with_main(source);
         let line_index = world.line_index(&uri).expect("line index");
         let declaration = source.find("Left").expect("constructor declaration") as u32;
@@ -656,8 +654,9 @@ mod tests {
 
     #[test]
     fn definition_of_import_path_and_module_qualifier_points_to_module_start() {
-        let main = "import foo.bar;\nfunction main() returns (word) { return foo.bar.value(); }\n";
-        let bar = "export { value };\nfunction value() returns (word) { return 7; }\n";
+        let main = "pragma solcore;\nimport foo.bar;\nfunction main() returns (word) { return foo.bar.value(); }\n";
+        let bar =
+            "pragma solcore;\nexport { value };\nfunction value() returns (word) { return 7; }\n";
         let (world, main_uri, bar_uri) = world_with_main_and_nested(main, "foo/bar", bar);
         let bar_index = world.line_index(&bar_uri).expect("bar line index");
         let expected = bar_index.range(0, 0);
@@ -675,9 +674,11 @@ mod tests {
 
     #[test]
     fn definition_of_exact_module_qualifier_wins_over_shared_navigation_origin() {
-        let main = "import foo.bar;\nimport foo;\nfunction main() returns (word) { return foo.value(); }\n";
-        let foo = "export { value };\nfunction value() returns (word) { return 1; }\n";
-        let bar = "export { value };\nfunction value() returns (word) { return 2; }\n";
+        let main = "pragma solcore;\nimport foo.bar;\nimport foo;\nfunction main() returns (word) { return foo.value(); }\n";
+        let foo =
+            "pragma solcore;\nexport { value };\nfunction value() returns (word) { return 1; }\n";
+        let bar =
+            "pragma solcore;\nexport { value };\nfunction value() returns (word) { return 2; }\n";
         let mut world = WorldState::new();
         let main_uri = Url::parse("file:///main/main.sol").expect("main uri");
         let foo_uri = Url::parse("file:///main/foo.sol").expect("foo uri");

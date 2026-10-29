@@ -4,50 +4,50 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/comptime/ct_memory_after_runtime_asm/main.sol
 ---
 error[SC0409]: comptime evaluation failed: comptime let 'observed' is bound to a runtime expression
-  --> /main/main.sol:22:9
+  --> /main/main.sol:24:9
    |
-21 |         }
-22 |         let observed: comptime<word> = readMem();
+23 |         }
+24 |         let observed: comptime<word> = readMem();
    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ comptime evaluation failed here
-23 |         return observed;
+25 |         return observed;
    |
 ---
 
 error[SC0409]: comptime evaluation failed: comptime let 'observed' is bound to a runtime expression
-  --> /main/main.sol:37:9
+  --> /main/main.sol:39:9
    |
-36 |         writeMem();
-37 |         let observed: comptime<word> = readMem();
+38 |         writeMem();
+39 |         let observed: comptime<word> = readMem();
    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ comptime evaluation failed here
-38 |         return observed;
+40 |         return observed;
    |
 ---
 
 error[SC0409]: comptime evaluation failed: comptime let 'observed' is bound to a runtime expression
-  --> /main/main.sol:51:13
+  --> /main/main.sol:53:13
    |
-50 |             // A later iteration cannot reuse memory from before the loop.
-51 |             let observed: comptime<word> = readMem();
+52 |             // A later iteration cannot reuse memory from before the loop.
+53 |             let observed: comptime<word> = readMem();
    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ comptime evaluation failed here
-52 |             writeMem();
+54 |             writeMem();
    |
 ---
 
 error[SC0409]: comptime evaluation failed: comptime let 'observed' is bound to a runtime expression
-  --> /main/main.sol:68:9
+  --> /main/main.sol:70:9
    |
-67 |         }
-68 |         let observed: comptime<word> = readMem();
+69 |         }
+70 |         let observed: comptime<word> = readMem();
    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ comptime evaluation failed here
-69 |         return observed;
+71 |         return observed;
    |
 ---
 
 error[SC0409]: comptime evaluation failed: comptime let 'observed' is bound to a runtime expression
-  --> /main/main.sol:90:9
+  --> /main/main.sol:92:9
    |
-89 |         let seed: comptime<word> = storeLoad(42);
-90 |         let observed: comptime<word> = second(writeUnknown(input), readMem());
+91 |         let seed: comptime<word> = storeLoad(42);
+92 |         let observed: comptime<word> = second(writeUnknown(input), readMem());
    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ comptime evaluation failed here
-91 |         return observed;
+93 |         return observed;
    |

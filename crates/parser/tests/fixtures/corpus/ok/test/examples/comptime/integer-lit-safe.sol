@@ -1,3 +1,5 @@
+pragma solcore;
+
 import * from std;
 
 // Safety: verify literals pick up the correct type from context, no spurious coercions.

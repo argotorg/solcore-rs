@@ -1,3 +1,5 @@
+pragma solcore;
+
 export { ok };
 
 function ok() returns (word) {

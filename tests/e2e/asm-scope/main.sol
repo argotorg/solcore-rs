@@ -1,3 +1,5 @@
+pragma solcore;
+
 // #[scenario("asm_scope")]
 // #[deploy(0x) -> success]
 // #[raw(0x, label = "suite `asm_scope` test #2") -> success(0x0000000000000000000000000000000000000000000000000000000000000093)]

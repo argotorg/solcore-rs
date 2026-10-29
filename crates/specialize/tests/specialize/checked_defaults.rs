@@ -12,6 +12,7 @@ fn inferred_integer_arithmetic_fails_at_comptime_instead_of_wrapping() {
     ] {
         let output = specialize_src_with_std(&format!(
             r#"
+pragma solcore;
 import * from std;
 function calculate() returns (bool) {{
     let x = {a};
@@ -42,6 +43,7 @@ fn default_integer_literal_patterns_match_the_uint256_representation() {
     for (value, expected) in [(0, "7"), (1, "8"), (2, "9")] {
         let output = specialize_src_with_std(&format!(
             r#"
+pragma solcore;
 import * from std;
 function classify(x: uint256) returns (word) {{
     match (x) {{

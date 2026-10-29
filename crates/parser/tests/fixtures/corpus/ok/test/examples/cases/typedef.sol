@@ -1,3 +1,5 @@
+pragma solcore;
+
 trait Typedef<self, underlyingType> {
     function rep(x: self) returns (underlyingType);
     function abs(x: underlyingType) returns (self);

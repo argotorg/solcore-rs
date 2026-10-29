@@ -1,3 +1,5 @@
+pragma solcore;
+
 // 日本語 🦀: source offsets must survive UTF-16 conversion.
 enum Choice { Pick(word), Other }
 function main() returns (word) {

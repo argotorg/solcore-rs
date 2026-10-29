@@ -1,3 +1,5 @@
+pragma solcore;
+
 function value(x: word) returns (word) {
     return x;
 }

@@ -1,3 +1,5 @@
+pragma solcore;
+
 contract MemoryContract {
     function main() returns (word) {
         let result: word;

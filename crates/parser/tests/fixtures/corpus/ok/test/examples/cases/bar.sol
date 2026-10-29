@@ -1,3 +1,5 @@
+pragma solcore;
+
 pragma no-coverage-condition Bar;
 
 enum Wrap<a> {

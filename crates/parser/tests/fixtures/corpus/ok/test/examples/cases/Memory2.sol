@@ -1,3 +1,5 @@
+pragma solcore;
+
 enum Memory<a> {
     Memory(word)
 }

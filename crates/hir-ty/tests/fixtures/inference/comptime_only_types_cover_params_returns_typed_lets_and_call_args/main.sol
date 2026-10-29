@@ -1,3 +1,5 @@
+pragma solcore;
+
 import { string } from std;
 
 type Text = string;

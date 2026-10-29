@@ -1,3 +1,5 @@
+pragma solcore;
+
 // Unconstrained constructor: the type argument of Option is never fixed,
 // so specialization sees a free type variable.  Judge whether the error
 // points at `None` and names the type variable usefully.

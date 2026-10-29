@@ -1,3 +1,5 @@
+pragma solcore;
+
 export { deep };
 
 function deep() returns (word) {

@@ -1,1 +1,3 @@
+pragma solcore;
+
 function id<Original>(value: Original) returns (Original) { return value; }

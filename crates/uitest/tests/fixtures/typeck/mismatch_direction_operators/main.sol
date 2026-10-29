@@ -1,3 +1,5 @@
+pragma solcore;
+
 trait Add<a> {
     function add(x: a, y: a) returns (bool);
 }

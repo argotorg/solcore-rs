@@ -1,3 +1,5 @@
+pragma solcore;
+
 trait A<self> {
     function foo(p: self) returns (word);
 }

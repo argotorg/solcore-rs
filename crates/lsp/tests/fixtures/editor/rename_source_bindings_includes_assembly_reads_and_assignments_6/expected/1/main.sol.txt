@@ -1,1 +1,3 @@
+pragma solcore;
+
 function main(input: word) returns (word) { let renamed = input; let f = lam (x: word) -> word { assembly { pop(renamed) } return renamed; }; return f(input); }

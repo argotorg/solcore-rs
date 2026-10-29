@@ -1,3 +1,5 @@
+pragma solcore;
+
 contract GetSet {
     value: Word;
 

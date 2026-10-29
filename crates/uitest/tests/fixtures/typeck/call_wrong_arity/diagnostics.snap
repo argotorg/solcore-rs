@@ -4,17 +4,17 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/call_wrong_arity/main.sol
 ---
 error[SC0203]: call expects 1 argument, but 0 were provided
- --> /main/main.sol:6:12
+ --> /main/main.sol:8:12
   |
-1 | function f(x: word) returns (word) {
+2 |
+3 | function f(x: word) returns (word) {
   |          - `f` defined here
-2 |     return x;
-3 | }
-4 |
-5 | function g() returns (word) {
-6 |     return f();
+4 |     return x;
+...
+7 | function g() returns (word) {
+8 |     return f();
   |            ^^^ wrong number of arguments
-7 | }
+9 | }
   |
   = note: expected 1 argument
   = note: found 0 arguments

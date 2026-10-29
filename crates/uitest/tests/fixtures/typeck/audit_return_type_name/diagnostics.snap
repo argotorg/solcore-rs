@@ -4,11 +4,11 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/audit_return_type_name/main.sol
 ---
 error[SC0228]: type name used as value: `Opt`
- --> /main/main.sol:7:12
-  |
-6 | function f() returns (Opt) {
-7 |     return Opt;
-  |            ^^^ not a value
-8 | }
-  |
-  = help: use a constructor or value binding here, not a namespace name
+  --> /main/main.sol:9:12
+   |
+ 8 | function f() returns (Opt) {
+ 9 |     return Opt;
+   |            ^^^ not a value
+10 | }
+   |
+   = help: use a constructor or value binding here, not a namespace name

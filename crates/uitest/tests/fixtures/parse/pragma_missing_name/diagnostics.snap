@@ -4,9 +4,11 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/parse/pragma_missing_name/main.sol
 ---
 error[SC0001]: parse error: unexpected `;`
- --> /main/main.sol:1:8
+ --> /main/main.sol:3:8
   |
-1 | pragma ;
+1 | pragma solcore;
+2 |
+3 | pragma ;
   |        ^ unexpected token
   |
   = note: expecting identifier

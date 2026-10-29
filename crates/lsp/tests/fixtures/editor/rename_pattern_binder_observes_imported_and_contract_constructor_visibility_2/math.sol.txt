@@ -1,1 +1,3 @@
+pragma solcore;
+
 enum Choice { Choice, Other } export {Choice(Choice, Other)};

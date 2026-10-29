@@ -4,17 +4,17 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/ergo_arg_type_mismatch/main.sol
 ---
 error[SC0201]: argument type mismatch in call to `paint`
-  --> /main/main.sol:11:21
+  --> /main/main.sol:13:21
    |
- 5 |
- 6 | function paint(name: word, c: Color) returns (Color) {
+ 7 |
+ 8 | function paint(name: word, c: Color) returns (Color) {
    |                            - parameter `c` defined here
- 7 |     return c;
+ 9 |     return c;
 ...
-10 | function go() returns (Color) {
-11 |     return paint(1, true);
+12 | function go() returns (Color) {
+13 |     return paint(1, true);
    |                     ^^^^ argument has mismatched type
-12 | }
+14 | }
    |
    = note: expected `Color` because parameter `c` of `paint` has type `Color`
    = note: found type: bool
