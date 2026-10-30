@@ -167,6 +167,7 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
                 };
                 self.map.record_expr(body, expr_id, resolution);
             }
+            ExprKind::NewArray { ty, .. } => self.ty(*ty),
             ExprKind::Proxy { ty, .. } => {
                 self.ty(*ty);
                 if let Some(resolution) = self.lookup_type("Proxy") {

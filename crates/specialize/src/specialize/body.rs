@@ -573,6 +573,7 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
             ExprKind::Lit(lit) => MonoExprKind::Lit(lit.clone()),
             ExprKind::Ident(name) => self.ident_expr(expr_id, name, mono_ty, expr.span),
             ExprKind::Tuple(elems) => self.tuple_expr(expr_id, elems, ty, expr.span)?.kind,
+            ExprKind::NewArray { len, .. } => self.new_array_expr(*len, ty, expr.span)?.kind,
             ExprKind::Array(elems) => self.array_lit_expr(elems, ty, expr.span)?.kind,
             ExprKind::Call { callee, args } => {
                 self.call_expr(expr_id, *callee, args, ty, expr.span)?
@@ -2415,6 +2416,23 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
         self.synthetic_std_call("ridx", vec![base, index], result_ty, span)
     }
 
+    /// `new T[](len)` allocates a zeroed memory array; arrays of memory values
+    /// such as `new T[][](len)` start with every element the empty array.
+    fn new_array_expr(
+        &mut self,
+        len: Id<Expr<'db>>,
+        ty: Ty<'db>,
+        span: Span<'db>,
+    ) -> Option<MonoExpr<'db>> {
+        let len = self.expr(len)?;
+        let helper = if memory_dyn_array_elem_is_memory(self.driver.db, ty) {
+            "newNestedArray"
+        } else {
+            "newArray"
+        };
+        self.synthetic_std_call(helper, vec![len], ty, span)
+    }
+
     /// The base and index of `m[i]` when `m` is a memory array, after peeling
     /// type annotations from an assignment target.
     fn memory_array_index_parts(
@@ -3110,6 +3128,29 @@ fn ty_is_memory_dyn_array<'db>(db: &'db dyn Db, ty: Ty<'db>) -> bool {
             ctor: TyCtor::User(array),
             args,
         } if args.len() == 1 && is_canonical_std_def_named(db, array.def, "DynArray")
+    )
+}
+
+/// Whether `memory<DynArray<memory<_>>>`: the elements are memory pointers.
+fn memory_dyn_array_elem_is_memory<'db>(db: &'db dyn Db, ty: Ty<'db>) -> bool {
+    let TyKind::Named { args, .. } = ty.kind(db) else {
+        return false;
+    };
+    let [dyn_array] = args.as_slice() else {
+        return false;
+    };
+    let TyKind::Named { args, .. } = dyn_array.kind(db) else {
+        return false;
+    };
+    let [elem] = args.as_slice() else {
+        return false;
+    };
+    matches!(
+        elem.kind(db),
+        TyKind::Named {
+            ctor: TyCtor::User(memory),
+            ..
+        } if is_canonical_std_def_named(db, memory.def, "memory")
     )
 }
 

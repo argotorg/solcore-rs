@@ -125,6 +125,16 @@ fn formats_array_types_without_spaces_inside_brackets() {
 }
 
 #[test]
+fn formats_new_array_allocations_and_keeps_new_as_an_identifier() {
+    let source = "pragma solcore;\nfunction new(x:word)returns(word){return x;}\nfunction f(n:uint256)returns(word){let m=new uint256[ ]( n );let r=new uint256[][](n+1);return new(1);}";
+    assert_eq!(
+        format(source),
+        "pragma solcore;\nfunction new(x: word) returns (word) {\n    return x;\n}\nfunction f(n: uint256) returns (word) {\n    let m = new uint256[](n);\n    let r = new uint256[][](n + 1);\n    return new(1);\n}\n"
+    );
+    assert_stable(source);
+}
+
+#[test]
 fn rejects_invalid_input_without_returning_partial_output() {
     for source in [
         "pragma solcore; function f(){let x=;}",

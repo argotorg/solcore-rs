@@ -446,6 +446,10 @@ impl<'src> Collector<'src> {
                 self.pending.extend(args.into_iter().map(Node::Expr));
             }
             ParsedExprKind::Proxy { ty, .. } => self.pending.push(Node::Ty(ty)),
+            ParsedExprKind::NewArray { ty, len, .. } => {
+                self.pending.push(Node::Ty(ty));
+                self.pending.push(Node::Expr(*len));
+            }
             ParsedExprKind::Lambda {
                 params,
                 ret,

@@ -409,6 +409,10 @@ impl<'db> ComptimeChecker<'db> {
                 }
                 ComptimeValue::Runtime
             }
+            ExprKind::NewArray { len, .. } => {
+                self.classify_expr(body, *len);
+                ComptimeValue::Runtime
+            }
             ExprKind::Lambda {
                 params,
                 ret,

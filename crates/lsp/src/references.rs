@@ -2324,7 +2324,8 @@ fn expr_reference_span<'db>(db: &'db dyn hir_ty::Db, expr: &Expr<'db>) -> Option
         | ExprKind::UnaryOp { .. }
         | ExprKind::If { .. }
         | ExprKind::Tuple(_)
-        | ExprKind::Array(_) => None,
+        | ExprKind::Array(_)
+        | ExprKind::NewArray { .. } => None,
     }
 }
 

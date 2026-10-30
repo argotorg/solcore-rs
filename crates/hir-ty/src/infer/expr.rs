@@ -213,6 +213,7 @@ impl<'db> InferCtx<'db> {
             }
             ExprKind::Tuple(elems) => self.infer_tuple_expr(body, expr_id, elems, expected.clone()),
             ExprKind::Array(elems) => self.infer_array_expr(body, expr_id, elems),
+            ExprKind::NewArray { ty, len, .. } => self.infer_new_array_expr(body, *ty, *len),
             ExprKind::Error => InferTy::Error,
         };
         if let Some(expected) = expected {
@@ -330,6 +331,33 @@ impl<'db> InferCtx<'db> {
         }
 
         self.memory_dyn_array_ty(elem_ty).unwrap_or(InferTy::Error)
+    }
+
+    /// `new T[](len)` has the memory array type `T[]` denotes outside a
+    /// contract field; the length is a `uint256` and elements are words.
+    fn infer_new_array_expr(
+        &mut self,
+        body: FuncBody<'db>,
+        ty: TypeRef<'db>,
+        len: Id<Expr<'db>>,
+    ) -> InferTy<'db> {
+        let array_ty = self.lower_type_ref(ty);
+        let len_ty =
+            crate::support::canonical_std_adt_def(self.db, "uint256").map(|def| InferTy::Named {
+                ctor: TyCtor::User(UserTyCtor {
+                    def,
+                    kind: UserTyCtorKind::Adt,
+                }),
+                args: Vec::new(),
+            });
+        let actual = self.infer_expr_expected(body, len, len_ty.clone());
+        if let Some(len_ty) = len_ty {
+            self.unify_expr(body, len, len_ty, actual);
+        }
+        if let Some(elem_ty) = self.memory_dyn_array_elem_ty(array_ty.clone()) {
+            self.push_typedef_word_obligation(elem_ty, ObligationSource::Scheme);
+        }
+        array_ty
     }
 
     /// Gives `@T` the same `Proxy<T>` constructor selected by its call-site

@@ -401,6 +401,7 @@ pub(super) fn expr_is_literal_comptime<'db>(
         }
         ExprKind::Ident(_)
         | ExprKind::Array(_)
+        | ExprKind::NewArray { .. }
         | ExprKind::Call { .. }
         | ExprKind::Field { .. }
         | ExprKind::Index { .. }

@@ -505,7 +505,7 @@ impl<'db> InferCtx<'db> {
         })
     }
 
-    fn memory_dyn_array_elem_ty(&mut self, ty: InferTy<'db>) -> Option<InferTy<'db>> {
+    pub(super) fn memory_dyn_array_elem_ty(&mut self, ty: InferTy<'db>) -> Option<InferTy<'db>> {
         let memory = crate::support::canonical_std_adt_def(self.db, "memory")?;
         let dyn_array = crate::support::canonical_std_adt_def(self.db, "DynArray")?;
         let ty = self.normalize_aliases(ty);
@@ -756,7 +756,7 @@ impl<'db> InferCtx<'db> {
         });
     }
 
-    fn push_typedef_word_obligation(
+    pub(super) fn push_typedef_word_obligation(
         &mut self,
         value_ty: InferTy<'db>,
         source: ObligationSource<'db>,

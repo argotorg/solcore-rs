@@ -1589,6 +1589,36 @@ match (left, right) {
     }
 
     #[test]
+    fn new_allocates_arrays_and_otherwise_stays_an_identifier() {
+        let source = "{ let m = new uint256[][](n); return new(m); }";
+        let parsed = parse_body_statements(source, (0..source.len()).into());
+        assert!(parsed.errors.is_empty(), "errors: {:#?}", parsed.errors);
+        let [first, second] = parsed.output.as_slice() else {
+            panic!("expected two statements: {:#?}", parsed.output);
+        };
+        let ParsedStmtKind::Let {
+            init: Some(init), ..
+        } = &first.kind
+        else {
+            panic!("expected a let: {first:#?}");
+        };
+        let ParsedExprKind::NewArray { ty, .. } = &init.kind else {
+            panic!("expected an allocation: {init:#?}");
+        };
+        let ParsedTyKind::Array { elem, .. } = &ty.kind else {
+            panic!("expected an array type: {ty:#?}");
+        };
+        assert!(matches!(elem.kind, ParsedTyKind::Array { .. }));
+        assert!(matches!(
+            &second.kind,
+            ParsedStmtKind::Return(Some(ParsedExpr {
+                kind: ParsedExprKind::Call { .. },
+                ..
+            }))
+        ));
+    }
+
+    #[test]
     fn if_statement_requires_a_parenthesized_condition() {
         let source = "{ if (condition) { return 1; } else { return 0; } }";
         let parsed = parse_body_statements(source, (0..source.len()).into());

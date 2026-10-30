@@ -573,6 +573,7 @@ impl<'db> DesugarCollector<'db> {
                     self.expr(*elem);
                 }
             }
+            ExprKind::NewArray { len, .. } => self.expr(*len),
             ExprKind::Lit(_) | ExprKind::Proxy { .. } | ExprKind::Error => {}
         }
     }

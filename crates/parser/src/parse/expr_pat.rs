@@ -95,6 +95,7 @@ fn limit_expr_depth<'src>(
                 pending.extend(args.iter().map(|child| (child, depth + 1)));
             }
             ParsedExprKind::Field { base, .. } => pending.push((base, depth + 1)),
+            ParsedExprKind::NewArray { len, .. } => pending.push((len, depth + 1)),
             ParsedExprKind::UnaryOp { expr, .. } => pending.push((expr, depth + 1)),
             ParsedExprKind::If {
                 cond,
@@ -229,6 +230,33 @@ where
         })
         .boxed();
 
+    // `new T[](len)` allocates a memory array, as in Solidity. Only array types
+    // are allocatable; anything else backtracks, so `new(x)` stays a call.
+    let new_array_expr = new_kw_parser()
+        .then(type_parser())
+        .then(
+            expr.clone()
+                .delimited_by(just(Token::LParen), just(Token::RParen)),
+        )
+        .try_map(|((kw, ty), len), span| {
+            if matches!(ty.kind, ParsedTyKind::Array { .. }) {
+                Ok(ParsedExpr {
+                    span,
+                    kind: ParsedExprKind::NewArray {
+                        kw,
+                        ty,
+                        len: Box::new(len),
+                    },
+                })
+            } else {
+                Err(Rich::custom(
+                    span,
+                    "`new` allocates arrays: use `new T[](length)`",
+                ))
+            }
+        })
+        .boxed();
+
     let proxy_expr = just(Token::At)
         .map_with(|_, e| e.span())
         .then(type_parser())
@@ -262,6 +290,7 @@ where
                 span: e.span(),
                 kind: ParsedExprKind::DotCtor { dot, name, args },
             }))
+        .or(new_array_expr)
         .or(ident_parser().map(|ident| ParsedExpr {
             span: ident.1,
             kind: ParsedExprKind::Ident(ident),

@@ -574,6 +574,15 @@ pub(crate) enum ParsedExprKind<'src> {
         /// Argument expressions.
         args: Vec<ParsedExpr<'src>>,
     },
+    /// Memory array allocation `new T[](len)`.
+    NewArray {
+        /// Span of the contextual `new` keyword.
+        kw: LexSpan,
+        /// Allocated array type, always `T[]`.
+        ty: ParsedTy<'src>,
+        /// Number of elements.
+        len: Box<ParsedExpr<'src>>,
+    },
     /// Type proxy expression.
     Proxy {
         /// Span of the `@`.

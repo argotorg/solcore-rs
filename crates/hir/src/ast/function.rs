@@ -242,6 +242,15 @@ pub enum ExprKind<'db> {
         /// Constructor arguments.
         args: Vec<Id<Expr<'db>>>,
     },
+    /// Memory array allocation `new T[](len)`, zero-initialised.
+    NewArray {
+        /// Span of the contextual `new` keyword.
+        kw: Span<'db>,
+        /// Allocated array type, always `T[]`.
+        ty: TypeRef<'db>,
+        /// Number of elements.
+        len: Id<Expr<'db>>,
+    },
     /// Type proxy expression introduced by `@`.
     Proxy {
         /// Span of the `@` token.

@@ -1008,6 +1008,10 @@ impl<'db> BodyCollector<'db> {
                     self.expr(*elem);
                 }
             }
+            ExprKind::NewArray { ty, len, .. } => {
+                self.type_ref(*ty);
+                self.expr(*len);
+            }
             ExprKind::Proxy { ty, .. } => self.type_ref(*ty),
             ExprKind::Lit(_) | ExprKind::Error => {}
         }
@@ -1171,6 +1175,7 @@ impl<'a, 'db> FieldInitCollector<'a, 'db> {
                     self.expr(*elem);
                 }
             }
+            ExprKind::NewArray { len, .. } => self.expr(*len),
             ExprKind::Lambda { .. }
             | ExprKind::Lit(_)
             | ExprKind::Proxy { .. }

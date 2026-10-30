@@ -1571,6 +1571,9 @@ fn collect_uninitialized_let_type_refs_from_expr<'db>(
                 collect_uninitialized_let_type_refs_from_expr(db, body, *expr, out);
             }
         }
+        ExprKind::NewArray { len, .. } => {
+            collect_uninitialized_let_type_refs_from_expr(db, body, *len, out);
+        }
         ExprKind::BinOp { lhs, rhs, .. } => {
             collect_uninitialized_let_type_refs_from_expr(db, body, *lhs, out);
             collect_uninitialized_let_type_refs_from_expr(db, body, *rhs, out);

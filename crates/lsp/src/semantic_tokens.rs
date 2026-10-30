@@ -523,6 +523,7 @@ fn expr_token_span<'db>(
         | ExprKind::If { .. }
         | ExprKind::Tuple(_)
         | ExprKind::Array(_)
+        | ExprKind::NewArray { .. }
         | ExprKind::Error => None,
     }
 }
