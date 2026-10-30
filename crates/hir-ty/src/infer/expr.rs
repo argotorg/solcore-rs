@@ -96,6 +96,14 @@ impl<'db> InferCtx<'db> {
                         expected.clone(),
                     ) {
                         ret
+                    } else if let Some(ret) = self.infer_user_collection_index_read(
+                        body,
+                        expr_id,
+                        *index,
+                        base_ty.clone(),
+                        expected.clone(),
+                    ) {
+                        ret
                     } else {
                         self.infer_expr(body, *index);
                         if !matches!(self.engine.resolve(base_ty.clone()), InferTy::Error) {

@@ -125,7 +125,9 @@ impl<'db> InferCtx<'db> {
         }
     }
 
-    pub(super) fn reject_memory_array_index_assign(
+    /// `m[i] = v` on a memory array writes the element in place, so `v` must
+    /// have the element type.
+    pub(super) fn infer_memory_array_index_assign(
         &mut self,
         body: FuncBody<'db>,
         lhs: Id<Expr<'db>>,
@@ -135,24 +137,15 @@ impl<'db> InferCtx<'db> {
             return false;
         };
         let base_ty = self.infer_expr(body, base);
-        let Some(elem_ty) = self.memory_dyn_array_elem_ty(base_ty.clone()) else {
+        let Some(elem_ty) = self.memory_dyn_array_elem_ty(base_ty) else {
             return false;
         };
         let index_ty = self.infer_expr(body, index);
         self.push_typedef_word_obligation(index_ty, ObligationSource::Scheme);
         self.push_typedef_word_obligation(elem_ty.clone(), ObligationSource::Scheme);
         let lhs_ty = self.record_read_only_array_index_lhs_ty(body, lhs, elem_ty);
-        self.infer_expr_expected(body, rhs, Some(lhs_ty));
-        let actual = self.display_infer_ty(base_ty);
-        self.emit_expr_error(
-            body,
-            lhs,
-            TypeckDiagnostic::Mismatch {
-                span: self.expr_label_span(body, lhs),
-                expected: "assignable storage-backed index".to_owned(),
-                actual,
-            },
-        );
+        let rhs_ty = self.infer_expr_expected(body, rhs, Some(lhs_ty.clone()));
+        self.unify_expr(body, rhs, lhs_ty, rhs_ty);
         true
     }
 
@@ -311,6 +304,40 @@ impl<'db> InferCtx<'db> {
         expected: Option<InferTy<'db>>,
     ) -> Option<InferTy<'db>> {
         self.calldata_array_elem_ty(base_ty.clone())?;
+        self.infer_class_index_read(body, expr, index, base_ty, expected)
+    }
+
+    /// `c[i]` on any other user-defined collection, such as an array slice,
+    /// reads through the std `RValueIdxAccess` instance for `(c, i)`, as the
+    /// reference `ridx` desugaring does.
+    pub(super) fn infer_user_collection_index_read(
+        &mut self,
+        body: FuncBody<'db>,
+        expr: Id<Expr<'db>>,
+        index: Id<Expr<'db>>,
+        base_ty: InferTy<'db>,
+        expected: Option<InferTy<'db>>,
+    ) -> Option<InferTy<'db>> {
+        if !matches!(
+            self.engine.resolve(base_ty.clone()),
+            InferTy::Named {
+                ctor: TyCtor::User(_),
+                ..
+            }
+        ) {
+            return None;
+        }
+        self.infer_class_index_read(body, expr, index, base_ty, expected)
+    }
+
+    fn infer_class_index_read(
+        &mut self,
+        body: FuncBody<'db>,
+        expr: Id<Expr<'db>>,
+        index: Id<Expr<'db>>,
+        base_ty: InferTy<'db>,
+        expected: Option<InferTy<'db>>,
+    ) -> Option<InferTy<'db>> {
         let class = self.lookup_class_id("RValueIdxAccess")?;
         if !matches!(
             class,

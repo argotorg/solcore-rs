@@ -386,6 +386,12 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
             {
                 MonoStmtKind::Expr(self.storage_array_field_assign(*lhs, *rhs, span)?)
             }
+            StmtKind::Assign { op, lhs, rhs }
+                if *op == hir::ast::function::AssignOp::Plain
+                    && self.memory_array_index_parts(*lhs).is_some() =>
+            {
+                MonoStmtKind::Expr(self.memory_array_index_store(*lhs, *rhs, span)?)
+            }
             StmtKind::Assign { op, lhs, rhs } => MonoStmtKind::Assign {
                 op: *op,
                 lhs: self.expr(*lhs)?,
@@ -691,6 +697,11 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
                     self.memory_array_index(*base, *index, ty, expr.span)?.kind
                 } else if self.is_calldata_array_expr(*base) {
                     self.calldata_array_index(expr_id, *base, *index, ty, expr.span)?
+                        .kind
+                } else if self.is_user_collection_expr(*base) {
+                    let base = self.expr(*base)?;
+                    let index = self.expr(*index)?;
+                    self.synthetic_std_call("ridx", vec![base, index], ty, expr.span)?
                         .kind
                 } else {
                     MonoExprKind::Index {
@@ -2404,6 +2415,41 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
         self.synthetic_std_call("ridx", vec![base, index], result_ty, span)
     }
 
+    /// The base and index of `m[i]` when `m` is a memory array, after peeling
+    /// type annotations from an assignment target.
+    fn memory_array_index_parts(
+        &self,
+        expr: Id<Expr<'db>>,
+    ) -> Option<(Id<Expr<'db>>, Id<Expr<'db>>)> {
+        match &self.body.exprs(self.driver.db).get(expr).kind {
+            ExprKind::Index { base, index } if self.is_memory_array_expr(*base) => {
+                Some((*base, *index))
+            }
+            ExprKind::TypeAnnot { expr, .. } => self.memory_array_index_parts(*expr),
+            _ => None,
+        }
+    }
+
+    /// `m[i] = v` lowers to `assignRef(lidx(m, i), v)`: the std
+    /// LValueIdxAccess instance checks the bounds and yields the element cell.
+    fn memory_array_index_store(
+        &mut self,
+        lhs: Id<Expr<'db>>,
+        rhs: Id<Expr<'db>>,
+        span: Span<'db>,
+    ) -> Option<MonoExpr<'db>> {
+        let (base, index) = self.memory_array_index_parts(lhs)?;
+        let elem_ty = self.expr_ty(lhs)?;
+        let elem_ty = self.normalize_body_ty(self.subst.apply_ty(self.driver.db, elem_ty));
+        let cell_ty = self.canonical_std_adt_ty("memory", vec![elem_ty])?;
+        let base = self.expr(base)?;
+        let index = self.expr(index)?;
+        let cell = self.synthetic_std_call("lidx", vec![base, index], cell_ty, span)?;
+        let rhs = self.expr(rhs)?;
+        let unit = Ty::unit(self.driver.db);
+        self.synthetic_std_call("assignRef", vec![cell, rhs], unit, span)
+    }
+
     fn calldata_array_index(
         &mut self,
         expr: Id<Expr<'db>>,
@@ -2806,6 +2852,22 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
         };
         let ty = self.normalize_body_ty(self.subst.apply_ty(self.driver.db, ty));
         ty_is_memory_dyn_array(self.driver.db, ty)
+    }
+
+    /// A user-defined collection, such as an array slice, indexed through the
+    /// std `RValueIdxAccess` instance.
+    fn is_user_collection_expr(&self, expr: Id<Expr<'db>>) -> bool {
+        let Some(ty) = self.expr_ty(expr) else {
+            return false;
+        };
+        let ty = self.normalize_body_ty(self.subst.apply_ty(self.driver.db, ty));
+        matches!(
+            ty.kind(self.driver.db),
+            TyKind::Named {
+                ctor: TyCtor::User(_),
+                ..
+            }
+        )
     }
 
     fn is_calldata_array_expr(&self, expr: Id<Expr<'db>>) -> bool {
