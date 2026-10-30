@@ -74,7 +74,7 @@ pub struct LoweredAdtCtor<'db> {
 /// The lowerer is built from nameres resolution records for one signature or
 /// body. It never stores source spans in the resulting semantic types.
 pub struct TypeLowering<'db> {
-    db: &'db dyn HirDb,
+    db: &'db dyn crate::Db,
     type_resolutions: FxHashMap<TypeRef<'db>, hir_nameres::Resolution<'db>>,
     pred_resolutions: FxHashMap<PredRef<'db>, hir_nameres::Resolution<'db>>,
     binders: BinderEnv<'db>,
@@ -91,6 +91,25 @@ pub enum TypeLoweringDiagnostic {
         /// Class name as written or resolved.
         class: String,
     },
+    /// `T[]` needs a standard-library type constructor that is not loaded.
+    MissingStdArrayType {
+        /// Source span for the array type.
+        span: LabelSpan,
+        /// Missing standard-library type constructor.
+        name: String,
+    },
+}
+
+/// What a `T[]` type means where it appears, as in Solidity: a storage array
+/// in a contract field, a memory array elsewhere.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ArrayContext {
+    /// Locals, parameters, returns: `memory<DynArray<T>>`.
+    Value,
+    /// Contract fields and storage/mapping/calldata arguments: `array<T>`.
+    StorageTag,
+    /// The argument of `memory`: `DynArray<T>`.
+    MemoryTag,
 }
 
 impl<'db> BinderEnv<'db> {
@@ -131,7 +150,7 @@ impl<'db> BinderEnv<'db> {
 impl<'db> TypeLowering<'db> {
     /// Creates a lowerer from raw nameres resolution slices.
     pub fn new(
-        db: &'db dyn HirDb,
+        db: &'db dyn crate::Db,
         types: &[hir_nameres::TypeResolution<'db>],
         preds: &[hir_nameres::PredResolution<'db>],
         binders: BinderEnv<'db>,
@@ -153,7 +172,7 @@ impl<'db> TypeLowering<'db> {
 
     /// Creates a lowerer from item-level resolution records.
     pub fn from_item_resolutions(
-        db: &'db dyn HirDb,
+        db: &'db dyn crate::Db,
         map: &hir_nameres::ItemResolutionFacts<'db>,
         binders: BinderEnv<'db>,
     ) -> Self {
@@ -162,7 +181,7 @@ impl<'db> TypeLowering<'db> {
 
     /// Creates a lowerer from body-level resolution records.
     pub fn from_body_resolutions(
-        db: &'db dyn HirDb,
+        db: &'db dyn crate::Db,
         map: &hir_nameres::BodyResolutionMap<'db>,
         binders: BinderEnv<'db>,
     ) -> Self {
@@ -171,7 +190,39 @@ impl<'db> TypeLowering<'db> {
 
     /// Lowers one type reference to a ground semantic type.
     pub fn lower_type(&self, ty: TypeRef<'db>) -> Ty<'db> {
+        self.lower_type_in(ty, ArrayContext::Value)
+    }
+
+    fn lower_type_in(&self, ty: TypeRef<'db>, context: ArrayContext) -> Ty<'db> {
         match ty.kind(self.db) {
+            TypeRefKind::Array { elem, .. } => {
+                let (wrappers, elem_context): (&[&str], _) = match context {
+                    ArrayContext::Value => (&["memory", "DynArray"], ArrayContext::Value),
+                    ArrayContext::MemoryTag => (&["DynArray"], ArrayContext::Value),
+                    ArrayContext::StorageTag => (&["array"], ArrayContext::StorageTag),
+                };
+                let mut lowered = self.lower_type_in(*elem, elem_context);
+                for name in wrappers.iter().rev() {
+                    let Some(def) = crate::support::canonical_std_adt_def(self.db, name) else {
+                        self.diagnostics.borrow_mut().push(
+                            TypeLoweringDiagnostic::MissingStdArrayType {
+                                span: LabelSpan::from_span(self.db, ty.span(self.db)),
+                                name: (*name).to_owned(),
+                            },
+                        );
+                        return Ty::error(self.db);
+                    };
+                    lowered = Ty::named(
+                        self.db,
+                        TyCtor::User(UserTyCtor {
+                            def,
+                            kind: UserTyCtorKind::Adt,
+                        }),
+                        vec![lowered],
+                    );
+                }
+                lowered
+            }
             TypeRefKind::Named { args, .. } => {
                 let Some(resolution) = self.type_resolutions.get(&ty) else {
                     return Ty::error(self.db);
@@ -191,10 +242,11 @@ impl<'db> TypeLowering<'db> {
                 let Some(ctor) = self.lower_type_ctor_resolution(resolution) else {
                     return Ty::error(self.db);
                 };
+                let arg_context = self.array_context_of_args(ctor);
                 let args = args
                     .atom()
                     .iter()
-                    .map(|arg| self.lower_type(*arg))
+                    .map(|arg| self.lower_type_in(*arg, arg_context))
                     .collect();
                 Ty::named(self.db, ctor, args)
             }
@@ -213,6 +265,22 @@ impl<'db> TypeLowering<'db> {
                 elems.atom().iter().map(|elem| self.lower_type(*elem)),
             ),
             TypeRefKind::Error { .. } => Ty::error(self.db),
+        }
+    }
+
+    /// The meaning of `T[]` in the arguments of `ctor`: location wrappers hold
+    /// array tags rather than memory arrays.
+    fn array_context_of_args(&self, ctor: TyCtor<'db>) -> ArrayContext {
+        let TyCtor::User(user) = ctor else {
+            return ArrayContext::Value;
+        };
+        let canonical = |name| crate::support::is_canonical_std_def_named(self.db, user.def, name);
+        if canonical("memory") {
+            ArrayContext::MemoryTag
+        } else if canonical("storage") || canonical("mapping") || canonical("calldata") {
+            ArrayContext::StorageTag
+        } else {
+            ArrayContext::Value
         }
     }
 
@@ -340,7 +408,8 @@ impl<'db> TypeLowering<'db> {
 
     /// Lowers a field type to a scheme.
     pub fn lower_field(&self, field: &FieldDef<'db>) -> LoweredField<'db> {
-        let ty = self.lower_type(field.ty());
+        // As in Solidity, `T[]` in a contract field is a storage array.
+        let ty = self.lower_type_in(field.ty(), ArrayContext::StorageTag);
         let scheme = TyScheme::new(
             self.db,
             self.binders.binder_count(),

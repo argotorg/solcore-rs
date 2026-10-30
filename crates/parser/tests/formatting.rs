@@ -115,6 +115,16 @@ fn keeps_shift_operator_tokens_together() {
 }
 
 #[test]
+fn formats_array_types_without_spaces_inside_brackets() {
+    let source = "pragma solcore;\ncontract C{xs:uint256[];grid:mapping(address=>Pair<word,uint256>[][]);}\nfunction f(xs:uint256 [ ],ys:calldata<word[]>)returns(memory<DynArray<word>>[]){return [];}";
+    assert_eq!(
+        format(source),
+        "pragma solcore;\ncontract C {\n    xs: uint256[];\n    grid: mapping(address => Pair<word, uint256>[][]);\n}\nfunction f(xs: uint256[], ys: calldata<word[]>) returns (memory<DynArray<word>>[]) {\n    return [];\n}\n"
+    );
+    assert_stable(source);
+}
+
+#[test]
 fn rejects_invalid_input_without_returning_partial_output() {
     for source in [
         "pragma solcore; function f(){let x=;}",

@@ -168,7 +168,9 @@ impl<'db> ErrorCollector<'db> {
                 }
                 self.ty(*ret);
             }
-            TypeRefKind::Comptime { inner, .. } => self.ty(*inner),
+            TypeRefKind::Comptime { inner, .. } | TypeRefKind::Array { elem: inner, .. } => {
+                self.ty(*inner)
+            }
             TypeRefKind::Error { span } => self.push("TypeRefKind::Error", *span),
         }
     }

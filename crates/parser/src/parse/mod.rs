@@ -1784,6 +1784,23 @@ match (left, right) {
     }
 
     #[test]
+    fn array_type_suffixes_count_against_the_nesting_limit() {
+        let parse = |suffixes: usize| {
+            let source = format!("{{ let x: word{}; }}", "[]".repeat(suffixes));
+            parse_body_statements(&source, (0..source.len()).into()).errors
+        };
+
+        assert!(parse(MAX_SYNTAX_NESTING - 1).is_empty());
+        let errors = parse(MAX_SYNTAX_NESTING + 1);
+        assert!(
+            errors.iter().any(|error| error
+                .message
+                .contains("type nesting exceeds the compiler limit")),
+            "missing array nesting diagnostic: {errors:#?}"
+        );
+    }
+
+    #[test]
     fn direct_body_parse_reports_its_own_nesting_guard() {
         let mut source = "{".to_owned();
         source.push_str(&"(".repeat(MAX_SYNTAX_NESTING + 1));

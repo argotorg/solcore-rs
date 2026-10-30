@@ -813,7 +813,9 @@ impl<'db> ModuleCollector<'db> {
                 }
                 self.type_ref(*ret);
             }
-            TypeRefKind::Comptime { inner, .. } => self.type_ref(*inner),
+            TypeRefKind::Comptime { inner, .. } | TypeRefKind::Array { elem: inner, .. } => {
+                self.type_ref(*inner)
+            }
             TypeRefKind::Tuple { elems } => {
                 self.types.push(TypeProductDesugar {
                     ty,
@@ -1069,7 +1071,9 @@ impl<'db> BodyCollector<'db> {
                 }
                 self.type_ref(*ret);
             }
-            TypeRefKind::Comptime { inner, .. } => self.type_ref(*inner),
+            TypeRefKind::Comptime { inner, .. } | TypeRefKind::Array { elem: inner, .. } => {
+                self.type_ref(*inner)
+            }
             TypeRefKind::Tuple { elems } => {
                 self.types.push(TypeProductDesugar {
                     ty,

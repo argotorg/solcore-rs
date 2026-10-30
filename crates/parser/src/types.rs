@@ -359,6 +359,13 @@ pub(crate) enum ParsedTyKind<'src> {
         /// Tuple elements.
         elems: Vec<ParsedTy<'src>>,
     },
+    /// Dynamic array type `T[]`.
+    Array {
+        /// Element type.
+        elem: Box<ParsedTy<'src>>,
+        /// Span of the `[]` brackets.
+        brackets: LexSpan,
+    },
     /// Parser recovery placeholder.
     Error,
 }

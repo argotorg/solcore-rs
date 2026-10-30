@@ -407,7 +407,9 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
                 }
                 self.ty(*ret);
             }
-            TypeRefKind::Comptime { inner, .. } => self.ty(*inner),
+            TypeRefKind::Comptime { inner, .. } | TypeRefKind::Array { elem: inner, .. } => {
+                self.ty(*inner)
+            }
             TypeRefKind::Tuple { elems } => {
                 for elem in elems.atom() {
                     self.ty(*elem);

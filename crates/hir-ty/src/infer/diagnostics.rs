@@ -1405,6 +1405,12 @@ pub(super) fn lowering_diagnostic_to_typeck(
         TypeLoweringDiagnostic::ClassAsType { span, class } => {
             TypeckDiagnostic::ClassAsType { span, class }
         }
+        TypeLoweringDiagnostic::MissingStdArrayType { span, name } => {
+            TypeckDiagnostic::UndefinedTypeConstructor {
+                span,
+                name: format!("{name} (`T[]` array types require `import * from std;`)"),
+            }
+        }
     }
 }
 
@@ -1618,7 +1624,9 @@ fn collect_type_ref_tree<'db>(
             }
             collect_type_ref_tree(db, *ret, out);
         }
-        TypeRefKind::Comptime { inner, .. } => collect_type_ref_tree(db, *inner, out),
+        TypeRefKind::Comptime { inner, .. } | TypeRefKind::Array { elem: inner, .. } => {
+            collect_type_ref_tree(db, *inner, out)
+        }
         TypeRefKind::Tuple { elems } => {
             for elem in elems.atom() {
                 collect_type_ref_tree(db, *elem, out);
@@ -2024,7 +2032,7 @@ fn collect_data_cycle_edges<'db>(
             }
             collect_data_cycle_edges(db, from, *ret, resolutions, local_defs, names, edges);
         }
-        TypeRefKind::Comptime { inner, .. } => {
+        TypeRefKind::Comptime { inner, .. } | TypeRefKind::Array { elem: inner, .. } => {
             collect_data_cycle_edges(db, from, *inner, resolutions, local_defs, names, edges);
         }
         TypeRefKind::Tuple { elems } => {

@@ -2376,6 +2376,7 @@ where
         | TypeRefKind::Fn { .. }
         | TypeRefKind::Comptime { .. }
         | TypeRefKind::Tuple { .. }
+        | TypeRefKind::Array { .. }
         | TypeRefKind::Error { .. } => None,
     }
 }
@@ -2461,7 +2462,10 @@ fn type_ref_name_span<'db>(db: &'db dyn hir_ty::Db, ty: TypeRef<'db>) -> Option<
     match ty.kind(db) {
         TypeRefKind::Named { name, .. } => Some(name.span(db)),
         TypeRefKind::Error { span } => Some(*span),
-        TypeRefKind::Fn { .. } | TypeRefKind::Comptime { .. } | TypeRefKind::Tuple { .. } => None,
+        TypeRefKind::Fn { .. }
+        | TypeRefKind::Comptime { .. }
+        | TypeRefKind::Tuple { .. }
+        | TypeRefKind::Array { .. } => None,
     }
 }
 

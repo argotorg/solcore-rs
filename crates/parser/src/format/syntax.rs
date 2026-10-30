@@ -334,7 +334,9 @@ impl<'src> Collector<'src> {
             ParsedTyKind::Named { args, .. } => {
                 self.pending.extend(args.into_iter().map(Node::Ty));
             }
-            ParsedTyKind::Proxy { inner, .. } | ParsedTyKind::Comptime { inner, .. } => {
+            ParsedTyKind::Proxy { inner, .. }
+            | ParsedTyKind::Comptime { inner, .. }
+            | ParsedTyKind::Array { elem: inner, .. } => {
                 self.pending.push(Node::Ty(*inner));
             }
             ParsedTyKind::Fn { params, ret, .. } => {

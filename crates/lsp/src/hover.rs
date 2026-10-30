@@ -1092,6 +1092,7 @@ fn display_type_ref<'db>(db: &'db dyn hir_ty::Db, ty: TypeRef<'db>) -> String {
             }
             out
         }
+        TypeRefKind::Array { elem, .. } => format!("{}[]", display_type_ref(db, *elem)),
         TypeRefKind::Fn { params, ret } => format!(
             "function({}) returns ({})",
             params
