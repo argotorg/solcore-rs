@@ -78,10 +78,16 @@ release is not yet qualified; WSL can use a matching Linux archive.
 
 ### Editor support
 
-Install the separate [VS Code, Neovim/Vim, or Emacs integration](editors/README.md)
-for syntax highlighting and LSP features. For VS Code, download the release's
-`.vsix` file and use **Extensions: Install from VSIX...**. The integrations start
-`solcore lsp` automatically; you do not need to run it in a terminal.
+Editor integrations add syntax highlighting and LSP features. Install the one
+for your editor from the same release:
+
+- [VS Code](editors/vscode-solcore/README.md#install)
+- [Neovim and Vim](editors/vim-solcore/README.md#install)
+- [Emacs](editors/emacs-solcore/README.md#install)
+
+The integrations start `solcore lsp` automatically; you do not need to run it in
+a terminal. [Editor integrations](editors/README.md) explains how they find the
+compiler.
 
 `SOLCORE_PATH` selects the installed compiler explicitly. If a GUI editor does
 not inherit your shell environment, configure the absolute executable path in

@@ -10,14 +10,28 @@ with the pragma.
 
 ## Install
 
-Download and extract the `vim-solcore` editor archive from GitHub Releases into
-a native package directory, for example:
+Download the editor archive from the same release as the
+[compiler](https://github.com/argotorg/solcore-rs#installation), verify it, and
+extract it into a native package directory. For Neovim:
 
-- Neovim: `~/.local/share/nvim/site/pack/solcore/start/vim-solcore`
-- Vim: `~/.vim/pack/solcore/start/vim-solcore`
+```sh
+version=0.1.0-alpha
+archive="solcore-vim-v${version}.tar.gz"
+url="https://github.com/argotorg/solcore-rs/releases/download/v${version}"
+pack="$HOME/.local/share/nvim/site/pack/solcore/start"
 
-The resulting package directory must directly contain `ftdetect/`, `syntax/`,
-`autoload/`, and `lua/`. A local checkout can instead be added to `runtimepath`:
+cd "$(mktemp -d)"
+curl -fLO "$url/SHA256SUMS"
+curl -fLO "$url/$archive"
+awk -v file="$archive" '$2 == file' SHA256SUMS | shasum -a 256 --check
+mkdir -p "$pack"
+tar -xzf "$archive" -C "$pack"
+```
+
+For Vim, use `pack="$HOME/.vim/pack/solcore/start"`. On Linux, use
+`sha256sum --check`. The archive creates `vim-solcore/` in that directory; it
+must directly contain `ftdetect/`, `syntax/`, `autoload/`, and `lua/`. A local
+checkout can instead be added to `runtimepath`:
 
 ```vim
 set runtimepath+=/path/to/solcore-rs/editors/vim-solcore

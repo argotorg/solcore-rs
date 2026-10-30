@@ -11,13 +11,25 @@ switches it to Solcore.
 
 ## Install
 
-Install the native compiler release first, keeping `std/` beside `solcore`.
-Download the `.vsix` file from the same GitHub release. In VS Code, run
-**Extensions: Install from VSIX**, or use:
+Install the [native compiler release](https://github.com/argotorg/solcore-rs#installation) first,
+keeping `std/` beside `solcore`. Then download the extension from the same
+release, verify it, and install it:
 
 ```sh
-code --install-extension /path/to/solcore-language-0.1.0-alpha.vsix
+version=0.1.0-alpha
+vsix="solcore-language-${version}.vsix"
+url="https://github.com/argotorg/solcore-rs/releases/download/v${version}"
+
+cd "$(mktemp -d)"
+curl -fLO "$url/SHA256SUMS"
+curl -fLO "$url/$vsix"
+awk -v file="$vsix" '$2 == file' SHA256SUMS | shasum -a 256 --check
+code --install-extension "$vsix"
 ```
+
+On Linux, use `sha256sum --check`. Without the `code` command, download the
+`.vsix` file from the release page and run **Extensions: Install from VSIX** in
+VS Code.
 
 This distribution does not require a Marketplace publisher account. Upgrading
 the compiler updates the server independently of the extension; restart VS Code
