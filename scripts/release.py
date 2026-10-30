@@ -224,7 +224,8 @@ def build_native(root, output, metadata, epoch, env, e2e):
     # Run from outside the checkout, against the actual archive layout.
     smoke = root.parent / "smoke"
     smoke.mkdir()
-    (smoke / "main.sol").write_text("import * from std;\nfunction main() returns (word) { return 42; }\n", encoding="utf-8")
+    (smoke / "main.sol").write_text("pragma solcore;\nimport * from std;\nfunction main() returns (word) { return 42; }\n",
+                                  encoding="utf-8")
     smoke_env = dict(env)
     smoke_env.pop("SOLCORE_STD", None)
     require(run(payload / ("solcore" + suffix), "--version", cwd=smoke, capture=True, env=smoke_env)
