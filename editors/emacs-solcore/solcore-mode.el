@@ -3,7 +3,7 @@
 ;; Copyright (C) 2026 Solcore contributors
 
 ;; Author: Solcore contributors
-;; Version: 0.1.0
+;; Version: 0.1.0-alpha
 ;; Package-Requires: ((emacs "26.1"))
 ;; Keywords: languages
 ;; URL: https://github.com/argotorg/solcore-rs

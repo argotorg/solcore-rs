@@ -29,7 +29,7 @@ compiler = { path = "crates/compiler", package = "solcore-compiler" }
 vfs = { path = "crates/vfs", package = "solcore-vfs" }
 
 [workspace.package]
-version = "0.1.0"
+version = "0.1.0-alpha"
 # Distribute executable bundles; git dependencies and embedded std prevent crates.io packaging.
 publish = false
 repository = "https://github.com/argotorg/solcore-rs"

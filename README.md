@@ -23,8 +23,8 @@ platform, [build from source](#build-and-test).
 ### macOS and Linux
 
 1. Choose a [release](https://github.com/argotorg/solcore-rs/releases) version
-   and the target for your machine. Only targets attached to that release are
-   available.
+   and the target for your machine. The current release, `0.1.0-alpha`, is an
+   alpha prerelease. Only targets attached to that release are available.
 
    | Platform | Target |
    | --- | --- |
@@ -37,7 +37,7 @@ platform, [build from source](#build-and-test).
    verify the archive. For example, on Apple Silicon macOS:
 
    ```sh
-   version=0.1.0
+   version=0.1.0-alpha
    target=aarch64-apple-darwin
    release="solcore-v${version}-${target}"
    archive="${release}.tar.gz"
@@ -78,10 +78,16 @@ release is not yet qualified; WSL can use a matching Linux archive.
 
 ### Editor support
 
-Install the separate [VS Code, Neovim/Vim, or Emacs integration](editors/README.md)
-for syntax highlighting and LSP features. For VS Code, download the release's
-`.vsix` file and use **Extensions: Install from VSIX...**. The integrations start
-`solcore lsp` automatically; you do not need to run it in a terminal.
+Editor integrations add syntax highlighting and LSP features. Install the one
+for your editor from the same release:
+
+- [VS Code](editors/vscode-solcore/README.md#install)
+- [Neovim and Vim](editors/vim-solcore/README.md#install)
+- [Emacs](editors/emacs-solcore/README.md#install)
+
+The integrations start `solcore lsp` automatically; you do not need to run it in
+a terminal. [Editor integrations](editors/README.md) explains how they find the
+compiler.
 
 `SOLCORE_PATH` selects the installed compiler explicitly. If a GUI editor does
 not inherit your shell environment, configure the absolute executable path in

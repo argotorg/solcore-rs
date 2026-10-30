@@ -3502,7 +3502,7 @@ dependencies = [
 
 [[package]]
 name = "solcore-compiler"
-version = "0.1.0"
+version = "0.1.0-alpha"
 dependencies = [
  "salsa",
  "solcore-hir",
@@ -3518,7 +3518,7 @@ dependencies = [
 
 [[package]]
 name = "solcore-driver"
-version = "0.1.0"
+version = "0.1.0-alpha"
 dependencies = [
  "annotate-snippets",
  "libc",
@@ -3543,14 +3543,14 @@ dependencies = [
 
 [[package]]
 name = "solcore-fmt"
-version = "0.1.0"
+version = "0.1.0-alpha"
 dependencies = [
  "solcore-parser",
 ]
 
 [[package]]
 name = "solcore-hir"
-version = "0.1.0"
+version = "0.1.0-alpha"
 dependencies = [
  "annotate-snippets",
  "percent-encoding",
@@ -3562,7 +3562,7 @@ dependencies = [
 
 [[package]]
 name = "solcore-hir-ty"
-version = "0.1.0"
+version = "0.1.0-alpha"
 dependencies = [
  "dir-test",
  "ena",
@@ -3582,7 +3582,7 @@ dependencies = [
 
 [[package]]
 name = "solcore-hull"
-version = "0.1.0"
+version = "0.1.0-alpha"
 dependencies = [
  "dir-test",
  "rustc-hash",
@@ -3598,7 +3598,7 @@ dependencies = [
 
 [[package]]
 name = "solcore-lsp"
-version = "0.1.0"
+version = "0.1.0-alpha"
 dependencies = [
  "dir-test",
  "line-index",
@@ -3620,7 +3620,7 @@ dependencies = [
 
 [[package]]
 name = "solcore-nameres"
-version = "0.1.0"
+version = "0.1.0-alpha"
 dependencies = [
  "annotate-snippets",
  "rustc-hash",
@@ -3633,7 +3633,7 @@ dependencies = [
 
 [[package]]
 name = "solcore-parser"
-version = "0.1.0"
+version = "0.1.0-alpha"
 dependencies = [
  "annotate-snippets",
  "chumsky",
@@ -3649,7 +3649,7 @@ dependencies = [
 
 [[package]]
 name = "solcore-sonatina"
-version = "0.1.0"
+version = "0.1.0-alpha"
 dependencies = [
  "dir-test",
  "insta",
@@ -3670,7 +3670,7 @@ dependencies = [
 
 [[package]]
 name = "solcore-specialize"
-version = "0.1.0"
+version = "0.1.0-alpha"
 dependencies = [
  "dir-test",
  "rustc-hash",
@@ -3685,11 +3685,11 @@ dependencies = [
 
 [[package]]
 name = "solcore-test-directives"
-version = "0.1.0"
+version = "0.1.0-alpha"
 
 [[package]]
 name = "solcore-test-utils"
-version = "0.1.0"
+version = "0.1.0-alpha"
 dependencies = [
  "annotate-snippets",
  "insta",
@@ -3709,7 +3709,7 @@ dependencies = [
 
 [[package]]
 name = "solcore-uitest"
-version = "0.1.0"
+version = "0.1.0-alpha"
 dependencies = [
  "dir-test",
  "salsa",
@@ -3724,7 +3724,7 @@ dependencies = [
 
 [[package]]
 name = "solcore-vfs"
-version = "0.1.0"
+version = "0.1.0-alpha"
 dependencies = [
  "rustc-hash",
  "salsa",
@@ -3738,7 +3738,7 @@ dependencies = [
 
 [[package]]
 name = "solcore-wasm"
-version = "0.1.0"
+version = "0.1.0-alpha"
 dependencies = [
  "console_error_panic_hook",
  "dir-test",
@@ -3764,7 +3764,7 @@ dependencies = [
 
 [[package]]
 name = "solcore-yul"
-version = "0.1.0"
+version = "0.1.0-alpha"
 dependencies = [
  "dir-test",
  "insta",

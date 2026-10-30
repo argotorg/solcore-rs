@@ -12,14 +12,31 @@ This directory contains Emacs support for Solcore `.sol` files:
 
 ## Install
 
-Extract the `emacs-solcore` archive from GitHub Releases and add its directory
+Download the editor archive from the same release as the
+[compiler](https://github.com/argotorg/solcore-rs#installation), verify it, and
+extract it, for example into `~/.emacs.d/site-lisp`:
+
+```sh
+version=0.1.0-alpha
+archive="solcore-emacs-v${version}.tar.gz"
+url="https://github.com/argotorg/solcore-rs/releases/download/v${version}"
+
+cd "$(mktemp -d)"
+curl -fLO "$url/SHA256SUMS"
+curl -fLO "$url/$archive"
+awk -v file="$archive" '$2 == file' SHA256SUMS | shasum -a 256 --check
+mkdir -p ~/.emacs.d/site-lisp
+tar -xzf "$archive" -C ~/.emacs.d/site-lisp
+```
+
+On Linux, use `sha256sum --check`. Add the extracted `emacs-solcore` directory
 to `load-path`, then load the mode. Install the compiler release separately,
 keeping `std/` next to `solcore`. Updating the compiler updates its server;
 restart Eglot or lsp-mode to use the new version. Replace the mode directory to
 update editor support.
 
 ```elisp
-(add-to-list 'load-path "/path/to/solcore-rs/editors/emacs-solcore")
+(add-to-list 'load-path "~/.emacs.d/site-lisp/emacs-solcore")
 (require 'solcore-mode)
 ```
 
@@ -27,7 +44,7 @@ With `use-package`:
 
 ```elisp
 (use-package solcore-mode
-  :load-path "/path/to/solcore-rs/editors/emacs-solcore")
+  :load-path "~/.emacs.d/site-lisp/emacs-solcore")
 ```
 
 Do not map `\\.sol\\'` to `solcore-mode` in `auto-mode-alist`; that would also

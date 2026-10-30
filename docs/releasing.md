@@ -84,20 +84,23 @@ credentials are assumed.
 
 ## 1. Prepare the release commit
 
-For the first release the compiler and playground version is `0.1.0`. To change
-it, including a prerelease such as `0.1.0-rc.1`:
+The first release is the prerelease `0.1.0-alpha`. To change the compiler and
+playground version, for example to another prerelease such as `0.1.0-rc.1`:
 
 ```sh
-python3 scripts/release.py set-version 0.1.0
+python3 scripts/release.py set-version 0.1.0-alpha
 ```
 
 This updates the shared Rust workspace version, Cargo.lock and playground npm
 versions. It uses Cargo's cached dependency metadata (`--offline`); run
 `cargo fetch --locked` first on a fresh checkout. It does not commit or tag.
-Edit `releases/v0.1.0.md` (create the corresponding file for any new version).
-If the editor client changed, independently bump the VSIX's `package.json` and
-lockfile version with, for example, `npm version patch --no-git-tag-version` in
-its directory.
+Edit `releases/v0.1.0-alpha.md` (create the corresponding file for any new
+version). If the editor client changed, independently bump the VSIX's
+`package.json` and lockfile version with, for example,
+`npm version patch --no-git-tag-version` in its directory. Keep the `Version:`
+header of `editors/emacs-solcore/solcore-mode.el` equal to the compiler version,
+which also names the Vim and Emacs archives, and update the version in the
+installation commands of `README.md` and the editor package READMEs.
 
 Review and commit all release sources, scripts, lockfiles and notes. `prepare`
 requires tracked changes to be committed and builds a `git archive` snapshot of
@@ -154,9 +157,9 @@ You can also build them separately with `--components playground editors`.
 Combine the directories:
 
 ```sh
-python3 scripts/release.py collect --output target/releases/v0.1.0 \
+python3 scripts/release.py collect --output target/releases/v0.1.0-alpha \
   target/releases/primary target/releases/linux-x64
-python3 scripts/release.py verify --bundle target/releases/v0.1.0
+python3 scripts/release.py verify --bundle target/releases/v0.1.0-alpha
 ```
 
 For a single-host release, use the primary directory directly. Outputs must be
@@ -180,7 +183,7 @@ repository from `origin` (which may be a personal fork).
 
 ```sh
 python3 scripts/release.py stage-github \
-  --repo argotorg/solcore-rs --bundle target/releases/v0.1.0
+  --repo argotorg/solcore-rs --bundle target/releases/v0.1.0-alpha
 ```
 
 This creates an annotated version tag through GitHub's authenticated Git API at
@@ -193,7 +196,7 @@ Inspect the draft's notes, platform coverage and downloads. Then:
 
 ```sh
 python3 scripts/release.py publish-github \
-  --repo argotorg/solcore-rs --bundle target/releases/v0.1.0
+  --repo argotorg/solcore-rs --bundle target/releases/v0.1.0-alpha
 ```
 
 This repeats tag and remote-asset verification before making the draft public.
@@ -212,7 +215,7 @@ already published version for different bytes. Fetch the created tag with
 First validate the independently deployable, archived web package:
 
 ```sh
-python3 scripts/release.py deploy-playground --bundle target/releases/v0.1.0
+python3 scripts/release.py deploy-playground --bundle target/releases/v0.1.0-alpha
 ```
 
 This extracts the verified archive into a temporary directory, installs its
@@ -222,7 +225,7 @@ When ready to update the production Worker:
 
 ```sh
 python3 scripts/release.py deploy-playground \
-  --bundle target/releases/v0.1.0 --execute
+  --bundle target/releases/v0.1.0-alpha --execute
 ```
 
 The same dry run happens before the production deploy. The existing Worker
