@@ -1,3 +1,5 @@
+pragma solcore;
+
 import reexport_module.pkg.api_alias;
 
 function main() returns (word) {

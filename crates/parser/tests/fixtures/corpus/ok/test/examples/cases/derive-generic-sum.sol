@@ -1,3 +1,5 @@
+pragma solcore;
+
 // Test: Generic instances are auto-derived for sum types.
 // Neither Option nor Tree has an explicit Generic instance; both should be
 // generated automatically by DeriveGeneric.

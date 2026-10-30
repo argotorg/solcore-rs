@@ -4,10 +4,10 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/nameres/ergo_undef_class/main.sol
 ---
 error[SC0105]: undefined trait: NoSuchClass
- --> /main/main.sol:1:6
+ --> /main/main.sol:3:6
   |
-1 | impl NoSuchClass<word> {
+2 |
+3 | impl NoSuchClass<word> {
   |      ^^^^^^^^^^^ undefined trait
-2 |     function frob(x: word) returns (word) {
-3 |         return x;
+4 |     function frob(x: word) returns (word) {
   |

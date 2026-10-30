@@ -9,9 +9,9 @@ error[SC0212]: Coverage condition fails for trait:
                word
                does not determine:
                a
- --> /main/main.sol:4:9
+ --> /main/main.sol:6:9
   |
-2 | trait MyClass<a, b> {}
-3 |
-4 | impl<a> MyClass<Phantom<a>, a> {}
+4 | trait MyClass<a, b> {}
+5 |
+6 | impl<a> MyClass<Phantom<a>, a> {}
   |         ^^^^^^^^^^^^^^^^^^^^^^ impl head does not determine these variables

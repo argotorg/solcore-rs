@@ -1,1 +1,3 @@
+pragma solcore;
+
 function target() returns (word) { return 1; } function main() returns (word) { let run = lam (renamed: word) -> word { return target(); }; return run(2); }

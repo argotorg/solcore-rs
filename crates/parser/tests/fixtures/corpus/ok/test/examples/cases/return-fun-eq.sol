@@ -1,3 +1,5 @@
+pragma solcore;
+
 // Returns a function comparing against a captured word, CORRECT annotations.
 // Uses an assembly `eq` instead of primEqWord so it lowers end-to-end.
 function makeEq(x: word) returns (function (word) returns (word)) {

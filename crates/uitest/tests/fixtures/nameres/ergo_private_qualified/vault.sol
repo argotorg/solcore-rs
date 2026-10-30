@@ -1,3 +1,5 @@
+pragma solcore;
+
 export { opened };
 
 function opened(x: word) returns (word) {

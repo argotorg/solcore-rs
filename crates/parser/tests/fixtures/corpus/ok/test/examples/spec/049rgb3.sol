@@ -1,3 +1,5 @@
+pragma solcore;
+
 enum RGB {
     Red(word),
     Green(word),

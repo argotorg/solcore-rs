@@ -1,3 +1,5 @@
+pragma solcore;
+
 // Regression test: specializer sum-of-product bug (specMatch substitution leak).
 //
 // A binary class method over the primitive `sum(f, g)` whose two sides have

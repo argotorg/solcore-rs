@@ -1,3 +1,5 @@
+pragma solcore;
+
 // An array literal may only be assigned to a storage *array* field: storeArrayLit
 // does not unify with a plain word field.
 import * from std;

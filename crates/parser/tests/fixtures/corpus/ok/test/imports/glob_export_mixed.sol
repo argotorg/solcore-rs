@@ -1,3 +1,5 @@
+pragma solcore;
+
 export { *, main };
 
 function main(x: word) returns (word) {

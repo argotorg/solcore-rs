@@ -1,3 +1,5 @@
+pragma solcore;
+
 import * as B from booldef;
 
 function bad(b: Bool) returns (Bool) {

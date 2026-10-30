@@ -1,3 +1,5 @@
+pragma solcore;
+
 type W = word;
 
 function f(x: W) returns (W) {

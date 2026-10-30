@@ -1,1 +1,3 @@
+pragma solcore;
+
 import * from std; import * from std.dispatch; contract C { renamed: word; function read() returns (word) { let value: word = 7; return renamed; } }

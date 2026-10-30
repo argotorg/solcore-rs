@@ -4,9 +4,9 @@ expression: value
 input_file: crates/parser/tests/fixtures/corpus/fail/test/examples/cases/toplevel-fallback.sol
 ---
 error[SC0001]: could not parse top-level item near `fallback() {}`; expected a declaration starting with `import`, `pragma`, `type`, `enum`, `trait`, `impl`, `contract`, or `function`
- --> /toplevel-fallback.sol:3:1
+ --> /toplevel-fallback.sol:5:1
   |
-1 | // A `fallback` may only be declared inside a contract.
-2 | // At the top level this must fail to parse.
-3 | fallback() {}
+3 | // A `fallback` may only be declared inside a contract.
+4 | // At the top level this must fail to parse.
+5 | fallback() {}
   | ^^^^^^^^^^^^^

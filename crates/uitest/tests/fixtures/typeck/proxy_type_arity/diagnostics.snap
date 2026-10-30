@@ -4,12 +4,12 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/proxy_type_arity/main.sol
 ---
 error[SC0299]: Invalid number of type arguments!
- --> /main/main.sol:6:17
+ --> /main/main.sol:8:17
   |
-5 | function value() {
-6 |     let proxy = @word;
+7 | function value() {
+8 |     let proxy = @word;
   |                 ^^^^^ diagnostic reported here
-7 | }
+9 | }
   |
   = note: Type Proxy is expected to have 2 type arguments
   = note: but, type Proxy<word> has 1 arguments

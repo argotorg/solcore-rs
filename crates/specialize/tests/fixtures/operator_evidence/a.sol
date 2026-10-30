@@ -1,3 +1,5 @@
+pragma solcore;
+
 import * from base;
 export { directA, genericA, explicitA };
 impl Phantom<word, word> {

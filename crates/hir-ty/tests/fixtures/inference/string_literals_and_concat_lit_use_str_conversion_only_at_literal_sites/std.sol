@@ -1,3 +1,5 @@
+pragma solcore;
+
 export { memory(*), string, concatLit, strlenLit };
 enum memory<a> {
     memory(word)

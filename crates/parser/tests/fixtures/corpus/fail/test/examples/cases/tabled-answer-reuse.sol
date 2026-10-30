@@ -1,3 +1,5 @@
+pragma solcore;
+
 pragma no-patterson-condition Derived;
 
 trait Seed<a> {}

@@ -1,3 +1,5 @@
+pragma solcore;
+
 // Regression test: specializing a sum-of-product class instance.
 //
 // A binary class method over the primitive `sum(f, g)` whose two sides have

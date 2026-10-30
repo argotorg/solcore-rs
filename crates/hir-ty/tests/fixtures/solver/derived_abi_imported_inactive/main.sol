@@ -1,3 +1,5 @@
+pragma solcore;
+
 import { Generic } from generic;
 import * from abi;
 import { Box } from types;

@@ -4,21 +4,21 @@ expression: value
 input_file: crates/parser/tests/fixtures/corpus/fail/test/examples/cases/user-op-lambda.sol
 ---
 error[SC0001]: could not parse top-level item near `infixl 70 (^^) => pow;`; expected a declaration starting with `import`, `pragma`, `type`, `enum`, `trait`, `impl`, `contract`, or `function`
- --> /user-op-lambda.sol:6:1
+ --> /user-op-lambda.sol:8:1
   |
-5 |
-6 | infixl 70 (^^) => pow;
-  | ^^^^^^^^^^^^^^^^^^^^^^
 7 |
+8 | infixl 70 (^^) => pow;
+  | ^^^^^^^^^^^^^^^^^^^^^^
+9 |
   |
 ---
 
 error[SC0001]: parse error: unexpected `^`
-  --> /user-op-lambda.sol:17:47
+  --> /user-op-lambda.sol:19:47
    |
-16 |     // operator (^^) used inside a lambda body
-17 |     let f = lam(x : word) -> word { return x ^^ 3; };
+18 |     // operator (^^) used inside a lambda body
+19 |     let f = lam(x : word) -> word { return x ^^ 3; };
    |                                               ^ unexpected token
-18 |     return f(2);
+20 |     return f(2);
    |
    = note: expecting `!`, `(`, `-`, `.`, `@`, `[`, `lam`, or `~`

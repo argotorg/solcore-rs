@@ -1,3 +1,5 @@
+pragma solcore;
+
 export { Marker, Box, Phantom };
 
 trait Marker<a> {

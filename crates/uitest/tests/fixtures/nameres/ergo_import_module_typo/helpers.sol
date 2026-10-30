@@ -1,3 +1,5 @@
+pragma solcore;
+
 export { helperValue };
 
 function helperValue(x: word) returns (word) {

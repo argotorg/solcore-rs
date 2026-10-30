@@ -4,145 +4,145 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/index_non_collection/main.sol
 ---
 error[SC0201]: type mismatch: expected indexable collection, found function(word) returns (word)
- --> /main/main.sol:4:12
+ --> /main/main.sol:6:12
   |
-3 | function parameter(g: function (word) returns (word), x: word) returns (word) {
-4 |     return g[x];
+5 | function parameter(g: function (word) returns (word), x: word) returns (word) {
+6 |     return g[x];
   |            ^ expression has mismatched type
-5 | }
+7 | }
   |
   = note: expected type: indexable collection
   = note: found type: function(word) returns (word)
 ---
 
 error[SC0201]: type mismatch: expected indexable collection, found function(word) returns (word)
- --> /main/main.sol:8:12
-  |
-7 | function aliased(g: Callback, x: word) returns (word) {
-8 |     return g[x];
-  |            ^ expression has mismatched type
-9 | }
-  |
-  = note: expected type: indexable collection
-  = note: found type: function(word) returns (word)
+  --> /main/main.sol:10:12
+   |
+ 9 | function aliased(g: Callback, x: word) returns (word) {
+10 |     return g[x];
+   |            ^ expression has mismatched type
+11 | }
+   |
+   = note: expected type: indexable collection
+   = note: found type: function(word) returns (word)
 ---
 
 error[SC0201]: type mismatch: expected indexable collection, found comptime<function(word) returns (word)>
-  --> /main/main.sol:12:12
+  --> /main/main.sol:14:12
    |
-11 | function staged(comptime g: Callback, x: word) returns (word) {
-12 |     return g[x];
+13 | function staged(comptime g: Callback, x: word) returns (word) {
+14 |     return g[x];
    |            ^ expression has mismatched type
-13 | }
+15 | }
    |
    = note: expected type: indexable collection
    = note: found type: comptime<function(word) returns (word)>
 ---
 
 error[SC0201]: type mismatch: expected indexable collection, found function(a) returns (a)
-  --> /main/main.sol:16:12
+  --> /main/main.sol:18:12
    |
-15 | function generic<a>(g: function (a) returns (a), x: a) returns (a) {
-16 |     return g[x];
+17 | function generic<a>(g: function (a) returns (a), x: a) returns (a) {
+18 |     return g[x];
    |            ^ expression has mismatched type
-17 | }
+19 | }
    |
    = note: expected type: indexable collection
    = note: found type: function(a) returns (a)
 ---
 
 error[SC0201]: type mismatch: expected indexable collection, found function(word) returns (word)
-  --> /main/main.sol:24:12
+  --> /main/main.sol:26:12
    |
-23 | function named(x: word) returns (word) {
-24 |     return identity[x];
+25 | function named(x: word) returns (word) {
+26 |     return identity[x];
    |            ^^^^^^^^ expression has mismatched type
-25 | }
+27 | }
    |
    = note: expected type: indexable collection
    = note: found type: function(word) returns (word)
 ---
 
 error[SC0201]: type mismatch: expected indexable collection, found t_closure
-  --> /main/main.sol:31:12
+  --> /main/main.sol:33:12
    |
-30 |     };
-31 |     return g[x];
+32 |     };
+33 |     return g[x];
    |            ^ expression has mismatched type
-32 | }
+34 | }
    |
    = note: expected type: indexable collection
    = note: found type: t_closure
 ---
 
 error[SC0201]: type mismatch: expected indexable collection, found t_closure
-  --> /main/main.sol:35:13
+  --> /main/main.sol:37:13
    |
-34 |   function immediate(x: word) returns (word) {
-35 |       return (lam (value: word) -> word {
+36 |   function immediate(x: word) returns (word) {
+37 |       return (lam (value: word) -> word {
    |  _____________^
-36 | |             return value;
-37 | |         })[x];
+38 | |             return value;
+39 | |         })[x];
    | |_________^ expression has mismatched type
-38 |   }
+40 |   }
    |
    = note: expected type: indexable collection
    = note: found type: t_closure
 ---
 
 error[SC0201]: type mismatch: expected indexable collection, found word
-  --> /main/main.sol:41:19
+  --> /main/main.sol:43:19
    |
-40 | function scalar(x: word) {
-41 |     let y: word = x[0];
+42 | function scalar(x: word) {
+43 |     let y: word = x[0];
    |                   ^ expression has mismatched type
-42 | }
+44 | }
    |
    = note: expected type: indexable collection
    = note: found type: word
 ---
 
 error[SC0201]: type mismatch: expected indexable collection, found function(word) returns (word)
-  --> /main/main.sol:45:5
+  --> /main/main.sol:47:5
    |
-44 | function assignment(g: Callback, x: word) {
-45 |     g[x] = x;
+46 | function assignment(g: Callback, x: word) {
+47 |     g[x] = x;
    |     ^ expression has mismatched type
-46 | }
+48 | }
    |
    = note: expected type: indexable collection
    = note: found type: function(word) returns (word)
 ---
 
 error[SC0201]: type mismatch: expected indexable collection, found function(word) returns (word)
-  --> /main/main.sol:49:12
+  --> /main/main.sol:51:12
    |
-48 | function nested(g: Callback, x: word) returns (word) {
-49 |     return g[x][x];
+50 | function nested(g: Callback, x: word) returns (word) {
+51 |     return g[x][x];
    |            ^ expression has mismatched type
-50 | }
+52 | }
    |
    = note: expected type: indexable collection
    = note: found type: function(word) returns (word)
 ---
 
 error[SC0101]: undefined name: missing
-  --> /main/main.sol:53:12
+  --> /main/main.sol:55:12
    |
-52 | function unknown_base(x: word) returns (word) {
-53 |     return missing[x];
+54 | function unknown_base(x: word) returns (word) {
+55 |     return missing[x];
    |            ^^^^^^^ unknown name
-54 | }
+56 | }
    |
 ---
 
 error[SC0201]: type mismatch: expected indexable collection, found function(word) returns (word)
-  --> /main/main.sol:58:16
+  --> /main/main.sol:60:16
    |
-57 |     function apply(g: Callback, x: word) returns (word) {
-58 |         return g[x];
+59 |     function apply(g: Callback, x: word) returns (word) {
+60 |         return g[x];
    |                ^ expression has mismatched type
-59 |     }
+61 |     }
    |
    = note: expected type: indexable collection
    = note: found type: function(word) returns (word)

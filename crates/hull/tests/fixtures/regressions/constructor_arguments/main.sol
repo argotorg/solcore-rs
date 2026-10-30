@@ -1,3 +1,5 @@
+pragma solcore;
+
 //~ hull: valid
 
 import * from std;

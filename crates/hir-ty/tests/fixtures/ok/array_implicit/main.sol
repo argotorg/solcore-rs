@@ -1,3 +1,5 @@
+pragma solcore;
+
 contract ArrayImplicitRuntime {
     function main() returns (word) {
         let first: word = 10;

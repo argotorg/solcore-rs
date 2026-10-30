@@ -1,3 +1,5 @@
+pragma solcore;
+
 // After an assembly block writes to a pattern variable, subsequent code in the
 // same match arm should read the written value (not the original tuple component).
 // Runtime correctness of the write->read depends on ecSubst being updated after

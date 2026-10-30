@@ -1,3 +1,5 @@
+pragma solcore;
+
 // std.signed: signed integer types int8..int256.
 // Each type wraps a two's-complement word. Arithmetic is checked; bitwise
 // operations and ABI encoding sign-extend to the selected width.

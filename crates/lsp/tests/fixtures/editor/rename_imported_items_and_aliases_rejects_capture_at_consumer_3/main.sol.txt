@@ -1,1 +1,3 @@
+pragma solcore;
+
 import * as M from math; function main() returns (word) { let renamed = lam () -> word { return 2; }; return M.target(); }

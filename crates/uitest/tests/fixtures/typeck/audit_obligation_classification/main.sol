@@ -1,3 +1,5 @@
+pragma solcore;
+
 function literal_as_callee() returns (word) {
     return 1 ();
 }

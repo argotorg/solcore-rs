@@ -1,8 +1,10 @@
+pragma solcore;
+
 pragma no-bounded-variable-condition;
 pragma no-patterson-condition Num;
 pragma no-generic-instance-for Pair;
 function f(a: word, b: word, c: word) returns (word) { return a-(b-c); }
 
 //~ diagnostics: 0
-//~ pragmas: no-bounded-variable-condition no-patterson-condition no-generic-instance-for
+//~ pragmas: solcore no-bounded-variable-condition no-patterson-condition no-generic-instance-for
 //~ function: f body

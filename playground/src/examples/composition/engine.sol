@@ -1,3 +1,5 @@
+pragma solcore;
+
 // The composition machinery shared by every vault in Vaults.sol. In Classic
 // Solidity this role is played by base contracts and virtual functions; the
 // crossings then need override(...) lists. Traits have one impl per type,

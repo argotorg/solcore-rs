@@ -4,9 +4,11 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/parse/struct_duplicate_field/main.sol
 ---
 error[SC0001]: duplicate struct field `x`
- --> /main/main.sol:1:25
+ --> /main/main.sol:3:25
   |
-1 | struct Point { x: word; x: word; }
+1 | pragma solcore;
+2 |
+3 | struct Point { x: word; x: word; }
   |                         ^
   |
   = note: while parsing enum declaration

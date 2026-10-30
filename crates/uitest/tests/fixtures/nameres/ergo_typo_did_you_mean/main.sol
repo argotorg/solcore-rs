@@ -1,3 +1,5 @@
+pragma solcore;
+
 function computeValue(x: word) returns (word) {
     return x;
 }

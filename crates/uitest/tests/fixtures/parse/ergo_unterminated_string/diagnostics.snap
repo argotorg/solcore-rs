@@ -4,13 +4,13 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/parse/ergo_unterminated_string/main.sol
 ---
 error[SC0001]: unterminated string literal
- --> /main/main.sol:2:13
+ --> /main/main.sol:4:13
   |
-1 |   function f() returns (word) {
-2 |       let s = "hello;
+3 |   function f() returns (word) {
+4 |       let s = "hello;
   |  _____________^
-3 | |     return 1;
-4 | | }
+5 | |     return 1;
+6 | | }
   | |__^ string literal starts here
   |
   = note: add a closing `"` before the end of file

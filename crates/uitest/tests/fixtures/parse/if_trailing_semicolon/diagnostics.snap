@@ -4,11 +4,11 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/parse/if_trailing_semicolon/main.sol
 ---
 error[SC0001]: parse error: unexpected `;`
- --> /main/main.sol:4:4
+ --> /main/main.sol:6:4
   |
-3 |     return ();
-4 |   };
+5 |     return ();
+6 |   };
   |    ^ unexpected token
-5 | }
+7 | }
   |
   = note: expecting statement

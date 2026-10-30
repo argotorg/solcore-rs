@@ -2549,7 +2549,7 @@ mod tests {
 
     #[test]
     fn parameter_references_include_uses_and_optional_declaration() {
-        let source = "function id(x: word) returns (word) {\n  let y = x;\n  return x;\n}\n";
+        let source = "pragma solcore;\nfunction id(x: word) returns (word) {\n  let y = x;\n  return x;\n}\n";
         let (world, uri) = world_with_main(source);
         let line_index = world.line_index(&uri).expect("line index");
         let first_use = (source.find("let y = x").expect("first use") + "let y = ".len()) as u32;
@@ -2580,7 +2580,7 @@ mod tests {
 
     #[test]
     fn top_level_function_declaration_finds_call_site() {
-        let source = "function target() returns (word) {\n  return 1;\n}\n\nfunction caller() returns (word) {\n  return target();\n}\n";
+        let source = "pragma solcore;\nfunction target() returns (word) {\n  return 1;\n}\n\nfunction caller() returns (word) {\n  return target();\n}\n";
         let (world, uri) = world_with_main(source);
         let line_index = world.line_index(&uri).expect("line index");
         let declaration = source.find("target").expect("declaration") as u32;
@@ -2596,7 +2596,7 @@ mod tests {
 
     #[test]
     fn std_references_exclude_the_unopenable_embedded_declaration() {
-        let source = "import {addWord} from std;\nfunction main() returns (word) { return addWord(1, 2); }\n";
+        let source = "pragma solcore;\nimport {addWord} from std;\nfunction main() returns (word) { return addWord(1, 2); }\n";
         let (world, uri) = world_with_main(source);
         let line_index = world.line_index(&uri).expect("line index");
         let import = source.find("addWord").expect("import") as u32;
@@ -2617,10 +2617,8 @@ mod tests {
 
     #[test]
     fn import_and_export_names_are_references_to_exported_item() {
-        let main =
-            "import {double} from math;\nfunction main() returns (word) { return double(21); }\n";
-        let math =
-            "function double(x: word) returns (word) { return x + x; }\nexport { double };\n";
+        let main = "pragma solcore;\nimport {double} from math;\nfunction main() returns (word) { return double(21); }\n";
+        let math = "pragma solcore;\nfunction double(x: word) returns (word) { return x + x; }\nexport { double };\n";
         let (world, main_uri, math_uri) = world_with_main_and_math(main, math);
         let main_index = world.line_index(&main_uri).expect("main line index");
         let math_index = world.line_index(&math_uri).expect("math line index");
@@ -2651,8 +2649,8 @@ mod tests {
 
     #[test]
     fn selected_import_alias_references_do_not_rename_the_source_symbol() {
-        let main = "import {double as twice} from math;\nfunction main() returns (word) { return twice(21); }\n";
-        let math = "function double(x: word) returns (word) { return x; }\nexport { double };\n";
+        let main = "pragma solcore;\nimport {double as twice} from math;\nfunction main() returns (word) { return twice(21); }\n";
+        let math = "pragma solcore;\nfunction double(x: word) returns (word) { return x; }\nexport { double };\n";
         let (world, main_uri, math_uri) = world_with_main_and_math(main, math);
         let main_index = world.line_index(&main_uri).expect("main line index");
         let math_index = world.line_index(&math_uri).expect("math line index");
@@ -2699,9 +2697,9 @@ mod tests {
 
     #[test]
     fn module_alias_references_include_declaration_and_qualifier() {
-        let main =
-            "import * as M from math;\nfunction main() returns (word) { return M.value(); }\n";
-        let math = "function value() returns (word) { return 1; }\nexport { value };\n";
+        let main = "pragma solcore;\nimport * as M from math;\nfunction main() returns (word) { return M.value(); }\n";
+        let math =
+            "pragma solcore;\nfunction value() returns (word) { return 1; }\nexport { value };\n";
         let (world, main_uri, _) = world_with_main_and_math(main, math);
         let index = world.line_index(&main_uri).expect("main line index");
         let declaration = main.find("M from").expect("module alias") as u32;
@@ -2722,8 +2720,9 @@ mod tests {
 
     #[test]
     fn module_alias_references_include_type_and_pattern_qualifiers() {
-        let main = "import * as M from math;\nfunction unwrap(token: M.Token) returns (word) {\n  match (token) {\n  case M.Token.Ok(value) { return value; }\ncase M.Token.Err(value) { return value; }}\n}\n";
-        let model = "enum Token {Ok(word) , Err(word)}\nexport { Token(Ok, Err) };\n";
+        let main = "pragma solcore;\nimport * as M from math;\nfunction unwrap(token: M.Token) returns (word) {\n  match (token) {\n  case M.Token.Ok(value) { return value; }\ncase M.Token.Err(value) { return value; }}\n}\n";
+        let model =
+            "pragma solcore;\nenum Token {Ok(word) , Err(word)}\nexport { Token(Ok, Err) };\n";
         let (world, main_uri, _) = world_with_main_and_math(main, model);
         let index = world.line_index(&main_uri).expect("main line index");
         let declaration = main.find("M from").expect("module alias") as u32;
@@ -2752,8 +2751,8 @@ mod tests {
 
     #[test]
     fn local_reexport_of_selected_alias_is_a_local_reference() {
-        let main = "import {double as twice} from math;\nexport { twice };\nfunction main() returns (word) { return twice(21); }\n";
-        let math = "function double(x: word) returns (word) { return x; }\nexport { double };\n";
+        let main = "pragma solcore;\nimport {double as twice} from math;\nexport { twice };\nfunction main() returns (word) { return twice(21); }\n";
+        let math = "pragma solcore;\nfunction double(x: word) returns (word) { return x; }\nexport { double };\n";
         let (world, main_uri, _) = world_with_main_and_math(main, math);
         let index = world.line_index(&main_uri).expect("main index");
         let declaration = main.find("twice").expect("alias declaration") as u32;
@@ -2791,12 +2790,11 @@ mod tests {
         let facade_uri = Url::parse("file:///main/facade.sol").expect("facade uri");
         let main_uri = Url::parse("file:///main/main.sol").expect("main uri");
         let consumer_uri = Url::parse("file:///main/consumer.sol").expect("consumer uri");
-        let util = "function value() returns (word) { return 1; }\nexport { value };\n";
-        let facade = "export util as Tools;\n";
-        let main =
-            "import facade;\nfunction main() returns (word) { return facade.Tools.value(); }\n";
-        let consumer =
-            "import facade;\nfunction consume() returns (word) { return facade.Tools.value(); }\n";
+        let util =
+            "pragma solcore;\nfunction value() returns (word) { return 1; }\nexport { value };\n";
+        let facade = "pragma solcore;\nexport util as Tools;\n";
+        let main = "pragma solcore;\nimport facade;\nfunction main() returns (word) { return facade.Tools.value(); }\n";
+        let consumer = "pragma solcore;\nimport facade;\nfunction consume() returns (word) { return facade.Tools.value(); }\n";
         assert!(world.open_document(util_uri, util.to_owned()));
         assert!(world.open_document(facade_uri.clone(), facade.to_owned()));
         assert!(world.open_document(main_uri.clone(), main.to_owned()));
@@ -2832,8 +2830,8 @@ mod tests {
 
     #[test]
     fn ambiguous_term_and_type_selector_has_no_single_reference_target() {
-        let main = "import {Thing} from math;\nfunction use(x: Thing) returns (word) { return Thing(); }\n";
-        let math = "enum Thing {MakeThing}\nfunction Thing() returns (word) { return 1; }\nexport { Thing };\n";
+        let main = "pragma solcore;\nimport {Thing} from math;\nfunction use(x: Thing) returns (word) { return Thing(); }\n";
+        let math = "pragma solcore;\nenum Thing {MakeThing}\nfunction Thing() returns (word) { return 1; }\nexport { Thing };\n";
         let (world, main_uri, _) = world_with_main_and_math(main, math);
         let index = world.line_index(&main_uri).expect("main index");
         let selector = main.find("Thing").expect("selector") as u32;
@@ -2851,10 +2849,11 @@ mod tests {
         let facade_uri = Url::parse("file:///main/facade.sol").expect("facade uri");
         let bridge_uri = Url::parse("file:///main/bridge.sol").expect("bridge uri");
         let main_uri = Url::parse("file:///main/main.sol").expect("main uri");
-        let util = "function value() returns (word) { return 1; }\nexport { value };\n";
-        let facade = "export util as Tools;\n";
-        let bridge = "export facade;\n";
-        let main = "import bridge;\nfunction main() returns (word) { return bridge.facade.Tools.value(); }\n";
+        let util =
+            "pragma solcore;\nfunction value() returns (word) { return 1; }\nexport { value };\n";
+        let facade = "pragma solcore;\nexport util as Tools;\n";
+        let bridge = "pragma solcore;\nexport facade;\n";
+        let main = "pragma solcore;\nimport bridge;\nfunction main() returns (word) { return bridge.facade.Tools.value(); }\n";
         assert!(world.open_document(util_uri, util.to_owned()));
         assert!(world.open_document(facade_uri.clone(), facade.to_owned()));
         assert!(world.open_document(bridge_uri.clone(), bridge.to_owned()));
@@ -2888,9 +2887,10 @@ mod tests {
         let main_uri = Url::parse("file:///main/main.sol").expect("main uri");
         let bridge_uri = Url::parse("file:///main/bridge.sol").expect("bridge uri");
         let model_uri = Url::parse("file:///main/model.sol").expect("model uri");
-        let main = "import {Token} from bridge;\nfunction make(x: word) returns (Token) { return Token.Ok(x); }\n";
-        let bridge = "export model.{Token(Ok)};\n";
-        let model = "enum Token {Ok(word) , Err(word)}\nexport { Token(Ok, Err) };\n";
+        let main = "pragma solcore;\nimport {Token} from bridge;\nfunction make(x: word) returns (Token) { return Token.Ok(x); }\n";
+        let bridge = "pragma solcore;\nexport model.{Token(Ok)};\n";
+        let model =
+            "pragma solcore;\nenum Token {Ok(word) , Err(word)}\nexport { Token(Ok, Err) };\n";
         assert!(world.open_document(main_uri.clone(), main.to_owned()));
         assert!(world.open_document(bridge_uri.clone(), bridge.to_owned()));
         assert!(world.open_document(model_uri.clone(), model.to_owned()));

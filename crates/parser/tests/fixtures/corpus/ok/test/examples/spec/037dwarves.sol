@@ -1,3 +1,5 @@
+pragma solcore;
+
 contract Dwarves {
     enum Dwarf {
         Doc,

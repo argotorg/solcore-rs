@@ -1,3 +1,5 @@
+pragma solcore;
+
 contract Pars {
     function main() public {
         let f: word;

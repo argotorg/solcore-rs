@@ -1,3 +1,5 @@
+pragma solcore;
+
 /* Positive: comptime let binding fed from a comptime function call. */
 import std;
 

@@ -4,12 +4,12 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/type_annotation_kind_mismatch/main.sol
 ---
 error[SC0299]: Invalid number of type arguments!
- --> /main/main.sol:5:17
+ --> /main/main.sol:7:17
   |
-4 |
-5 | function f(x: P<word<word>>) returns (word) {
+6 |
+7 | function f(x: P<word<word>>) returns (word) {
   |                 ^^^^^^^^^^ diagnostic reported here
-6 |     return 0;
+8 |     return 0;
   |
   = note: Type word is expected to have 0 type arguments
   = note: but, type word<word> has 1 arguments

@@ -1,3 +1,5 @@
+pragma solcore;
+
 // This file should FAIL compilation to demonstrate that checks are working when the imported file contains violations
 
 import pragma_merge_base;

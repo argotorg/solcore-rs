@@ -1,3 +1,5 @@
+pragma solcore;
+
 /* Positive: comptime through an overloaded (type class) function.
    Scale.scale takes a comptime factor; if factor == 1 it returns x
    unchanged (conditional evaluated at comptime since factor is comptime).

@@ -1,3 +1,5 @@
+pragma solcore;
+
 import * from std;
 import { uint256, address } from std;
 import * from std.dispatch;

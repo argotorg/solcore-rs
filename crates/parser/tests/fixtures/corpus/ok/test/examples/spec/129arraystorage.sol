@@ -1,3 +1,5 @@
+pragma solcore;
+
 // Exercises storage arrays (array(member)) modeled on storage mappings.
 import * from std;
 pragma no-patterson-condition;

@@ -201,7 +201,8 @@ fn nested_item_defs<'db>(
 fn top_level_error_item_has_recovery_span() {
     let db = TestDb::default();
     let url = "memory:///recovery.sol".parse().expect("valid url");
-    let src = "function first() {}\nunknown nonsense tokens\nfunction second() {}\n";
+    let src =
+        "pragma solcore;\nfunction first() {}\nunknown nonsense tokens\nfunction second() {}\n";
     let file = SourceFile::new(&db, url, Some(src.to_owned()));
 
     let module = parse_file_to_hir(&db, file).module(&db);
@@ -223,7 +224,7 @@ fn top_level_error_item_has_recovery_span() {
 fn relative_span_query_backdates_after_edit_above_def() {
     let mut db = TestDb::default();
     let url = "memory:///incr.sol".parse().expect("valid url");
-    let src = "function id(x: word) returns (word) {\n  return x;\n}\n";
+    let src = "pragma solcore;\nfunction id(x: word) returns (word) {\n  return x;\n}\n";
     let file = SourceFile::new(&db, url, Some(src.to_owned()));
 
     // Baseline: execute the semantic-style query once, then drop all `'db`
@@ -237,10 +238,13 @@ fn relative_span_query_backdates_after_edit_above_def() {
 
         let rel = func.span(&db);
         let abs = rel.resolve_to_absolute(&db);
-        // The function anchors on itself, so its relative span starts at 0, and
-        // with no leading text its absolute start is 0 too.
+        // The function anchors on itself, so its relative span starts at 0; its
+        // absolute start follows the leading pragma.
         assert_eq!(rel.begin().as_u32(), 0);
-        assert_eq!(abs.start().as_u32(), 0);
+        assert_eq!(
+            abs.start().as_u32(),
+            src.find("function").expect("function") as u32
+        );
         (fact, abs.start().as_u32())
     };
 
@@ -272,7 +276,10 @@ fn editing_leading_comment_invalidates_only_comment_consumers() {
     let file = SourceFile::new(
         &db,
         url,
-        Some("// one\nfunction id(x: word) returns (word) { return x; }\n".to_owned()),
+        Some(
+            "pragma solcore;\n// one\nfunction id(x: word) returns (word) { return x; }\n"
+                .to_owned(),
+        ),
     );
 
     let (before_identity, before_span) = {
@@ -292,7 +299,7 @@ fn editing_leading_comment_invalidates_only_comment_consumers() {
     };
 
     file.set_content(&mut db).to(Some(
-        "// two\nfunction id(x: word) returns (word) { return x; }\n".to_owned(),
+        "pragma solcore;\n// two\nfunction id(x: word) returns (word) { return x; }\n".to_owned(),
     ));
 
     let function = first_function(&db, file);
@@ -320,7 +327,7 @@ fn editing_nested_item_comments_preserves_semantic_fields() {
     let url = "memory:///nested-comment-incr.sol"
         .parse()
         .expect("valid url");
-    let before_src = "enum Choice {
+    let before_src = "pragma solcore;\nenum Choice {
   // alpha
   First
 }
@@ -365,7 +372,7 @@ contract C {
     // Keep the payload byte length unchanged so every nested declaration keeps
     // the same owner-relative span. Only the parallel comment fields change.
     file.set_content(&mut db).to(Some(
-        "enum Choice {
+        "pragma solcore;\nenum Choice {
   // bravo
   First
 }
@@ -406,7 +413,7 @@ fn lambda_body_relative_span_backdates_after_cosmetic_signature_edit() {
     let url = "memory:///lambda-incr.sol".parse().expect("valid url");
     // `->` remains the canonical result annotation for lambdas; only named
     // function declarations moved to `returns (...)`.
-    let before_src = "function make(z: word) returns (word) {
+    let before_src = "pragma solcore;\nfunction make(z: word) returns (word) {
   let n = lam (x: word) -> word {
     return x;
   };
@@ -425,7 +432,7 @@ fn lambda_body_relative_span_backdates_after_cosmetic_signature_edit() {
     };
 
     file.set_content(&mut db).to(Some(
-        "function make(z: word) returns (word) {
+        "pragma solcore;\nfunction make(z: word) returns (word) {
   let n = lam (
     x /* same binder */ : /* same parameter type */ word
   ) -> /* same return type */ word {
@@ -449,7 +456,7 @@ fn lambda_body_relative_span_backdates_after_cosmetic_signature_edit() {
     assert_eq!(after_cosmetic_fact, before_fact);
 
     file.set_content(&mut db).to(Some(
-        "function make(z: word) returns (word) {
+        "pragma solcore;\nfunction make(z: word) returns (word) {
   let n = lam (x: uint) -> word {
     return x;
   };

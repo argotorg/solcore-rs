@@ -4,11 +4,12 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/nameres/ambiguous/main.sol
 ---
 error[SC0120]: ambiguous selected import `value` in term namespace
- --> /main/main.sol:1:1
+ --> /main/main.sol:3:1
   |
-1 | import { value } from a;
+2 |
+3 | import { value } from a;
   | ^^^^^^^^^^^^^^^^^^^^^^^^ ambiguous selected import in term namespace
-2 | import { value } from b;
+4 | import { value } from b;
   |
   = note: `value` is imported from a, b in term namespace
   = note: use an explicit module qualifier or narrow the selected imports

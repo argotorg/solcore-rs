@@ -4,10 +4,10 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/comptime/ct_memory_read_runtime/main.sol
 ---
 error[SC0409]: comptime evaluation failed: comptime let 'value' is bound to a runtime expression
-  --> /main/main.sol:16:9
+  --> /main/main.sol:18:9
    |
-15 |     function main() returns (word) {
-16 |         let value: comptime<word> = readWrapper();
+17 |     function main() returns (word) {
+18 |         let value: comptime<word> = readWrapper();
    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ comptime evaluation failed here
-17 |         return value;
+19 |         return value;
    |

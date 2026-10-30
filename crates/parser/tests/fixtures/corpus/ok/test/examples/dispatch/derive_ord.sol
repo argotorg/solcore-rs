@@ -1,3 +1,5 @@
+pragma solcore;
+
 // Runtime test: `#[derive(Eq, Ord)]` instances executed on the EVM.
 // Each public function returns uint256(1) for true / uint256(0) for false,
 // pinning down the structural Eq/Ord instances over (), sum and pair:

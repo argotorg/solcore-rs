@@ -1,3 +1,5 @@
+pragma solcore;
+
 import std;
 import { memory, storage, DynArray, array, string, Typedef, CanStore } from std;
 

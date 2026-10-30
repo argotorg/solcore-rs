@@ -1,3 +1,5 @@
+pragma solcore;
+
 // Simple Patterson test - should fail without pragma
 
 trait C1<a> {}

@@ -1,0 +1,14 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/parse/pragma_solcore_misplaced/main.sol
+---
+error[SC0002]: `pragma solcore;` must be the first declaration
+ --> /main/main.sol:2:1
+  |
+1 | import * from std;
+2 | pragma solcore;
+  | ^^^^^^^^^^^^^^^ move this pragma before every other declaration
+3 |
+  |
+  = help: every Solcore source file must begin with `pragma solcore;`

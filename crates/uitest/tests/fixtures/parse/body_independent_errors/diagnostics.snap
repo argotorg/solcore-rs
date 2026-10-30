@@ -4,21 +4,21 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/parse/body_independent_errors/main.sol
 ---
 error[SC0001]: invalid token `§`
- --> /main/main.sol:2:1
+ --> /main/main.sol:4:1
   |
-1 | function main() returns (word) {
-2 | §
+3 | function main() returns (word) {
+4 | §
   | ^ invalid token
-3 | let broken = ;
+5 | let broken = ;
   |
 ---
 
 error[SC0001]: parse error: unexpected `;`
- --> /main/main.sol:3:14
+ --> /main/main.sol:5:14
   |
-2 | §
-3 | let broken = ;
+4 | §
+5 | let broken = ;
   |              ^ unexpected token
-4 | return 0;
+6 | return 0;
   |
   = note: expecting expression

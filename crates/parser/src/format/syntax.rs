@@ -572,7 +572,7 @@ mod tests {
 
     #[test]
     fn separates_yul_statements_but_keeps_core_for_headers_together() {
-        let source = "function f() { for (let i = 0; i < 3; i += 1) { assembly { let x := 0 x := add(x, 1) mstore(0, x) } } }";
+        let source = "pragma solcore; function f() { for (let i = 0; i < 3; i += 1) { assembly { let x := 0 x := add(x, 1) mstore(0, x) } } }";
         let layout = layout(source).unwrap();
         for text in ["for (", "assembly {", "let x", "x := add", "mstore("] {
             assert!(
@@ -591,7 +591,7 @@ mod tests {
 
     #[test]
     fn distinguishes_generic_brackets_from_comparisons() {
-        let source = "function f<a>(x: Pair<a, word>) returns (word) { let p: Pair<word, word>; if (x < 2) { return 1; } return 0; }";
+        let source = "pragma solcore; function f<a>(x: Pair<a, word>) returns (word) { let p: Pair<word, word>; if (x < 2) { return 1; } return 0; }";
         let layout = layout(source).unwrap();
         for (offset, character) in source.char_indices() {
             if matches!(character, '<' | '>') {
@@ -606,7 +606,7 @@ mod tests {
 
     #[test]
     fn excludes_import_and_export_selector_braces() {
-        let source = "import { A, B } from lib; export { A, B }; enum E { A, B }";
+        let source = "pragma solcore; import { A, B } from lib; export { A, B }; enum E { A, B }";
         let layout = layout(source).unwrap();
         let enum_start = source.find("enum").unwrap();
         for (offset, character) in source.char_indices() {
@@ -618,16 +618,16 @@ mod tests {
 
     #[test]
     fn validates_nested_lambda_bodies_and_tail_semicolons() {
-        assert!(layout("function f() { let f = lam() { let x = ; }; }").is_err());
-        assert!(layout("function f() { let f = lam() { 1 }; }").is_err());
-        assert!(layout("contract C { constructor() { 1 } }").is_err());
-        assert!(layout("contract C { fallback() { 1 } }").is_err());
-        assert!(layout("function f() returns (word) { 1 }").is_ok());
+        assert!(layout("pragma solcore; function f() { let f = lam() { let x = ; }; }").is_err());
+        assert!(layout("pragma solcore; function f() { let f = lam() { 1 }; }").is_err());
+        assert!(layout("pragma solcore; contract C { constructor() { 1 } }").is_err());
+        assert!(layout("pragma solcore; contract C { fallback() { 1 } }").is_err());
+        assert!(layout("pragma solcore; function f() returns (word) { 1 }").is_ok());
     }
 
     #[test]
     fn marks_nested_and_parenthesized_ternaries_separately_from_types() {
-        let source = "function f(x: word) returns (word) { return true ? (false ? x : 0) : (true ? 1 : x); }";
+        let source = "pragma solcore; function f(x: word) returns (word) { return true ? (false ? x : 0) : (true ? 1 : x); }";
         let layout = layout(source).unwrap();
         let annotation = source.find(':').unwrap();
         for (offset, character) in source.char_indices() {
@@ -642,7 +642,7 @@ mod tests {
 
     #[test]
     fn distinguishes_constructor_dots_from_paths_and_fields() {
-        let source = "function f(x: M.T) { match (x) { case comptime .A { return .B(x.field); } case .C { return M.D; } } }";
+        let source = "pragma solcore; function f(x: M.T) { match (x) { case comptime .A { return .B(x.field); } case .C { return M.D; } } }";
         let layout = layout(source).unwrap();
         for (offset, character) in source.char_indices() {
             if character == '.' {
@@ -662,9 +662,15 @@ mod tests {
         // discard a partial tree first. Keep those trees bounded on every
         // consumer, including formatting, even when the input is well formed.
         for (depth, accepted) in [(127, true), (128, false), (4096, false)] {
-            let source = format!("function f() {{ return {}0; }}", "0 + ".repeat(depth));
+            let source = format!(
+                "pragma solcore; function f() {{ return {}0; }}",
+                "0 + ".repeat(depth)
+            );
             assert_eq!(layout(&source).is_ok(), accepted);
-            let source = format!("function f() {{ return x{}; }}", ".field".repeat(depth));
+            let source = format!(
+                "pragma solcore; function f() {{ return x{}; }}",
+                ".field".repeat(depth)
+            );
             assert_eq!(layout(&source).is_ok(), accepted);
         }
     }
@@ -672,7 +678,7 @@ mod tests {
     #[test]
     fn rejects_excessive_delimiter_nesting() {
         let source = format!(
-            "function f() {{ return {}0{}; }}",
+            "pragma solcore; function f() {{ return {}0{}; }}",
             "(".repeat(129),
             ")".repeat(129),
         );

@@ -1,3 +1,5 @@
+pragma solcore;
+
 enum D { C }
 function bad(x: D) returns (word) { return g(1,); return 7; }
 function good() {}

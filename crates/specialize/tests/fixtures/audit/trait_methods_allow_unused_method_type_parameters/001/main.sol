@@ -1,3 +1,5 @@
+pragma solcore;
+
 //~ specialize: loader bare
 
 trait C<t> {

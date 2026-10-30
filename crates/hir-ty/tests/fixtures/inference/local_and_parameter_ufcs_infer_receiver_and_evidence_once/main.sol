@@ -1,3 +1,5 @@
+pragma solcore;
+
 trait Echo<self> {
     function echo(value: self) returns (self);
 }

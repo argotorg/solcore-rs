@@ -1,3 +1,5 @@
+pragma solcore;
+
 enum Pair {
     MkPair(word, word)
 }

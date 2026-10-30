@@ -4,12 +4,12 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/manual_sigstring_nested_adt/main.sol
 ---
 error[SC0231]: public function `roundtrip` ABI for contract `C` cannot use visible manual `SigString` evidence
-  --> /main/main.sol:21:5
+  --> /main/main.sol:23:5
    |
-20 | contract C {
-21 |     function roundtrip(value: Outer) public returns (Outer) {
+22 | contract C {
+23 |     function roundtrip(value: Outer) public returns (Outer) {
    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ external ABI evidence must be compiler-owned and canonical
-22 |         return value;
+24 |         return value;
    |
    = note: impl `SigString` can override canonical `SigString` behavior
    = help: remove the visible manual ABI impl or keep this declaration out of the external ABI

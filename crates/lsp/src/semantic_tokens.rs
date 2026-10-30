@@ -683,7 +683,7 @@ mod tests {
 
     #[test]
     fn semantic_tokens_are_non_empty_ordered_and_start_at_first_named_entity() {
-        let source = "function main(x: word) returns (word) {\n  let y = x;\n  return y;\n}\n";
+        let source = "pragma solcore;\nfunction main(x: word) returns (word) {\n  let y = x;\n  return y;\n}\n";
         let (world, uri) = world_with_main(source);
 
         let result = handle_semantic_tokens_full(&world, &uri).expect("semantic tokens");
@@ -693,8 +693,12 @@ mod tests {
         assert!(!tokens.data.is_empty(), "expected at least one token");
 
         let first = tokens.data[0];
-        assert_eq!(first.delta_line, 0);
-        assert_eq!(first.delta_start, source.find("main").expect("main") as u32);
+        assert_eq!(first.delta_line, 1);
+        let main_line = source.lines().nth(1).expect("main line");
+        assert_eq!(
+            first.delta_start,
+            main_line.find("main").expect("main") as u32
+        );
         assert_eq!(first.length, "main".len() as u32);
         assert_eq!(first.token_type, token_type_index(TokenKind::Function));
         assert_eq!(first.token_modifiers_bitset, declaration_bitset());
@@ -704,7 +708,7 @@ mod tests {
 
     #[test]
     fn emitted_token_type_indexes_are_covered_by_the_legend() {
-        let source = "enum Maybe {None , Some(word)}\n\ncontract Box {\n  value: word;\n  function get(x: word) returns (word) {\n    let current = value;\n    return current + x;\n  }\n}\n";
+        let source = "pragma solcore;\nenum Maybe {None , Some(word)}\n\ncontract Box {\n  value: word;\n  function get(x: word) returns (word) {\n    let current = value;\n    return current + x;\n  }\n}\n";
         let (world, uri) = world_with_main(source);
 
         let result = handle_semantic_tokens_full(&world, &uri).expect("semantic tokens");

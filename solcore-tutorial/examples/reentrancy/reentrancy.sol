@@ -1,3 +1,5 @@
+pragma solcore;
+
 // Candidate standard-library inventory: this module should disappear once
 // std provides reentrancy locks.
 import * from std;

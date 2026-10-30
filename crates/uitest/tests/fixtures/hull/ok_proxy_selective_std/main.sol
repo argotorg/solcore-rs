@@ -1,3 +1,5 @@
+pragma solcore;
+
 import { uint256 } from std;
 
 function identity<t>(value: t) returns (t) {

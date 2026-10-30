@@ -1,3 +1,5 @@
+pragma solcore;
+
 trait Foo<a, b> {
     function foo(x: a, y: b) returns (b);
     function faa(y: a) returns (a);

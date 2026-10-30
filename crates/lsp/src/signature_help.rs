@@ -507,7 +507,7 @@ mod tests {
 
     #[test]
     fn highlights_first_argument() {
-        let source = "function f(a: word, b: word) returns (word) {\n  return a;\n}\n\nfunction main() returns (word) {\n  return f(1, 2);\n}\n";
+        let source = "pragma solcore;\nfunction f(a: word, b: word) returns (word) {\n  return a;\n}\n\nfunction main() returns (word) {\n  return f(1, 2);\n}\n";
         let (world, uri) = world_with_main(source);
         let position = position_at(source, &world, &uri, "1, 2");
 
@@ -520,7 +520,7 @@ mod tests {
 
     #[test]
     fn highlights_second_argument_and_labels_signature() {
-        let source = "function f(a: word, b: word) returns (word) {\n  return a;\n}\n\nfunction main() returns (word) {\n  return f(1, 2);\n}\n";
+        let source = "pragma solcore;\nfunction f(a: word, b: word) returns (word) {\n  return a;\n}\n\nfunction main() returns (word) {\n  return f(1, 2);\n}\n";
         let (world, uri) = world_with_main(source);
         let comma_offset = source.find(", 2").expect("comma") as u32 + 1;
         let position = world
@@ -557,8 +557,8 @@ mod tests {
 
     #[test]
     fn signature_help_uses_requested_module_when_unrelated_document_opened_first() {
-        let unrelated = "function unrelated() returns (word) { return 0; }\n";
-        let main = "function combine(a: word, b: word) returns (word) { return a; }\n\nfunction main() returns (word) {\n  return combine(1, 2);\n}\n";
+        let unrelated = "pragma solcore;\nfunction unrelated() returns (word) { return 0; }\n";
+        let main = "pragma solcore;\nfunction combine(a: word, b: word) returns (word) { return a; }\n\nfunction main() returns (word) {\n  return combine(1, 2);\n}\n";
         let unrelated_uri = Url::parse("file:///main/unrelated.sol").expect("unrelated uri");
         let main_uri = Url::parse("file:///main/main.sol").expect("main uri");
         let mut world = WorldState::new();
@@ -586,9 +586,9 @@ mod tests {
 
     #[test]
     fn signature_help_resolves_imported_function_in_defining_module() {
-        let unrelated = "function unrelated() returns (word) { return 0; }\n";
-        let math = "function combine(a: word, b: word) returns (word) { return a; }\n\nexport { combine };\n";
-        let main = "import {combine} from math;\n\nfunction main() returns (word) {\n  return combine(1, 2);\n}\n";
+        let unrelated = "pragma solcore;\nfunction unrelated() returns (word) { return 0; }\n";
+        let math = "pragma solcore;\nfunction combine(a: word, b: word) returns (word) { return a; }\n\nexport { combine };\n";
+        let main = "pragma solcore;\nimport {combine} from math;\n\nfunction main() returns (word) {\n  return combine(1, 2);\n}\n";
         let unrelated_uri = Url::parse("file:///main/unrelated.sol").expect("unrelated uri");
         let math_uri = Url::parse("file:///main/math.sol").expect("math uri");
         let main_uri = Url::parse("file:///main/main.sol").expect("main uri");

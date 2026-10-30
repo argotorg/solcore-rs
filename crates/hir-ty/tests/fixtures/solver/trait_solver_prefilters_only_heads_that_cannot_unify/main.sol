@@ -1,3 +1,5 @@
+pragma solcore;
+
 trait Target<a> {}
 trait Noise<a> {}
 trait DefaultTarget<a> {}

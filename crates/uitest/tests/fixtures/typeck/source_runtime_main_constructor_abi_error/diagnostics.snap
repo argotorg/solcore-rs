@@ -4,22 +4,22 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/source_runtime_main_constructor_abi_error/main.sol
 ---
 error[SC0207]: cannot satisfy trait constraint: ABIDecoder<Choice, MemoryWordReader>: ABIDecode<Choice>
-  --> /main/main.sol:9:5
+  --> /main/main.sol:11:5
    |
- 8 | contract C {
- 9 |     constructor(value: Choice) {}
+10 | contract C {
+11 |     constructor(value: Choice) {}
    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ constraint originates here
-10 |     function main() {
+12 |     function main() {
    |
    = note: no visible impl matches `ABIDecoder<Choice, MemoryWordReader>: ABIDecode<Choice>`
    = help: add a matching impl or strengthen the surrounding type context
 ---
 
 error[SC0231]: ABI parameter cannot be represented in the ABI: Choice (user-defined ADTs are not supported by the canonical external ABI)
-  --> /main/main.sol:9:5
+  --> /main/main.sol:11:5
    |
- 8 | contract C {
- 9 |     constructor(value: Choice) {}
+10 | contract C {
+11 |     constructor(value: Choice) {}
    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ unsupported ABI type
-10 |     function main() {
+12 |     function main() {
    |

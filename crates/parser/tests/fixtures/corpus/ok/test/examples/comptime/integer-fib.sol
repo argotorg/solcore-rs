@@ -1,3 +1,5 @@
+pragma solcore;
+
 // Fibonacci using the comptime-only integer type.
 // No import std needed: uses only compiler builtins.
 // Expected: main() folds to word literal 55 (fib(10)).

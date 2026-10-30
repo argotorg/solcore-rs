@@ -8,26 +8,26 @@ const { compile, run, watch } = await initializeBrowserWasm();
 
 test('browser WASM rejects excessive parser recursion and remains usable', () => {
   for (const [content, expected] of [
-    [`function main() returns (word) { return ${'true ? '.repeat(512)}0${' : 0'.repeat(512)}; }`, /expression nesting/],
-    [`function main() returns (word) { return ${'lam() { return true; }() ? '.repeat(512)}0${' : 0'.repeat(512)}; }`, /expression nesting/],
-    [`type T = ${'Box<'.repeat(4096)}word${'>'.repeat(4096)};`, /type nesting/],
-    [`type T = ${'@'.repeat(4096)}word;`, /type nesting/],
-    [`function main() returns (word) { return ${'('.repeat(80)}42${')'.repeat(80)}; }`, /parse error|expression nesting/],
-    [`function main() { a${'.x'.repeat(4096)} += 1; }`, /expression nesting/],
-    [`function main() { let a = 1${' + 1'.repeat(16384)} }`, /parse error|expression nesting/],
+    [`pragma solcore; function main() returns (word) { return ${'true ? '.repeat(512)}0${' : 0'.repeat(512)}; }`, /expression nesting/],
+    [`pragma solcore; function main() returns (word) { return ${'lam() { return true; }() ? '.repeat(512)}0${' : 0'.repeat(512)}; }`, /expression nesting/],
+    [`pragma solcore; type T = ${'Box<'.repeat(4096)}word${'>'.repeat(4096)};`, /type nesting/],
+    [`pragma solcore; type T = ${'@'.repeat(4096)}word;`, /type nesting/],
+    [`pragma solcore; function main() returns (word) { return ${'('.repeat(80)}42${')'.repeat(80)}; }`, /parse error|expression nesting/],
+    [`pragma solcore; function main() { a${'.x'.repeat(4096)} += 1; }`, /expression nesting/],
+    [`pragma solcore; function main() { let a = 1${' + 1'.repeat(16384)} }`, /parse error|expression nesting/],
     [`function main() {${'if (true) { ) '.repeat(512)};${'}'.repeat(513)}`, /delimiter nesting/],
   ]) {
     const result = compile({ files: [{ path: 'main.sol', content }], entry: 'main.sol' });
     assert.equal(result.success, false);
     assert.ok(result.diagnostics.some((diagnostic) => expected.test(diagnostic.message)), JSON.stringify(result.diagnostics));
   }
-  const content = `function main() returns (word) { return ${'('.repeat(24)}42${')'.repeat(24)}; }`;
+  const content = `pragma solcore; function main() returns (word) { return ${'('.repeat(24)}42${')'.repeat(24)}; }`;
   const result = compile({ files: [{ path: 'main.sol', content }], entry: 'main.sol' });
   assert.equal(result.success, true, JSON.stringify(result.diagnostics));
 });
 
 test('browser WASM bounds exponential compile-time literal growth', () => {
-  const content = `
+  const content = `pragma solcore;\n
 import * from std;
 function grow(comptime n: integer, comptime s: string) returns (comptime<string>) {
   if (integerLt(n, 1)) { return s; }
@@ -67,7 +67,7 @@ test(`${backend}: browser WASM discovers and runs the bundled Calculator test`, 
 
 test(`${backend}: a changed source is recompiled, and Compile does not execute`, () => {
   const input = {
-    files: [{ path: 'main.sol', content: 'function main() returns (word) { return 99; }' }],
+    files: [{ path: 'main.sol', content: 'pragma solcore; function main() returns (word) { return 99; }' }],
     entry: 'main.sol', options,
   };
   assert.equal(run(input).execution?.returnWord, '99');
@@ -76,7 +76,7 @@ test(`${backend}: a changed source is recompiled, and Compile does not execute`,
 
 test(`${backend}: browser WASM reports unsupported structured returns explicitly`, () => {
   const result = run({
-    files: [{ path: 'main.sol', content: 'function main() returns (bool) { return true; }' }],
+    files: [{ path: 'main.sol', content: 'pragma solcore; function main() returns (bool) { return true; }' }],
     entry: 'main.sol', options,
   });
   assert.equal(result.success, true, JSON.stringify(result.diagnostics));
@@ -87,7 +87,7 @@ test(`${backend}: browser WASM reports unsupported structured returns explicitly
 
 test(`${backend}: browser WASM preserves constructor effects only within each run`, () => {
   const input = {
-    files: [{ path: 'main.sol', content: `
+    files: [{ path: 'main.sol', content: `pragma solcore;\n
 import * from std;
 import * from std.dispatch;
 contract Counter {
@@ -221,7 +221,7 @@ for (const [directory, entry, helpers, count] of [
 
 test(`${backend}: bytecode output contains creation and runtime sections without deploying`, () => {
   const input = {
-    files: [{ path: 'main.sol', content: 'contract A { function main() public returns (word) { return 1; } } contract B { function main() public returns (word) { return 2; } }' }],
+    files: [{ path: 'main.sol', content: 'pragma solcore; contract A { function main() public returns (word) { return 1; } } contract B { function main() public returns (word) { return 2; } }' }],
     entry: 'main.sol', options: { emitBytecode: true, backend },
   };
   const result = compile(input);
@@ -233,7 +233,7 @@ test(`${backend}: bytecode output contains creation and runtime sections without
     assert.deepEqual(object.sections.map(section => section.name).sort(), ['init', 'runtime']);
     for (const section of object.sections) assert.match(section.code, /^0x(?:[0-9a-f]{2})+$/);
   }
-  const main = compile({ ...input, files: [{ path: 'main.sol', content: 'function main() returns (word) { return 42; }' }] });
+  const main = compile({ ...input, files: [{ path: 'main.sol', content: 'pragma solcore; function main() returns (word) { return 42; }' }] });
   assert.equal(main.hasMain, true);
   assert.deepEqual(main.bytecode[0].sections.map(section => section.name), ['runtime']);
   assert.equal(compile({ ...input, options: { backend } }).bytecode.length, 0);

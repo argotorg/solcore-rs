@@ -1,3 +1,5 @@
+pragma solcore;
+
 // Comptime string concatenation, materialized into runtime memory(string).
 // Concatenation runs at comptime (in the `string` domain); the result is
 // materialized at the memory(string) site.  All four forms below build the same

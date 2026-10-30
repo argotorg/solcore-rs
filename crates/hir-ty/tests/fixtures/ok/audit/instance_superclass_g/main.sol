@@ -1,3 +1,5 @@
+pragma solcore;
+
 trait Parent<t> {
     function f(x: t) returns (word);
 }

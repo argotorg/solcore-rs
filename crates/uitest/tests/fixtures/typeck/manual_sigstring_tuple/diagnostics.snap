@@ -8,17 +8,17 @@ error[SC0218]: Overlapping impls are not supported
                pair<uint256, bool>: SigString
                overlaps with:
                pair<_, _>: SigString
-   --> /main/main.sol:4:6
+   --> /main/main.sol:6:6
     |
-  3 |
-  4 | impl SigString<(uint256, bool)> {
+  5 |
+  6 | impl SigString<(uint256, bool)> {
     |      ^^^^^^^^^^^^^^^^^^^^^^^^^^ overlapping impl
-  5 |     function sigStr(p: Proxy<(uint256, bool)>) returns (string) {
+  7 |     function sigStr(p: Proxy<(uint256, bool)>) returns (string) {
     |
-   ::: /std/dispatch.sol:101
+   ::: /std/dispatch.sol:103
     |
-101 |
-102 | impl<a, b> SigString<(a, b)> where a: SigString, b: SigString {
+103 |
+104 | impl<a, b> SigString<(a, b)> where a: SigString, b: SigString {
     |            ----------------- previous overlapping impl
-103 |     function sigStr(x: Proxy<(a, b)>) returns (string) {
+105 |     function sigStr(x: Proxy<(a, b)>) returns (string) {
     |

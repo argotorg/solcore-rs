@@ -1,3 +1,5 @@
+pragma solcore;
+
 export { Color(*), paint };
 
 enum Color {

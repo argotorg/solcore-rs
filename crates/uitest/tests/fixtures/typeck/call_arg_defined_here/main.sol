@@ -1,3 +1,5 @@
+pragma solcore;
+
 import * as L from lib;
 
 function go() returns (L.Color) {

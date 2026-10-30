@@ -4,75 +4,75 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/mismatch_direction_calls/main.sol
 ---
 error[SC0201]: type mismatch: expected word, found bool
-  --> /main/main.sol:9:19
+  --> /main/main.sol:11:19
    |
- 8 | function direct_call() {
- 9 |     let x: word = bool_value();
+10 | function direct_call() {
+11 |     let x: word = bool_value();
    |                   ^^^^^^^^^^^^ expression has mismatched type
-10 | }
+12 | }
    |
    = note: expected type: word
    = note: found type: bool
 ---
 
 error[SC0201]: type mismatch: expected word, found bool
-  --> /main/main.sol:13:12
+  --> /main/main.sol:15:12
    |
-12 | function direct_return() returns (word) {
-13 |     return bool_value();
+14 | function direct_return() returns (word) {
+15 |     return bool_value();
    |            ^^^^^^^^^^^^ expression has mismatched type
-14 | }
+16 | }
    |
    = note: expected type: word
    = note: found type: bool
 ---
 
 error[SC0201]: type mismatch: expected bool, found word
-  --> /main/main.sol:17:19
+  --> /main/main.sol:19:19
    |
-16 | function opposite_direction() {
-17 |     let x: bool = word_value();
+18 | function opposite_direction() {
+19 |     let x: bool = word_value();
    |                   ^^^^^^^^^^^^ expression has mismatched type
-18 | }
+20 | }
    |
    = note: expected type: bool
    = note: found type: word
 ---
 
 error[SC0201]: type mismatch: expected word, found bool
-  --> /main/main.sol:21:19
+  --> /main/main.sol:23:19
    |
-20 | function indirect_call(g: function () returns (bool)) {
-21 |     let x: word = g();
+22 | function indirect_call(g: function () returns (bool)) {
+23 |     let x: word = g();
    |                   ^^^ expression has mismatched type
-22 | }
+24 | }
    |
    = note: expected type: word
    = note: found type: bool
 ---
 
 error[SC0201]: type mismatch: expected word, found bool
-  --> /main/main.sol:28:19
+  --> /main/main.sol:30:19
    |
-27 |     };
-28 |     let x: word = g();
+29 |     };
+30 |     let x: word = g();
    |                   ^^^ expression has mismatched type
-29 | }
+31 | }
    |
    = note: expected type: word
    = note: found type: bool
 ---
 
 error[SC0201]: type mismatch: expected word, found function() returns (bool)
-  --> /main/main.sol:32:19
+  --> /main/main.sol:34:19
    |
-31 |   function lambda_value() {
-32 |       let x: word = lam () {
+33 |   function lambda_value() {
+34 |       let x: word = lam () {
    |  ___________________^
-33 | |         return true;
-34 | |     };
+35 | |         return true;
+36 | |     };
    | |_____^ expression has mismatched type
-35 |   }
+37 |   }
    |
    = note: expected type: word
    = note: found type: function() returns (bool)

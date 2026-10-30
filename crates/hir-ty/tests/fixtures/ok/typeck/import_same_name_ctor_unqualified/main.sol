@@ -1,3 +1,5 @@
+pragma solcore;
+
 import { wrapper, boxed } from lib;
 
 // Same-name constructors from a selective import stay legal unqualified in

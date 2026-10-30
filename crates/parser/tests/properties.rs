@@ -81,7 +81,7 @@ proptest! {
 #[test]
 fn right_nested_ternary_chain_uses_the_default_stack() {
     let depth = 96;
-    let mut source = "function main() returns (word) { return ".to_owned();
+    let mut source = "pragma solcore; function main() returns (word) { return ".to_owned();
     source.push_str(&"true ? 0 : ".repeat(depth));
     source.push_str("0; }");
     let diagnostics = parse_without_large_test_stack(source);
@@ -97,7 +97,7 @@ fn right_nested_ternary_chain_uses_the_default_stack() {
 fn deeply_nested_ternary_then_arms_are_rejected_before_parsing() {
     let depth = 512;
     let source = format!(
-        "function main() returns (word) {{ return {}0{}; }}",
+        "pragma solcore; function main() returns (word) {{ return {}0{}; }}",
         "true ? ".repeat(depth),
         " : 0".repeat(depth),
     );
@@ -117,7 +117,7 @@ fn deeply_nested_ternary_then_arms_are_rejected_before_parsing() {
 #[test]
 fn independent_ternaries_do_not_accumulate_nesting() {
     let source = format!(
-        "function main() {{ {} }}",
+        "pragma solcore; function main() {{ {} }}",
         "let x = true ? 1 : 0; ".repeat(256),
     );
     assert!(parse_without_large_test_stack(source.clone()).is_empty());
@@ -130,7 +130,7 @@ fn balanced_ternaries_are_bounded_by_depth_instead_of_total_count() {
     for _ in 0..8 {
         expr = format!("true ? {expr} : {expr}");
     }
-    let source = format!("function main() returns (word) {{ return {expr}; }}");
+    let source = format!("pragma solcore; function main() returns (word) {{ return {expr}; }}");
     assert!(parse_without_large_test_stack(source.clone()).is_empty());
     assert!(solcore_parser::format::format_source(&source, &Default::default()).is_ok());
 }
@@ -138,7 +138,7 @@ fn balanced_ternaries_are_bounded_by_depth_instead_of_total_count() {
 #[test]
 fn lambda_bodies_do_not_reset_surrounding_ternary_nesting() {
     let source = format!(
-        "function main() returns (word) {{ return {}0{}; }}",
+        "pragma solcore; function main() returns (word) {{ return {}0{}; }}",
         "lam() { return true; }() ? ".repeat(512),
         " : 0".repeat(512),
     );
@@ -155,7 +155,7 @@ fn lambda_bodies_do_not_reset_surrounding_ternary_nesting() {
 #[test]
 fn generic_type_commas_do_not_reset_surrounding_ternary_nesting() {
     let source = format!(
-        "function main() returns (word) {{ return {}0{}; }}",
+        "pragma solcore; function main() returns (word) {{ return {}0{}; }}",
         "@Pair<word, word> ? ".repeat(512),
         " : 0".repeat(512),
     );
@@ -166,7 +166,7 @@ fn generic_type_commas_do_not_reset_surrounding_ternary_nesting() {
 #[test]
 fn comptime_pattern_expressions_obey_the_same_recursion_limit() {
     let source = format!(
-        "function main(x: word) {{ match (x) {{ case comptime {}0{} {{}} }} }}",
+        "pragma solcore; function main(x: word) {{ match (x) {{ case comptime {}0{} {{}} }} }}",
         "true ? ".repeat(512),
         " : 0".repeat(512),
     );
@@ -177,7 +177,7 @@ fn comptime_pattern_expressions_obey_the_same_recursion_limit() {
 #[test]
 fn parenthesized_expressions_below_the_limit_use_the_default_stack() {
     let source = format!(
-        "function main() returns (word) {{ return {}0{}; }}",
+        "pragma solcore; function main() returns (word) {{ return {}0{}; }}",
         "(".repeat(24),
         ")".repeat(24),
     );
@@ -188,7 +188,7 @@ fn parenthesized_expressions_below_the_limit_use_the_default_stack() {
 #[test]
 fn deeply_parenthesized_expressions_are_rejected_before_parsing() {
     let source = format!(
-        "function main() returns (word) {{ return {}0{}; }}",
+        "pragma solcore; function main() returns (word) {{ return {}0{}; }}",
         "(".repeat(120),
         ")".repeat(120),
     );
@@ -200,7 +200,7 @@ fn deeply_parenthesized_expressions_are_rejected_before_parsing() {
 fn expression_grammar_boundary_preserves_valid_recursive_inputs() {
     for (depth, accepted) in [(31, true), (32, false)] {
         let source = format!(
-            "function main() returns (word) {{ return {}0{}; }}",
+            "pragma solcore; function main() returns (word) {{ return {}0{}; }}",
             "(".repeat(depth),
             ")".repeat(depth),
         );
@@ -218,7 +218,7 @@ fn expression_grammar_boundary_preserves_valid_recursive_inputs() {
 #[test]
 fn deeply_nested_lambda_bodies_are_bounded_during_hir_lowering() {
     let source = format!(
-        "function main() {{ let f = {}0{}; }}",
+        "pragma solcore; function main() {{ let f = {}0{}; }}",
         "lam() { return ".repeat(120),
         "; }".repeat(120),
     );
@@ -235,7 +235,7 @@ fn deeply_nested_lambda_bodies_are_bounded_during_hir_lowering() {
 #[test]
 fn nested_constructor_patterns_below_the_delimiter_limit_use_the_default_stack() {
     let source = format!(
-        "function main(x: word) {{ match (x) {{ case {}v{} {{}} }} }}",
+        "pragma solcore; function main(x: word) {{ match (x) {{ case {}v{} {{}} }} }}",
         ".Some(".repeat(120),
         ")".repeat(120),
     );
@@ -246,9 +246,13 @@ fn nested_constructor_patterns_below_the_delimiter_limit_use_the_default_stack()
 #[test]
 fn deeply_nested_types_are_rejected_before_lowering() {
     for source in [
-        format!("type T = {}word{};", "Box<".repeat(4096), ">".repeat(4096)),
-        format!("type T = {}word;", "@".repeat(4096)),
-        format!("type T = {}word;", "@ ".repeat(4096)),
+        format!(
+            "pragma solcore; type T = {}word{};",
+            "Box<".repeat(4096),
+            ">".repeat(4096)
+        ),
+        format!("pragma solcore; type T = {}word;", "@".repeat(4096)),
+        format!("pragma solcore; type T = {}word;", "@ ".repeat(4096)),
     ] {
         let diagnostics = parse_without_large_test_stack(source.clone());
         assert!(
@@ -267,7 +271,7 @@ fn type_nesting_budget_resets_for_independent_parameters() {
         .map(|index| format!("p{index}: Box<Box<word>>"))
         .collect::<Vec<_>>()
         .join(", ");
-    let source = format!("function f({params}) {{}} ");
+    let source = format!("pragma solcore; function f({params}) {{}} ");
     assert!(parse_without_large_test_stack(source.clone()).is_empty());
     assert!(solcore_parser::format::format_source(&source, &Default::default()).is_ok());
 }

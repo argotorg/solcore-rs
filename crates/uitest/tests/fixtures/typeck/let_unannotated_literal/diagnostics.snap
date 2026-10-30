@@ -4,13 +4,14 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/let_unannotated_literal/main.sol
 ---
 error[SC0299]: ambiguous inferred type
- --> /main/main.sol:1:29
+ --> /main/main.sol:3:29
   |
-1 |   function f() returns (word) {
+2 |
+3 |   function f() returns (word) {
   |  _____________________________^
-2 | |     let y = 7;
-3 | |     return 0;
-4 | | }
+4 | |     let y = 7;
+5 | |     return 0;
+6 | | }
   | |_^ ambiguous inferred type
   |
   = note: <_> function() returns (word) where _: Int

@@ -4,12 +4,12 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/tuple_nested_nonexhaustive/main.sol
 ---
 error[SC0302]: non-exhaustive pattern match
- --> /main/main.sol:2:12
+ --> /main/main.sol:4:12
   |
-1 | function nested(p: ((), (bool, word))) returns (word) {
-2 |     match (p) {
+3 | function nested(p: ((), (bool, word))) returns (word) {
+4 |     match (p) {
   |            ^ non-exhaustive match
-3 |         case ((), (true, x)) {
+5 |         case ((), (true, x)) {
   |
   = note: missing case: pair((), pair(false, _))
   = note: help: add a clause that covers the missing case

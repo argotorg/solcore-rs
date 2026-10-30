@@ -4,12 +4,12 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/ergo_lambda_body_mismatch/main.sol
 ---
 error[SC0201]: type mismatch: expected word, found bool
- --> /main/main.sol:7:20
-  |
-6 |     return apply(lam (y: word) {
-7 |             return true;
-  |                    ^^^^ expression has mismatched type
-8 |         }, 1);
-  |
-  = note: expected type: word
-  = note: found type: bool
+  --> /main/main.sol:9:20
+   |
+ 8 |     return apply(lam (y: word) {
+ 9 |             return true;
+   |                    ^^^^ expression has mismatched type
+10 |         }, 1);
+   |
+   = note: expected type: word
+   = note: found type: bool

@@ -1,3 +1,5 @@
+pragma solcore;
+
 import booldef;
 
 function mk() returns (booldef.Bool) {

@@ -4,40 +4,40 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/comptime/ct_overloaded_bad/main.sol
 ---
 error[SC0409]: comptime evaluation failed: function annotated '-> comptime' returns a runtime expression
-  --> /main/main.sol:18:9
+  --> /main/main.sol:20:9
    |
-17 |         }
-18 |         return base + x * factor;
+19 |         }
+20 |         return base + x * factor;
    |         ^^^^^^^^^^^^^^^^^^^^^^^^^ comptime evaluation failed here
-19 |     }
+21 |     }
    |
 ---
 
 error[SC0406]: missing evidence: add
-  --> /main/main.sol:18:16
+  --> /main/main.sol:20:16
    |
-17 |         }
-18 |         return base + x * factor;
+19 |         }
+20 |         return base + x * factor;
    |                ^^^^^^^^^^^^^^^^^ trait evidence required here
-19 |     }
+21 |     }
    |
 ---
 
 error[SC0406]: missing evidence: mul
-  --> /main/main.sol:18:23
+  --> /main/main.sol:20:23
    |
-17 |         }
-18 |         return base + x * factor;
+19 |         }
+20 |         return base + x * factor;
    |                       ^^^^^^^^^^ trait evidence required here
-19 |     }
+21 |     }
    |
 ---
 
 error[SC0409]: comptime evaluation failed: comptime let 'a' is bound to a runtime expression
-  --> /main/main.sol:24:9
+  --> /main/main.sol:26:9
    |
-23 |     function main() returns (word) {
-24 |         let a: comptime<word> = Scale.scale(3, 10);
+25 |     function main() returns (word) {
+26 |         let a: comptime<word> = Scale.scale(3, 10);
    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ comptime evaluation failed here
-25 |         return a;
+27 |         return a;
    |

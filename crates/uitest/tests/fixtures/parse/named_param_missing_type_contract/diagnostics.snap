@@ -4,11 +4,11 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/parse/named_param_missing_type_contract/main.sol
 ---
 error[SC0001]: named function parameter requires an explicit type
- --> /main/main.sol:2:15
+ --> /main/main.sol:4:15
   |
-1 | contract C {
-2 |   function id(x) public {
+3 | contract C {
+4 |   function id(x) public {
   |               ^
-3 |     return x;
+5 |     return x;
   |
   = note: while parsing function signature

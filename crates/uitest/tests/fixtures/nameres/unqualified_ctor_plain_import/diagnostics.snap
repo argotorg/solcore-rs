@@ -4,22 +4,22 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/nameres/unqualified_ctor_plain_import/main.sol
 ---
 error[SC0106]: unqualified constructor: wrapper
- --> /main/main.sol:5:14
+ --> /main/main.sol:7:14
   |
-4 |     match (u) {
-5 |         case wrapper(w) {
+6 |     match (u) {
+7 |         case wrapper(w) {
   |              ^^^^^^^ constructor must be qualified
-6 |             return w;
+8 |             return w;
   |
   = help: use Type.Constructor form
 ---
 
 error[SC0106]: unqualified constructor: wrapper
-  --> /main/main.sol:12:19
+  --> /main/main.sol:14:19
    |
-11 | function main() returns (word) {
-12 |     return unwrap(wrapper(3));
+13 | function main() returns (word) {
+14 |     return unwrap(wrapper(3));
    |                   ^^^^^^^ constructor must be qualified
-13 | }
+15 | }
    |
    = help: use Type.Constructor form

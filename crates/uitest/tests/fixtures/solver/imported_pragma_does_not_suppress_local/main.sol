@@ -1,3 +1,5 @@
+pragma solcore;
+
 import pragma_scope_lib;
 
 enum List<a> {

@@ -1,3 +1,5 @@
+pragma solcore;
+
 // Bare integer literals with integer class instances from std.
 
 import { Eq, Ord, lt, Add, Sub } from std;

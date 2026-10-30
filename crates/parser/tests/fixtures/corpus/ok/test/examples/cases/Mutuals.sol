@@ -1,3 +1,5 @@
+pragma solcore;
+
 contract Mutual {
     function main() public returns (word) {
         return f();

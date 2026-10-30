@@ -4,11 +4,11 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/struct_unknown_field/main.sol
 ---
 error[SC0205]: cannot resolve field `z`
- --> /main/main.sol:7:14
-  |
-6 | function get(p: Point) returns (word) {
-7 |     return p.z;
-  |              ^ unknown field
-8 | }
-  |
-  = help: check that the receiver has this field or constructor path
+  --> /main/main.sol:9:14
+   |
+ 8 | function get(p: Point) returns (word) {
+ 9 |     return p.z;
+   |              ^ unknown field
+10 | }
+   |
+   = help: check that the receiver has this field or constructor path

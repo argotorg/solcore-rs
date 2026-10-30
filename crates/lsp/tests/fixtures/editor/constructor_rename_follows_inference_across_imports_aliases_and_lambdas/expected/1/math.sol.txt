@@ -1,2 +1,4 @@
+pragma solcore;
+
 export {Choice(Selected, Other)};
 enum Choice { Selected(word), Other }

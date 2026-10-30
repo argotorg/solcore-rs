@@ -1,3 +1,5 @@
+pragma solcore;
+
 // --- preamble / duplicated std defs ---
 
 enum Proxy<a> {

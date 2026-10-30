@@ -1,3 +1,5 @@
+pragma solcore;
+
 // INCORRECT: the returned lambda's parameter is `bool`, but the signature
 // promises (word) -> word.  Closure conversion would erase the arrow type;
 // the single-pass checker must still reject this.

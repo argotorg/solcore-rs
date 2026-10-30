@@ -1,3 +1,5 @@
+pragma solcore;
+
 function lambdaimpl1<a>(x: a) returns (a) {
     return x;
 }

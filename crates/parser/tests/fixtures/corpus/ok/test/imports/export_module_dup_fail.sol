@@ -1,3 +1,5 @@
+pragma solcore;
+
 export foo as M;
 export booldef as M;
 

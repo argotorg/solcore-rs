@@ -4,133 +4,133 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/audit_value_namespace_matrix/main.sol
 ---
 error[SC0228]: type name used as value: `Opt`
-  --> /main/main.sol:16:12
+  --> /main/main.sol:18:12
    |
-15 | function adt_value() returns (word) {
-16 |     return Opt;
+17 | function adt_value() returns (word) {
+18 |     return Opt;
    |            ^^^ not a value
-17 | }
+19 | }
    |
    = help: use a constructor or value binding here, not a namespace name
 ---
 
 error[SC0228]: type name used as value: `Alias`
-  --> /main/main.sol:20:12
+  --> /main/main.sol:22:12
    |
-19 | function alias_value() returns (word) {
-20 |     return Alias;
+21 | function alias_value() returns (word) {
+22 |     return Alias;
    |            ^^^^^ not a value
-21 | }
+23 | }
    |
    = help: use a constructor or value binding here, not a namespace name
 ---
 
 error[SC0228]: type name used as value: `K`
-  --> /main/main.sol:24:12
+  --> /main/main.sol:26:12
    |
-23 | function contract_value() returns (word) {
-24 |     return K;
+25 | function contract_value() returns (word) {
+26 |     return K;
    |            ^ not a value
-25 | }
+27 | }
    |
    = help: use a constructor or value binding here, not a namespace name
 ---
 
 error[SC0228]: trait name used as value: `C`
-  --> /main/main.sol:28:12
+  --> /main/main.sol:30:12
    |
-27 | function class_value() returns (word) {
-28 |     return C;
+29 | function class_value() returns (word) {
+30 |     return C;
    |            ^ not a value
-29 | }
+31 | }
    |
    = help: use a constructor or value binding here, not a namespace name
 ---
 
 error[SC0228]: type name used as value: `word`
-  --> /main/main.sol:32:12
+  --> /main/main.sol:34:12
    |
-31 | function builtin_type_value() returns (word) {
-32 |     return word;
+33 | function builtin_type_value() returns (word) {
+34 |     return word;
    |            ^^^^ not a value
-33 | }
+35 | }
    |
    = help: use a constructor or value binding here, not a namespace name
 ---
 
 error[SC0228]: trait name used as value: `Int`
-  --> /main/main.sol:36:12
+  --> /main/main.sol:38:12
    |
-35 | function builtin_class_value() returns (word) {
-36 |     return Int;
+37 | function builtin_class_value() returns (word) {
+38 |     return Int;
    |            ^^^ not a value
-37 | }
+39 | }
    |
    = help: use a constructor or value binding here, not a namespace name
 ---
 
 error[SC0228]: type variable used as value: `a`
-  --> /main/main.sol:40:12
+  --> /main/main.sol:42:12
    |
-39 | function type_var_value<a>() returns (word) {
-40 |     return a;
+41 | function type_var_value<a>() returns (word) {
+42 |     return a;
    |            ^ not a value
-41 | }
+43 | }
    |
    = help: use a constructor or value binding here, not a namespace name
 ---
 
 error[SC0228]: module used as value: `U`
-  --> /main/main.sol:44:12
+  --> /main/main.sol:46:12
    |
-43 | function module_value() returns (word) {
-44 |     return U;
+45 | function module_value() returns (word) {
+46 |     return U;
    |            ^ not a value
-45 | }
+47 | }
    |
    = help: use a constructor or value binding here, not a namespace name
 ---
 
 error[SC0228]: type name used as callee: `Opt`
-  --> /main/main.sol:48:12
+  --> /main/main.sol:50:12
    |
-47 | function type_as_callee() returns (word) {
-48 |     return Opt();
+49 | function type_as_callee() returns (word) {
+50 |     return Opt();
    |            ^^^ not a value
-49 | }
+51 | }
    |
    = help: use a constructor or value binding here, not a namespace name
 ---
 
 error[SC0228]: module used as callee: `U`
-  --> /main/main.sol:52:12
+  --> /main/main.sol:54:12
    |
-51 | function module_as_callee() returns (word) {
-52 |     return U();
+53 | function module_as_callee() returns (word) {
+54 |     return U();
    |            ^ not a value
-53 | }
+55 | }
    |
    = help: use a constructor or value binding here, not a namespace name
 ---
 
 error[SC0207]: cannot satisfy trait constraint: operator Add.add
-  --> /main/main.sol:56:12
+  --> /main/main.sol:58:12
    |
-55 | function type_in_binop() returns (word) {
-56 |     return Opt + 1;
+57 | function type_in_binop() returns (word) {
+58 |     return Opt + 1;
    |            ^^^^^^^ constraint originates here
-57 | }
+59 | }
    |
    = note: no visible impl matches `operator Add.add`
    = help: add a matching impl or strengthen the surrounding type context
 ---
 
 error[SC0228]: type name used as value: `Opt`
-  --> /main/main.sol:56:12
+  --> /main/main.sol:58:12
    |
-55 | function type_in_binop() returns (word) {
-56 |     return Opt + 1;
+57 | function type_in_binop() returns (word) {
+58 |     return Opt + 1;
    |            ^^^ not a value
-57 | }
+59 | }
    |
    = help: use a constructor or value binding here, not a namespace name

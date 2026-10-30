@@ -1,3 +1,5 @@
+pragma solcore;
+
 contract Triple {
 
     function asel(t: (word, word, word)) public returns (word) {

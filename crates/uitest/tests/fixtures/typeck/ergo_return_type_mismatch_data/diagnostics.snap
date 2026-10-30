@@ -4,12 +4,12 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/ergo_return_type_mismatch_data/main.sol
 ---
 error[SC0201]: type mismatch: expected word, found Color
- --> /main/main.sol:7:12
-  |
-6 | function pick() returns (word) {
-7 |     return Color.Red;
-  |            ^^^^^^^^^ expression has mismatched type
-8 | }
-  |
-  = note: expected type: word
-  = note: found type: Color
+  --> /main/main.sol:9:12
+   |
+ 8 | function pick() returns (word) {
+ 9 |     return Color.Red;
+   |            ^^^^^^^^^ expression has mismatched type
+10 | }
+   |
+   = note: expected type: word
+   = note: found type: Color

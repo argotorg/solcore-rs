@@ -1,3 +1,5 @@
+pragma solcore;
+
 import * from std;
 
 function inferred(xs: calldata<array<Encoded>>, i: uint256) returns () {

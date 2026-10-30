@@ -4,9 +4,11 @@ expression: value
 input_file: crates/parser/tests/fixtures/corpus/fail/test/diagnostics/parse-error.sol
 ---
 error[SC0001]: parse error: unexpected end of input
- --> /parse-error.sol:1:38
+ --> /parse-error.sol:3:38
   |
-1 | function main( -> word { return 0; }
+1 | pragma solcore;
+2 |
+3 | function main( -> word { return 0; }
   |                                     ^ unexpected token
   |
   = note: expecting `)`, or `,`

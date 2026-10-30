@@ -1,3 +1,5 @@
+pragma solcore;
+
 //~ hull: contains "LValueIdxAccess_lookup"
 //~ hull: contains "std_lidx"
 //~ hull: contains "std_out_of_bounds"

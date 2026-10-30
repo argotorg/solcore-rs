@@ -41,6 +41,7 @@ pub fn scenario(source: &str) -> Result<Option<RawE2eVector>, E2eFailure> {
 fn reads_only_real_contract_comments_in_source_order() {
     let vector = scenario(
         r##"
+        pragma solcore;
         // #[scenario("ordered")]
         // #[deploy(0x1234, value = 42) -> success]
         // #[raw(0xdeadbeef) -> success(0x00)]
@@ -58,6 +59,7 @@ fn reads_only_real_contract_comments_in_source_order() {
     assert!(
         scenario(
             r##"
+        pragma solcore;
         // A string must not become a test directive.
         contract C {
             function text() returns (string) { return "#[raw(0x) -> revert]"; }
@@ -72,13 +74,15 @@ fn reads_only_real_contract_comments_in_source_order() {
 #[test]
 fn refuses_multiple_scenarios_or_silently_ignored_method_tests() {
     let multiple = scenario(
-        "// #[deploy(0x) -> success]\ncontract A {}\n// #[deploy(0x) -> success]\ncontract B {}",
+        "pragma solcore;\n// #[deploy(0x) -> success]\ncontract A {}\n// #[deploy(0x) -> success]\ncontract B {}",
     )
     .unwrap_err();
     assert!(multiple.message.contains("only one contract scenario"));
-    let mixed = scenario("// #[deploy(0x) -> success]\ncontract C {\n// #[() -> 42]\nfunction f() public returns (word) { return 42; }\n}").unwrap_err();
+    let mixed = scenario("pragma solcore;\n// #[deploy(0x) -> success]\ncontract C {\n// #[() -> 42]\nfunction f() public returns (word) { return 42; }\n}").unwrap_err();
     assert!(mixed.message.contains("cannot mix"));
-    let misplaced = scenario("// #[raw(0x) -> revert]\nimport std;\ncontract C {}").unwrap_err();
+    let misplaced =
+        scenario("pragma solcore;\n// #[raw(0x) -> revert]\nimport std;\ncontract C {}")
+            .unwrap_err();
     assert!(misplaced.message.contains("must precede"));
 }
 
@@ -86,7 +90,7 @@ fn refuses_multiple_scenarios_or_silently_ignored_method_tests() {
 fn leaves_existing_typed_method_tests_to_the_typed_resolver() {
     assert!(
         scenario(
-            "contract C {\n// #[() -> 42]\nfunction f() public returns (word) { return 42; }\n}"
+            "pragma solcore;\ncontract C {\n// #[() -> 42]\nfunction f() public returns (word) { return 42; }\n}"
         )
         .unwrap()
         .is_none()
@@ -123,7 +127,7 @@ fn rejects_directives_on_contract_fields_and_types() {
             "enum Local { A,\n$COMMENT\nB }",
         ] {
             assert_misplaced_directives_rejected(&format!(
-                "{header}contract C {{\n{member}\nconstructor() {{}}\n}}"
+                "pragma solcore;\n{header}contract C {{\n{member}\nconstructor() {{}}\n}}"
             ));
         }
     }
@@ -132,9 +136,9 @@ fn rejects_directives_on_contract_fields_and_types() {
 #[test]
 fn rejects_directives_on_other_non_executable_declarations() {
     for item in [
-        "enum E {\n$COMMENT\nA, B }",
-        "trait T<a> {\n$COMMENT\nfunction f(x: a) returns (a);\n}",
-        "trait T<a> {}\n$COMMENT\nimpl T<word> {}",
+        "pragma solcore;\nenum E {\n$COMMENT\nA, B }",
+        "pragma solcore;\ntrait T<a> {\n$COMMENT\nfunction f(x: a) returns (a);\n}",
+        "pragma solcore;\ntrait T<a> {}\n$COMMENT\nimpl T<word> {}",
     ] {
         assert_misplaced_directives_rejected(&format!(
             "{item}\n// #[deploy(0x) -> success]\ncontract C {{ constructor() {{}} }}"
@@ -146,6 +150,7 @@ fn rejects_directives_on_other_non_executable_declarations() {
 fn ignores_ordinary_comments_on_non_executable_declarations() {
     let vector = scenario(
         r#"
+        pragma solcore;
         // An ordinary type comment mentioning #[raw(0x) -> revert].
         enum E {
             // Variant documentation.

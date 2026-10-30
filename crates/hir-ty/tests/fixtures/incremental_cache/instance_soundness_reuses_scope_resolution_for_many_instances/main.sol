@@ -1,3 +1,5 @@
+pragma solcore;
+
 trait AuditClass0<a> {}
 impl AuditClass0<word> {}
 trait AuditClass1<a> {}

@@ -1,3 +1,5 @@
+pragma solcore;
+
 import * from std;
 import { memory, string, uint256 } from std;
 import * from std.dispatch;

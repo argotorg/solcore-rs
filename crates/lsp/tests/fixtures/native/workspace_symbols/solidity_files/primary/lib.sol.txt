@@ -1,0 +1,4 @@
+pragma solcore;
+
+export { solcoreValue };
+function solcoreValue() returns (word) { return 1; }

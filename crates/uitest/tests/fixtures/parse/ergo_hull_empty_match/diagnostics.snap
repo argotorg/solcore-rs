@@ -4,11 +4,11 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/parse/ergo_hull_empty_match/main.sol
 ---
 error[SC0001]: match requires at least one `case` or `default` arm
- --> /main/main.sol:4:3
+ --> /main/main.sol:6:3
   |
-3 |   function impossible(b: B) returns (word) {
-4 | /   match (b) {
-5 | |   }
+5 |   function impossible(b: B) returns (word) {
+6 | /   match (b) {
+7 | |   }
   | |___^
-6 |   }
+8 |   }
   |

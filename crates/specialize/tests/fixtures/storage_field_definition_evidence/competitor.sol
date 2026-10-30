@@ -1,3 +1,5 @@
+pragma solcore;
+
 import { storage, uint256, CanStore } from api;
 
 export { keepCompetitorReachable };

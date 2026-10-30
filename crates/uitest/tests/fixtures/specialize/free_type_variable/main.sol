@@ -1,3 +1,5 @@
+pragma solcore;
+
 function leak<a>() returns (a) {
     let y: a;
     return y;

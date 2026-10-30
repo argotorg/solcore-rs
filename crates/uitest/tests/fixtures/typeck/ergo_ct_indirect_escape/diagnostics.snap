@@ -4,10 +4,10 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/ergo_ct_indirect_escape/main.sol
 ---
 error[SC0240]: runtime value passed to comptime parameter 'x' of 'double'
-  --> /main/main.sol:21:27
+  --> /main/main.sol:23:27
    |
-20 |         let g = lam (y: word) {
-21 |             return double(y);
+22 |         let g = lam (y: word) {
+23 |             return double(y);
    |                           ^ runtime value passed here
-22 |         };
+24 |         };
    |

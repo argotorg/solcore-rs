@@ -1,3 +1,5 @@
+pragma solcore;
+
 import { Generic } from std.Generic;
 export { Parent, Child, Silent, Grandchild, Wrapped(*), UsesChild, run, runSilent, runGrandchild, relay, value, methodValue, runNested, Derived(*), Direct, runDirect, ImplicitParent, ImplicitChild, ImplicitWrapped(*) };
 trait Parent<t> {

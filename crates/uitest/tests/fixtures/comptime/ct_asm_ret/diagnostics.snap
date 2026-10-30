@@ -4,10 +4,10 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/comptime/ct_asm_ret/main.sol
 ---
 error[SC0409]: comptime evaluation failed: function annotated '-> comptime' returns a runtime expression
-  --> /main/main.sol:12:9
+  --> /main/main.sol:14:9
    |
-11 |         }
-12 |         return v;
+13 |         }
+14 |         return v;
    |         ^^^^^^^^^ comptime evaluation failed here
-13 |     }
+15 |     }
    |

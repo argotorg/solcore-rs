@@ -9,6 +9,7 @@ mod body;
 mod context;
 mod fingerprint;
 mod items;
+mod pragma;
 mod span;
 mod yul;
 
@@ -26,6 +27,7 @@ use self::{
         lower_adt, lower_class, lower_contract, lower_export, lower_function, lower_import,
         lower_instance, lower_parse_errors, lower_pragma, lower_type_alias,
     },
+    pragma::{lower_pragma_solcore_problems, pragma_solcore_problems},
     span::{offset_from_usize, root_span_from_lex},
 };
 use crate::{Db, ParseHirOutput, parse::parse_supported_items, types::*};
@@ -63,6 +65,8 @@ pub(crate) fn parse_file_to_hir_impl<'db>(
 
     let parsed_items = parse_supported_items(source);
     let mut parse_errors = parsed_items.errors;
+    let pragma_problems =
+        pragma_solcore_problems(source, &parsed_items.output, !parse_errors.is_empty());
     tracing::debug!(
         target: "parser",
         items = parsed_items.output.len(),
@@ -246,7 +250,8 @@ pub(crate) fn parse_file_to_hir_impl<'db>(
 
     let module = item::Module::new(db, module_def, module_span, items);
     let def_locations = DefLocationTable::from_def_locations(def_locations);
-    let diagnostics = lower_parse_errors(db, file, parse_errors);
+    let mut diagnostics = lower_parse_errors(db, file, parse_errors);
+    diagnostics.extend(lower_pragma_solcore_problems(db, file, pragma_problems));
 
     ParseHirOutput::new(db, module, def_locations, diagnostics)
 }

@@ -1,3 +1,5 @@
+pragma solcore;
+
 // This code should FAIL, but PASSES!
 enum Bool {
     True,

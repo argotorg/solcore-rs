@@ -4,24 +4,24 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/mismatch_direction_operators/main.sol
 ---
 error[SC0201]: type mismatch: expected word, found bool
-  --> /main/main.sol:20:19
+  --> /main/main.sol:22:19
    |
-19 | function binary_result(x: word) {
-20 |     let y: word = x + x;
+21 | function binary_result(x: word) {
+22 |     let y: word = x + x;
    |                   ^^^^^ expression has mismatched type
-21 | }
+23 | }
    |
    = note: expected type: word
    = note: found type: bool
 ---
 
 error[SC0201]: type mismatch: expected word, found bool
-  --> /main/main.sol:24:19
+  --> /main/main.sol:26:19
    |
-23 | function unary_result(x: word) {
-24 |     let y: word = ~x;
+25 | function unary_result(x: word) {
+26 |     let y: word = ~x;
    |                   ^^ expression has mismatched type
-25 | }
+27 | }
    |
    = note: expected type: word
    = note: found type: bool

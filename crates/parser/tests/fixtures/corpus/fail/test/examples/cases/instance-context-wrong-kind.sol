@@ -1,3 +1,5 @@
+pragma solcore;
+
 trait Foo<a, b> {}
 
 trait C<a> {}

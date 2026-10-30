@@ -1,3 +1,5 @@
+pragma solcore;
+
 import { Num, Add, Sub, Eq, Ord, Bounded, Typedef, le } from std;
 
 contract C {

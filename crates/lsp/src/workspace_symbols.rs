@@ -274,8 +274,10 @@ mod tests {
 
     #[test]
     fn query_returns_matching_functions_from_each_open_document() {
-        let main_source = "function target_main() returns (word) {\n  return 1;\n}\n";
-        let util_source = "function target_util() returns (word) {\n  return 2;\n}\n";
+        let main_source =
+            "pragma solcore;\nfunction target_main() returns (word) {\n  return 1;\n}\n";
+        let util_source =
+            "pragma solcore;\nfunction target_util() returns (word) {\n  return 2;\n}\n";
         let (mut world, main_uri) = world_with_main(main_source);
         let util_uri = Url::parse("file:///main/util.sol").expect("uri");
         assert!(world.open_document(util_uri.clone(), util_source.to_owned()));
@@ -313,11 +315,11 @@ mod tests {
                 [
                     (
                         main_uri,
-                        "function main_symbol() returns (word) { return 1; }\n".to_owned()
+                        "pragma solcore;\nfunction main_symbol() returns (word) { return 1; }\n".to_owned()
                     ),
                     (
                         util_uri.clone(),
-                        "function unopened_symbol() returns (word) { return 2; }\n".to_owned()
+                        "pragma solcore;\nfunction unopened_symbol() returns (word) { return 2; }\n".to_owned()
                     ),
                 ]
             ),
@@ -335,7 +337,7 @@ mod tests {
 
     #[test]
     fn empty_query_returns_top_level_symbols_and_non_matching_query_is_empty() {
-        let source = "function alpha() returns (word) {\n  return 1;\n}\n\ntype Alias = word;\n\nenum Choice {One , Two}\n\ncontract Vault {}\n";
+        let source = "pragma solcore;\nfunction alpha() returns (word) {\n  return 1;\n}\n\ntype Alias = word;\n\nenum Choice {One , Two}\n\ncontract Vault {}\n";
         let (world, uri) = world_with_main(source);
 
         let symbols = handle_workspace_symbol(&world, "").expect("workspace symbols");
@@ -362,7 +364,7 @@ mod tests {
 
     #[test]
     fn contract_member_symbols_keep_container_name() {
-        let source = "contract Vault {\n  balance: word;\n  function read() returns (word) {\n    return balance;\n  }\n}\n";
+        let source = "pragma solcore;\ncontract Vault {\n  balance: word;\n  function read() returns (word) {\n    return balance;\n  }\n}\n";
         let (world, uri) = world_with_main(source);
 
         let field = handle_workspace_symbol(&world, "balance")

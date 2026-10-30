@@ -1,3 +1,5 @@
+pragma solcore;
+
 function main(foo: (word, word)) returns (word) {
     let res: word;
     match (foo) {

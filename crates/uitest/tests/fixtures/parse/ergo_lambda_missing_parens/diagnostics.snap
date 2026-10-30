@@ -4,22 +4,22 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/parse/ergo_lambda_missing_parens/main.sol
 ---
 error[SC0001]: parse error: unexpected identifier `x`
- --> /main/main.sol:2:17
+ --> /main/main.sol:4:17
   |
-1 | function f() returns (word) {
-2 |     let g = lam x { return x; };
+3 | function f() returns (word) {
+4 |     let g = lam x { return x; };
   |                 ^ unexpected token
-3 |     return g(1);
+5 |     return g(1);
   |
   = note: expecting `(`
 ---
 
 error[SC0001]: parse error: unexpected `}`
- --> /main/main.sol:2:31
+ --> /main/main.sol:4:31
   |
-1 | function f() returns (word) {
-2 |     let g = lam x { return x; };
+3 | function f() returns (word) {
+4 |     let g = lam x { return x; };
   |                               ^ unexpected token
-3 |     return g(1);
+5 |     return g(1);
   |
   = note: expecting end of input, or statement

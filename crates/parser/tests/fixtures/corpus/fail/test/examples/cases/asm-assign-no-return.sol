@@ -1,3 +1,5 @@
+pragma solcore;
+
 // mstore does not return a value, so it cannot be assigned.
 contract Test {
     function main() public {

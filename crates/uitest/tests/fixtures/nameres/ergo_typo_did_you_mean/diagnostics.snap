@@ -4,11 +4,11 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/nameres/ergo_typo_did_you_mean/main.sol
 ---
 error[SC0101]: undefined name: computeVale
- --> /main/main.sol:6:12
+ --> /main/main.sol:8:12
   |
-5 | function main() returns (word) {
-6 |     return computeVale(1);
+7 | function main() returns (word) {
+8 |     return computeVale(1);
   |            ^^^^^^^^^^^ unknown name
-7 | }
+9 | }
   |
   = help: did you mean `computeValue`?

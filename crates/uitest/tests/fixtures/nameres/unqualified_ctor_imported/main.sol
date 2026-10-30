@@ -1,3 +1,5 @@
+pragma solcore;
+
 import { Token } from lib;
 
 function mk(x: word) returns (Token) {

@@ -4,48 +4,48 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/manual_sigstring_nested_representations/main.sol
 ---
 error[SC0231]: public function `inspect` ABI for contract `WrapWrap` cannot use visible manual `SigString` evidence
-  --> /main/main.sol:23:5
+  --> /main/main.sol:25:5
    |
-22 | contract WrapWrap {
-23 |     function inspect(value: Wrap<Wrap<X>>) public returns (uint256) {
+24 | contract WrapWrap {
+25 |     function inspect(value: Wrap<Wrap<X>>) public returns (uint256) {
    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ external ABI evidence must be compiler-owned and canonical
-24 |         return uint256(7);
+26 |         return uint256(7);
    |
    = note: impl `SigString` can override canonical `SigString` behavior
    = help: remove the visible manual ABI impl or keep this declaration out of the external ABI
 ---
 
 error[SC0231]: public function `inspect` ABI for contract `BoxWrap` cannot use visible manual `SigString` evidence
-  --> /main/main.sol:29:5
+  --> /main/main.sol:31:5
    |
-28 | contract BoxWrap {
-29 |     function inspect(value: Box<Wrap<X>>) public returns (uint256) {
+30 | contract BoxWrap {
+31 |     function inspect(value: Box<Wrap<X>>) public returns (uint256) {
    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ external ABI evidence must be compiler-owned and canonical
-30 |         return uint256(7);
+32 |         return uint256(7);
    |
    = note: impl `SigString` can override canonical `SigString` behavior
    = help: remove the visible manual ABI impl or keep this declaration out of the external ABI
 ---
 
 error[SC0231]: public function `inspect` ABI for contract `BoxWrapBox` cannot use visible manual `SigString` evidence
-  --> /main/main.sol:35:5
+  --> /main/main.sol:37:5
    |
-34 | contract BoxWrapBox {
-35 |     function inspect(value: Box<Wrap<Box<X>>>) public returns (uint256) {
+36 | contract BoxWrapBox {
+37 |     function inspect(value: Box<Wrap<Box<X>>>) public returns (uint256) {
    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ external ABI evidence must be compiler-owned and canonical
-36 |         return uint256(7);
+38 |         return uint256(7);
    |
    = note: impl `SigString` can override canonical `SigString` behavior
    = help: remove the visible manual ABI impl or keep this declaration out of the external ABI
 ---
 
 error[SC0231]: public function `inspect` ABI for contract `BoxBox` cannot use visible manual `SigString` evidence
-  --> /main/main.sol:41:5
+  --> /main/main.sol:43:5
    |
-40 | contract BoxBox {
-41 |     function inspect(value: Box<Box<X>>) public returns (uint256) {
+42 | contract BoxBox {
+43 |     function inspect(value: Box<Box<X>>) public returns (uint256) {
    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ external ABI evidence must be compiler-owned and canonical
-42 |         return uint256(7);
+44 |         return uint256(7);
    |
    = note: impl `SigString` can override canonical `SigString` behavior
    = help: remove the visible manual ABI impl or keep this declaration out of the external ABI

@@ -4,10 +4,11 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/parse/trailing_call_comma/main.sol
 ---
 error[SC0001]: parse error: unexpected `)`
- --> /main/main.sol:2:42
+ --> /main/main.sol:4:42
   |
-1 | function g(x: word) returns (word) { return x; }
-2 | function f() returns (word) { return g(1,); }
+2 |
+3 | function g(x: word) returns (word) { return x; }
+4 | function f() returns (word) { return g(1,); }
   |                                          ^ unexpected token
   |
   = note: expecting `!`, `(`, `-`, `.`, `@`, `[`, `lam`, or `~`

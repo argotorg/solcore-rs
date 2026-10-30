@@ -1,3 +1,5 @@
+pragma solcore;
+
 import booldef;
 
 function fromQualifiedType(b: booldef.Bool) returns (booldef.Bool) {

@@ -1,3 +1,5 @@
+pragma solcore;
+
 //~ specialize: loader bare
 //~ specialize: return 5
 

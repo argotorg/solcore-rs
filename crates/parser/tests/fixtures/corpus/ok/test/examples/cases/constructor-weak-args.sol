@@ -1,3 +1,5 @@
+pragma solcore;
+
 trait Loadable<ref, deref> {
     function load(r: ref) returns (deref);
 }

@@ -1,3 +1,5 @@
+pragma solcore;
+
 /* Positive: function using mstore+mload in assembly is comptime-evaluable
    when its argument is known at compile time.
    The evaluator runs in comptime mode for the RHS of `let x : comptime`.

@@ -1,3 +1,5 @@
+pragma solcore;
+
 // Polymorphic literal inference: the type of an unannotated integer literal is
 // determined by unification with the surrounding context.
 //

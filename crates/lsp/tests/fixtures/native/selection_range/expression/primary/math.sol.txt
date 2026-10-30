@@ -1,3 +1,5 @@
+pragma solcore;
+
 function double(x: word) returns (word) {
   return x;
 }

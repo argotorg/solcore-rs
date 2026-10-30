@@ -1,1 +1,3 @@
+pragma solcore;
+
 function main(input: word) returns (word) { let f = lam (x: word) -> word { let value = x; assembly { value := add(value, 1) } return value; }; return f(input); }

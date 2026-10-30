@@ -1,3 +1,5 @@
+pragma solcore;
+
 import wildA;
 export { wildA.*, * };
 

@@ -4,24 +4,24 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/nameres/selected_import_ambiguity_namespace_identity/main.sol
 ---
 error[SC0120]: ambiguous selected import `T` in term namespace
- --> /main/main.sol:1:1
+ --> /main/main.sol:3:1
   |
-1 | import { T } from a;
+2 |
+3 | import { T } from a;
   | ^^^^^^^^^^^^^^^^^^^^ ambiguous selected import in term namespace
-2 | import { T } from b;
-3 |
+4 | import { T } from b;
   |
   = note: `T` is imported from a, b in term namespace
   = note: use an explicit module qualifier or narrow the selected imports
 ---
 
 error[SC0120]: ambiguous selected import `T` in type namespace
- --> /main/main.sol:1:1
+ --> /main/main.sol:3:1
   |
-1 | import { T } from a;
+2 |
+3 | import { T } from a;
   | ^^^^^^^^^^^^^^^^^^^^ ambiguous selected import in type namespace
-2 | import { T } from b;
-3 |
+4 | import { T } from b;
   |
   = note: `T` is imported from a, b in type namespace
   = note: use an explicit module qualifier or narrow the selected imports

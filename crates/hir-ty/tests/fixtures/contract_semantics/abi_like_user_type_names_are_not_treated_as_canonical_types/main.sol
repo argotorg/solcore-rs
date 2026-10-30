@@ -1,3 +1,5 @@
+pragma solcore;
+
 enum bytes16 {
     bytes16(word)
 }

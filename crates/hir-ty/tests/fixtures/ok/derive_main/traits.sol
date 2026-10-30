@@ -1,3 +1,5 @@
+pragma solcore;
+
 export { Generic, CloneLike, Marker };
 
 trait Generic<a, rep> {

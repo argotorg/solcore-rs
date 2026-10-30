@@ -1,3 +1,5 @@
+pragma solcore;
+
 import { Eq, Ord, absurd } from std;
 
 function eqUnit(x: (), y: ()) returns (bool) {

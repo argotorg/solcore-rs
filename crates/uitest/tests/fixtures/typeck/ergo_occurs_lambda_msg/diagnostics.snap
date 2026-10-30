@@ -4,12 +4,12 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/ergo_occurs_lambda_msg/main.sol
 ---
 error[SC0202]: recursive type would be required
- --> /main/main.sol:4:16
+ --> /main/main.sol:6:16
   |
-3 |         let g = x(y);
-4 |         return g(x);
+5 |         let g = x(y);
+6 |         return g(x);
   |                ^^^^ recursive type required here
-5 |     };
+7 |     };
   |
   = note: an inferred type would need to contain itself
   = note: recursive shape: function(function(_) returns (_)) returns (_)

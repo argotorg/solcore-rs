@@ -36,6 +36,7 @@ trap 'rm -rf "$work_dir"' EXIT
 
 large_body="$work_dir/large-body.sol"
 {
+  echo 'pragma solcore;'
   echo 'function main() returns (word) {'
   echo '  let value0: word = 0;'
   for index in $(seq 1 2000); do
@@ -48,6 +49,7 @@ large_body="$work_dir/large-body.sol"
 
 instance_heavy="$work_dir/instance-heavy.sol"
 {
+  echo 'pragma solcore;'
   for index in $(seq 0 499); do
     echo "trait AuditClass${index}<a> {}"
     echo "impl AuditClass${index}<word> {}"
@@ -60,6 +62,7 @@ instance_heavy="$work_dir/instance-heavy.sol"
 # writes so an accidental scope snapshot grows quadratically.
 assembly_references="$work_dir/assembly-references.sol"
 {
+  echo 'pragma solcore;'
   echo 'function main() returns (word) {'
   echo '  let result: word = 0;'
   echo '  assembly {'
@@ -95,7 +98,7 @@ for style, depth in [("sequential", 32), ("inline", 24)]:
         unwrap.append(f"match ({value}) {{ case (Box(value{level - 1})) {{")
     unwrap.extend(["return value0;", "}}" * depth, "}"])
 
-    lines = unwrap + [
+    lines = ["pragma solcore;"] + unwrap + [
         "function main() returns(word) {",
         "let value: word; assembly { value := calldataload(0) }",
     ]

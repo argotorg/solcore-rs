@@ -1,3 +1,5 @@
+pragma solcore;
+
 function testApplied(x: word) returns (word) {
     return x;
 }

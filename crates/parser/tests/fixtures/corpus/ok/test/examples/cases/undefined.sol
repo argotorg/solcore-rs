@@ -1,3 +1,5 @@
+pragma solcore;
+
 function undefined<any>() returns (any) {
     assembly {
         revert(0, 0)

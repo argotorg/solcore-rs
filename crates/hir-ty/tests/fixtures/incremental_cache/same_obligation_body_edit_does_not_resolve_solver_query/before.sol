@@ -1,3 +1,5 @@
+pragma solcore;
+
 trait C<a> {}
 impl C<word> {}
 function use<a>(x: a) returns (word) where a: C {

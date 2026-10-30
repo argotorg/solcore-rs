@@ -3,6 +3,7 @@ use super::*;
 fn string_growth_source(steps: usize, concatenate: &str) -> String {
     format!(
         r#"
+pragma solcore;
 import * from std;
 function grow(comptime n: integer, comptime s: string) returns (comptime<string>) {{
     if (integerLt(n, 1)) {{ return s; }}
@@ -63,6 +64,7 @@ fn literal_growth_respects_the_configured_evaluation_budget() {
 fn repeated_integer_squaring_exhausts_work_before_large_multiplication() {
     let output = specialize_src_with_std(
         r#"
+pragma solcore;
 import * from std;
 function square(comptime n: integer, comptime value: integer) returns (comptime<integer>) {
     if (integerLt(n, 1)) { return value; }
@@ -80,6 +82,7 @@ contract C {
 fn generated_string_specializations_share_the_literal_work_budget() {
     let output = specialize_src_with_std_options(
         r#"
+pragma solcore;
 import * from std;
 function grow(s: string, x: word) returns (word) {
     let result: word = grow(concatLit(s, s), x);
@@ -107,6 +110,7 @@ fn large_integer_addition_and_subtraction_also_pay_for_decimal_materialization()
         let output = specialize_src_with_std_options(
             &format!(
                 r#"
+pragma solcore;
 import * from std;
 contract C {{
     function main() returns (word) {{ return wordFromInteger({operation}({literal}, 1)); }}
@@ -130,6 +134,7 @@ fn ordinary_large_constants_still_fold() {
 
     let output = specialize_src_with_std(
         r#"
+pragma solcore;
 import * from std;
 function square(comptime n: integer, comptime value: integer) returns (comptime<integer>) {
     if (integerLt(n, 1)) { return value; }

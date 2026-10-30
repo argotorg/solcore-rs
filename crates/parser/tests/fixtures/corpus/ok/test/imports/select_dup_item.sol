@@ -1,3 +1,5 @@
+pragma solcore;
+
 import { keep, keep } from selectlib;
 
 function main(x: word) returns (word) {

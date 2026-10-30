@@ -1,3 +1,5 @@
+pragma solcore;
+
 import * as M from opaque_alias_mid;
 
 function main(x: word) returns (word) {

@@ -1,3 +1,5 @@
+pragma solcore;
+
 function add3(a: word, b: word, c: word) returns (word) {
     return a;
 }

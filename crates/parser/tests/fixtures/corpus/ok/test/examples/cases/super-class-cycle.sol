@@ -1,3 +1,5 @@
+pragma solcore;
+
 trait A<a> where a: B {}
 trait B<a> where a: A {}
 

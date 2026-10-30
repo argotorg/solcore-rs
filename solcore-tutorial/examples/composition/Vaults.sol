@@ -1,3 +1,5 @@
+pragma solcore;
+
 import * from std;
 import * from std.dispatch;
 import { settle, Direct, Signed, NoFee, FlatFee, BasisFee, Stacked } from engine;

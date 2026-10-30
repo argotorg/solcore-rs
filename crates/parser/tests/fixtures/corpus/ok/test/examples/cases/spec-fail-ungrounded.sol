@@ -1,3 +1,5 @@
+pragma solcore;
+
 // Specialiser rejects this program even though the type checker accepts it.
 //
 // abort_ : word -> a  has a polymorphic return type (it diverges).

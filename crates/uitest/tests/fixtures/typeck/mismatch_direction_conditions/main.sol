@@ -1,3 +1,5 @@
+pragma solcore;
+
 function if_condition() {
     let x: word;
     if (x) {} else {}

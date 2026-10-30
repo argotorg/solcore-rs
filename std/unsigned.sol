@@ -1,3 +1,5 @@
+pragma solcore;
+
 // std.unsigned: unsigned integer types uint8..uint128 (uint256 is in std).
 // Each type wraps a word. Arithmetic is checked; bitwise operations and ABI
 // encoding mask to the selected width. Typedef.abs preserves the raw

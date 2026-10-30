@@ -1,3 +1,5 @@
+pragma solcore;
+
 struct Point {
     x: word;
     y: word;

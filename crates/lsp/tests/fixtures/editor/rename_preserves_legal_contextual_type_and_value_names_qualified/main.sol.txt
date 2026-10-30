@@ -1,1 +1,3 @@
+pragma solcore;
+
 import * as M from math; function id(value: M.Original<word>) returns (M.Original<word>) { return value; }

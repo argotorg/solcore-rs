@@ -1,3 +1,5 @@
+pragma solcore;
+
 enum Pair<a, b> {
     Pair(a, b)
 }

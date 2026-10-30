@@ -1,3 +1,5 @@
+pragma solcore;
+
 function main(renamed: word) returns (word) {
     assembly {
         pop(renamed)

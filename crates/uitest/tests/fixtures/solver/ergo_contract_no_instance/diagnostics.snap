@@ -4,12 +4,12 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/solver/ergo_contract_no_instance/main.sol
 ---
 error[SC0207]: cannot satisfy trait constraint: word: Eq
-  --> /main/main.sol:12:16
+  --> /main/main.sol:14:16
    |
-11 |     function go(x: word) returns (Bool) {
-12 |         return Eq.eq(x, x);
+13 |     function go(x: word) returns (Bool) {
+14 |         return Eq.eq(x, x);
    |                ^^^^^^^^^^^ constraint originates here
-13 |     }
+15 |     }
    |
    = note: no visible impl matches `word: Eq`
    = help: add a matching impl or strengthen the surrounding type context

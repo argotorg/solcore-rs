@@ -4,10 +4,11 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/parse/multibyte_eof_string/main.sol
 ---
 error[SC0001]: unterminated string literal
- --> /main/main.sol:2:11
+ --> /main/main.sol:4:11
   |
-1 | function f() returns (word) {
-2 |   let s = "café
+2 |
+3 | function f() returns (word) {
+4 |   let s = "café
   |           ^^^^^ string literal starts here
   |
   = note: add a closing `"` before the end of file

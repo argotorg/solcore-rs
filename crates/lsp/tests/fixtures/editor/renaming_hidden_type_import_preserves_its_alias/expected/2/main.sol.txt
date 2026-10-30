@@ -1,2 +1,4 @@
+pragma solcore;
+
 import {Option as Hidden} from math hiding {Option};
 function main() returns (word) { return 1; }

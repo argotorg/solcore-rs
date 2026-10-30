@@ -271,7 +271,7 @@ fn document_formatting(fixture: Fixture<&str>) {
             "formatting",
             &result,
             &json!([{
-                "range": { "start": { "line": 0, "character": 0 }, "end": { "line": 5, "character": 0 } },
+                "range": { "start": { "line": 0, "character": 0 }, "end": { "line": 7, "character": 0 } },
                 "newText": expected
             }]),
         )
@@ -292,7 +292,7 @@ fn document_folding(fixture: Fixture<&str>) {
             "folding",
             &result,
             &json!([{
-                "startLine": 2, "startCharacter": 0, "endLine": 4, "endCharacter": 1
+                "startLine": 4, "startCharacter": 0, "endLine": 6, "endCharacter": 1
             }]),
         )
     });
@@ -306,18 +306,18 @@ fn expression_selection_ranges(fixture: Fixture<&str>) {
             "textDocument/selectionRange",
             json!({
                 "textDocument": { "uri": client.workspace.uri("primary/main.sol") },
-                "positions": [{ "line": 3, "character": 10 }]
+                "positions": [{ "line": 5, "character": 10 }]
             }),
         )?;
         let mut expected = None;
         for ((start_line, start_character), (end_line, end_character)) in [
-            ((3, 9), (3, 15)),
-            ((3, 9), (3, 21)),
-            ((3, 2), (3, 22)),
-            ((3, 0), (3, 22)),
-            ((2, 28), (4, 1)),
-            ((2, 0), (4, 1)),
-            ((0, 0), (5, 0)),
+            ((5, 9), (5, 15)),
+            ((5, 9), (5, 21)),
+            ((5, 2), (5, 22)),
+            ((5, 0), (5, 22)),
+            ((4, 28), (6, 1)),
+            ((4, 0), (6, 1)),
+            ((0, 0), (7, 0)),
         ]
         .into_iter()
         .rev()
@@ -343,7 +343,7 @@ fn definition_in_unopened_import(fixture: Fixture<&str>) {
             "textDocument/definition",
             json!({
                 "textDocument": { "uri": client.workspace.uri("primary/main.sol") },
-                "position": { "line": 3, "character": 10 }
+                "position": { "line": 5, "character": 10 }
             }),
         )?;
         expect_result(
@@ -351,7 +351,7 @@ fn definition_in_unopened_import(fixture: Fixture<&str>) {
             &result,
             &json!({
                 "uri": client.workspace.uri("primary/math.sol"),
-                "range": { "start": { "line": 0, "character": 9 }, "end": { "line": 0, "character": 15 } }
+                "range": { "start": { "line": 2, "character": 9 }, "end": { "line": 2, "character": 15 } }
             }),
         )
     });
@@ -369,7 +369,7 @@ fn workspace_folder_changes_update_symbols(fixture: Fixture<&str>) {
             "name": "secondaryValue", "kind": 12,
             "location": {
                 "uri": client.workspace.uri("secondary/secondary.sol"),
-                "range": { "start": { "line": 0, "character": 9 }, "end": { "line": 0, "character": 23 } }
+                "range": { "start": { "line": 2, "character": 9 }, "end": { "line": 2, "character": 23 } }
             }
         }]);
         let query = json!({ "query": "secondaryValue" });
@@ -397,6 +397,35 @@ fn workspace_folder_changes_update_symbols(fixture: Fixture<&str>) {
             expect_result("updated symbols", &result, &expected)?;
         }
         Ok(())
+    });
+}
+
+#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/native/workspace_symbols/solidity_files", glob: "primary/main.sol.txt")]
+fn workspace_indexing_skips_files_without_pragma_solcore(fixture: Fixture<&str>) {
+    run_fixture(fixture, |client| {
+        expect_result(
+            "initial diagnostics",
+            &client.open("primary/main.sol")?,
+            &json!([]),
+        )?;
+        let solcore = client.request("workspace/symbol", json!({ "query": "solcoreValue" }))?;
+        expect_result(
+            "Solcore symbols",
+            &solcore,
+            &json!([{
+                "name": "solcoreValue", "kind": 12,
+                "location": {
+                    "uri": client.workspace.uri("primary/lib.sol"),
+                    "range": { "start": { "line": 3, "character": 9 }, "end": { "line": 3, "character": 21 } }
+                }
+            }]),
+        )?;
+        let solidity = client.request("workspace/symbol", json!({ "query": "solidityOnly" }))?;
+        expect_result(
+            "symbols from a file without the pragma",
+            &solidity,
+            &json!([]),
+        )
     });
 }
 

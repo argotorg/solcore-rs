@@ -1,1 +1,3 @@
+pragma solcore;
+
 function main(value: word) returns (word) { let renamed: word = value; return renamed; }

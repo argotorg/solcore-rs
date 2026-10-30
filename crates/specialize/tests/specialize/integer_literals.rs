@@ -30,6 +30,7 @@ fn integer_literal_boundaries_use_the_selected_conversion() {
     for (ty, lower, upper, lower_word) in integer_types() {
         let output = specialize_src_with_std(&format!(
             r#"
+pragma solcore;
 import * from std;
 import * from std.signed;
 import * from std.unsigned;
@@ -73,6 +74,7 @@ fn out_of_range_integers_are_rejected_before_word_truncation() {
         ] {
             let output = specialize_src_with_std(&format!(
                 r#"
+pragma solcore;
 import * from std;
 import * from std.signed;
 import * from std.unsigned;
@@ -101,6 +103,7 @@ contract C {{
 fn bare_literals_replay_custom_int_instances() {
     let output = specialize_src_with_std(
         r#"
+pragma solcore;
 import * from std;
 enum Wrapped { Wrapped(word) }
 impl Int<Wrapped> {

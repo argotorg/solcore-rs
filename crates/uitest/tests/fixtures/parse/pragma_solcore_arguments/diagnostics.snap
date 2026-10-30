@@ -1,0 +1,14 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/parse/pragma_solcore_arguments/main.sol
+---
+error[SC0002]: `pragma solcore` does not take arguments
+ --> /main/main.sol:1:16
+  |
+1 | pragma solcore strict;
+  |                ^^^^^^ remove these arguments
+2 |
+3 | function main() returns (word) {
+  |
+  = help: every Solcore source file must begin with `pragma solcore;`

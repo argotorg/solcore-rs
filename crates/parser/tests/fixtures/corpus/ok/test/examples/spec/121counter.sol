@@ -1,3 +1,5 @@
+pragma solcore;
+
 // test single contract field
 import std;
 pragma no-patterson-condition;

@@ -4,55 +4,55 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/nameres/unqualified_constructor_all_forms/main.sol
 ---
 error[SC0106]: unqualified constructor: Some
-  --> /main/main.sol:11:12
+  --> /main/main.sol:13:12
    |
-10 | function exprCall(x: word) returns (Option) {
-11 |     return Some(x);
+12 | function exprCall(x: word) returns (Option) {
+13 |     return Some(x);
    |            ^^^^ constructor must be qualified
-12 | }
+14 | }
    |
    = help: use `Option.Some`
 ---
 
 error[SC0106]: unqualified constructor: on
-  --> /main/main.sol:14:12
+  --> /main/main.sol:16:12
    |
-13 | function exprBare(f: flag) returns (flag) {
-14 |     return on;
+15 | function exprBare(f: flag) returns (flag) {
+16 |     return on;
    |            ^^ constructor must be qualified
-15 | }
+17 | }
    |
    = help: use `flag.on`
 ---
 
 error[SC0106]: unqualified constructor: off
-  --> /main/main.sol:19:14
+  --> /main/main.sol:21:14
    |
-18 |     match (f) {
-19 |         case off {
+20 |     match (f) {
+21 |         case off {
    |              ^^^ constructor must be qualified
-20 |             return 0;
+22 |             return 0;
    |
    = help: use `flag.off`
 ---
 
 error[SC0106]: unqualified constructor: on
-  --> /main/main.sol:22:14
+  --> /main/main.sol:24:14
    |
-21 |         }
-22 |         case on {
+23 |         }
+24 |         case on {
    |              ^^ constructor must be qualified
-23 |             return 1;
+25 |             return 1;
    |
    = help: use `flag.on`
 ---
 
 error[SC0106]: unqualified constructor: None
-  --> /main/main.sol:30:14
+  --> /main/main.sol:32:14
    |
-29 |     match (o) {
-30 |         case None {
+31 |     match (o) {
+32 |         case None {
    |              ^^^^ constructor must be qualified
-31 |             return 0;
+33 |             return 0;
    |
    = help: use `Option.None`

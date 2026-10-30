@@ -28,7 +28,7 @@ pub struct ImportEdit {
 ///
 /// When the target already has a safe explicit `{...} from` import, the name is
 /// appended to that selector. Otherwise a separate selective import is placed
-/// after the existing import block, or after leading pragmas/header comments.
+/// after the existing import block, or after the leading pragmas.
 /// Malformed source, stale parse metadata, and text that cannot be represented
 /// safely as import syntax produce no edit.
 pub fn plan_import_edit<'db>(
@@ -406,16 +406,12 @@ fn plan_new_import_declaration(
             _ => break,
         }
     }
-    if let Some(pragma) = last_leading_pragma {
-        let end = absolute_span_end(db, pragma.span(db), source.len())?;
-        return insert_after_declaration_line(source, end, declaration, line_ending);
-    }
-
-    if let Some(comment_end) = leading_header_comment_end(source) {
-        return insert_after_declaration_line(source, comment_end, declaration, line_ending);
-    }
-
-    Some(insertion(0, format!("{declaration}{line_ending}")))
+    // Without imports, the declaration follows the leading pragmas. A file that
+    // lacks its mandatory `pragma solcore;` has a parse diagnostic and gets no
+    // edit, so there is always a pragma here.
+    let pragma = last_leading_pragma?;
+    let end = absolute_span_end(db, pragma.span(db), source.len())?;
+    insert_after_declaration_line(source, end, declaration, line_ending)
 }
 
 fn absolute_span_end(
@@ -494,32 +490,6 @@ fn safe_end_of_line(source: &str, mut index: usize) -> Option<LineInsertion> {
             return Some(LineInsertion::AtNextLine(index + 1));
         }
         return Some(LineInsertion::BeforeSameLineCode(index));
-    }
-}
-
-fn leading_header_comment_end(source: &str) -> Option<usize> {
-    let bytes = source.as_bytes();
-    let mut index = 0usize;
-    let mut last_comment_end = None;
-    loop {
-        while index < bytes.len() && bytes[index].is_ascii_whitespace() {
-            index += 1;
-        }
-        if bytes
-            .get(index..)
-            .is_some_and(|tail| tail.starts_with(b"//"))
-        {
-            index = skip_line_comment(bytes, index);
-            last_comment_end = Some(index);
-        } else if bytes
-            .get(index..)
-            .is_some_and(|tail| tail.starts_with(b"/*"))
-        {
-            index = skip_block_comment(bytes, index)?;
-            last_comment_end = Some(index);
-        } else {
-            return last_comment_end;
-        }
     }
 }
 
@@ -621,136 +591,138 @@ mod tests {
 
     #[test]
     fn appends_to_matching_selective_import() {
-        let source = "import {old} from lib.math;\nfunction main() { value; }\n";
+        let source = "pragma solcore;\nimport {old} from lib.math;\nfunction main() { value; }\n";
         let edit = plan(source, "lib.math", "value").expect("edit");
 
         assert_eq!(edit.start, edit.end);
         assert_eq!(edit.replacement, ", value");
         assert_eq!(
             apply(source, &edit),
-            "import {old, value} from lib.math;\nfunction main() { value; }\n"
+            "pragma solcore;\nimport {old, value} from lib.math;\nfunction main() { value; }\n"
         );
     }
 
     #[test]
     fn wildcard_upgrade_does_not_create_an_invalid_mixed_selector() {
-        let source = "import {NonPayable, SigString} from std.dispatch;\nfunction main() {}\n";
+        let source = "pragma solcore;\nimport {NonPayable, SigString} from std.dispatch;\nfunction main() {}\n";
         assert_eq!(plan_wildcard(source, "std.dispatch"), None);
     }
 
     #[test]
     fn wildcard_import_is_inserted_when_target_is_not_selected() {
-        let source = "import * from std;\nfunction main() {}\n";
+        let source = "pragma solcore;\nimport * from std;\nfunction main() {}\n";
         let edit = plan_wildcard(source, "std.dispatch").expect("edit");
 
         assert_eq!(
             apply(source, &edit),
-            "import * from std;\nimport * from std.dispatch;\nfunction main() {}\n"
+            "pragma solcore;\nimport * from std;\nimport * from std.dispatch;\nfunction main() {}\n"
         );
     }
 
     #[test]
     fn existing_wildcard_import_needs_no_edit() {
-        let source = "import * from std.dispatch;\nfunction main() {}\n";
+        let source = "pragma solcore;\nimport * from std.dispatch;\nfunction main() {}\n";
         assert_eq!(plan_wildcard(source, "std.dispatch"), None);
     }
 
     #[test]
     fn appends_after_the_last_alias_without_disturbing_operator_or_hiding() {
-        let source = "import {(^^), source as local} from lib hiding {hidden};\nfunction main() { value; }\n";
+        let source = "pragma solcore;\nimport {(^^), source as local} from lib hiding {hidden};\nfunction main() { value; }\n";
         let edit = plan(source, "lib", "value").expect("edit");
 
         assert_eq!(
             apply(source, &edit),
-            "import {(^^), source as local, value} from lib hiding {hidden};\nfunction main() { value; }\n"
+            "pragma solcore;\nimport {(^^), source as local, value} from lib hiding {hidden};\nfunction main() { value; }\n"
         );
     }
 
     #[test]
     fn appending_keeps_selector_comments_and_crlf_layout() {
-        let source = "import {old // keep old\r\n} from lib; // keep import\r\n\r\nfunction main() { value; }\r\n";
+        let source = "pragma solcore;\nimport {old // keep old\r\n} from lib; // keep import\r\n\r\nfunction main() { value; }\r\n";
         let edit = plan(source, "lib", "value").expect("edit");
 
         assert_eq!(
             apply(source, &edit),
-            "import {old, value // keep old\r\n} from lib; // keep import\r\n\r\nfunction main() { value; }\r\n"
+            "pragma solcore;\nimport {old, value // keep old\r\n} from lib; // keep import\r\n\r\nfunction main() { value; }\r\n"
         );
     }
 
     #[test]
     fn appending_skips_a_nested_selector_comment() {
-        let source = "import {old /* outer /* inner */ still outer */} from lib;\nfunction main() { value; }\n";
+        let source = "pragma solcore;\nimport {old /* outer /* inner */ still outer */} from lib;\nfunction main() { value; }\n";
         let edit = plan(source, "lib", "value").expect("edit");
 
         assert_eq!(
             apply(source, &edit),
-            "import {old, value /* outer /* inner */ still outer */} from lib;\nfunction main() { value; }\n"
+            "pragma solcore;\nimport {old, value /* outer /* inner */ still outer */} from lib;\nfunction main() { value; }\n"
         );
     }
 
     #[test]
     fn does_not_duplicate_an_existing_unaliased_name() {
-        let source = "import {value} from lib;\nfunction main() { value; }\n";
+        let source = "pragma solcore;\nimport {value} from lib;\nfunction main() { value; }\n";
         assert_eq!(plan(source, "lib", "value"), None);
     }
 
     #[test]
     fn existing_source_alias_gets_a_separate_import() {
-        let source = "import {value as renamed} from lib;\nfunction main() { value; }\n";
+        let source =
+            "pragma solcore;\nimport {value as renamed} from lib;\nfunction main() { value; }\n";
         let edit = plan(source, "lib", "value").expect("edit");
 
         assert_eq!(
             apply(source, &edit),
-            "import {value as renamed} from lib;\nimport {value} from lib;\nfunction main() { value; }\n"
+            "pragma solcore;\nimport {value as renamed} from lib;\nimport {value} from lib;\nfunction main() { value; }\n"
         );
     }
 
     #[test]
     fn selector_hiding_the_name_gets_a_separate_import() {
-        let source = "import {old} from lib hiding {value};\nfunction main() { value; }\n";
+        let source =
+            "pragma solcore;\nimport {old} from lib hiding {value};\nfunction main() { value; }\n";
         let edit = plan(source, "lib", "value").expect("edit");
 
         assert_eq!(
             apply(source, &edit),
-            "import {old} from lib hiding {value};\nimport {value} from lib;\nfunction main() { value; }\n"
+            "pragma solcore;\nimport {old} from lib hiding {value};\nimport {value} from lib;\nfunction main() { value; }\n"
         );
     }
 
     #[test]
     fn hidden_selected_name_does_not_suppress_a_clean_import() {
-        let source = "import {Option} from lib hiding {Option};\nfunction main() { Option; }\n";
+        let source = "pragma solcore;\nimport {Option} from lib hiding {Option};\nfunction main() { Option; }\n";
         let edit = plan(source, "lib", "Option").expect("edit");
 
         assert_eq!(
             apply(source, &edit),
-            "import {Option} from lib hiding {Option};\nimport {Option} from lib;\nfunction main() { Option; }\n"
+            "pragma solcore;\nimport {Option} from lib hiding {Option};\nimport {Option} from lib;\nfunction main() { Option; }\n"
         );
     }
 
     #[test]
     fn hidden_aliased_source_does_not_create_a_local_name_collision() {
-        let source =
-            "import {Other as Option} from lib hiding {Other};\nfunction main() { Option; }\n";
+        let source = "pragma solcore;\nimport {Other as Option} from lib hiding {Other};\nfunction main() { Option; }\n";
         let edit = plan(source, "lib", "Option").expect("edit");
 
         assert_eq!(
             apply(source, &edit),
-            "import {Other as Option} from lib hiding {Other};\nimport {Option} from lib;\nfunction main() { Option; }\n"
+            "pragma solcore;\nimport {Other as Option} from lib hiding {Other};\nimport {Option} from lib;\nfunction main() { Option; }\n"
         );
     }
 
     #[test]
     fn active_alias_still_suppresses_an_ambiguous_selective_import() {
-        let source = "import {Other as Option} from lib;\nfunction main() { Option; }\n";
+        let source =
+            "pragma solcore;\nimport {Other as Option} from lib;\nfunction main() { Option; }\n";
         assert_eq!(plan(source, "lib", "Option"), None);
     }
 
     #[test]
     fn wildcard_plain_and_module_alias_imports_get_separate_imports() {
         for existing in [
-            "import * from lib;",
-            "import lib;",
-            "import * as L from lib;",
+            "pragma solcore; import * from lib;",
+            "pragma solcore; import lib;",
+            "pragma solcore; import * as L from lib;",
         ] {
             let source = format!("{existing}\nfunction main() {{ value; }}\n");
             let edit = plan(&source, "lib", "value").expect("edit");
@@ -763,135 +735,142 @@ mod tests {
 
     #[test]
     fn new_import_follows_the_complete_import_block_and_keeps_blank_lines() {
-        let source = "import {a} from first;\nimport {b} from second; // second\n\nfunction main() { value; }\n";
+        let source = "pragma solcore;\nimport {a} from first;\nimport {b} from second; // second\n\nfunction main() { value; }\n";
         let edit = plan(source, "lib", "value").expect("edit");
 
         assert_eq!(
             apply(source, &edit),
-            "import {a} from first;\nimport {b} from second; // second\nimport {value} from lib;\n\nfunction main() { value; }\n"
+            "pragma solcore;\nimport {a} from first;\nimport {b} from second; // second\nimport {value} from lib;\n\nfunction main() { value; }\n"
         );
     }
 
     #[test]
     fn new_import_does_not_split_a_multiline_trailing_block_comment() {
-        let source =
-            "import {a} from first; /* trailing\n   block */\nfunction main() { value; }\n";
+        let source = "pragma solcore;\nimport {a} from first; /* trailing\n   block */\nfunction main() { value; }\n";
         let edit = plan(source, "lib", "value").expect("edit");
 
         assert_eq!(
             apply(source, &edit),
-            "import {a} from first; /* trailing\n   block */\nimport {value} from lib;\nfunction main() { value; }\n"
+            "pragma solcore;\nimport {a} from first; /* trailing\n   block */\nimport {value} from lib;\nfunction main() { value; }\n"
         );
     }
 
     #[test]
     fn new_import_does_not_split_a_nested_trailing_block_comment() {
-        let source = "import {a} from first; /* outer\n  /* inner */\n  still outer */\nfunction main() { value; }\n";
+        let source = "pragma solcore;\nimport {a} from first; /* outer\n  /* inner */\n  still outer */\nfunction main() { value; }\n";
         let edit = plan(source, "lib", "value").expect("edit");
 
         assert_eq!(
             apply(source, &edit),
-            "import {a} from first; /* outer\n  /* inner */\n  still outer */\nimport {value} from lib;\nfunction main() { value; }\n"
+            "pragma solcore;\nimport {a} from first; /* outer\n  /* inner */\n  still outer */\nimport {value} from lib;\nfunction main() { value; }\n"
         );
     }
 
     #[test]
     fn new_import_preserves_crlf_and_trailing_line_comment() {
-        let source = "import {a} from first; // first\r\n\r\nfunction main() { value; }\r\n";
+        let source = "pragma solcore;\r\nimport {a} from first; // first\r\n\r\nfunction main() { value; }\r\n";
         let edit = plan(source, "lib", "value").expect("edit");
 
         assert_eq!(
             apply(source, &edit),
-            "import {a} from first; // first\r\nimport {value} from lib;\r\n\r\nfunction main() { value; }\r\n"
+            "pragma solcore;\r\nimport {a} from first; // first\r\nimport {value} from lib;\r\n\r\nfunction main() { value; }\r\n"
         );
     }
 
     #[test]
     fn new_import_follows_leading_pragmas() {
-        let source = "// license\npragma no-patterson-condition;\n\nfunction main() { value; }\n";
+        let source = "pragma solcore;\n// license\npragma no-patterson-condition;\n\nfunction main() { value; }\n";
         let edit = plan(source, "lib", "value").expect("edit");
 
         assert_eq!(
             apply(source, &edit),
-            "// license\npragma no-patterson-condition;\nimport {value} from lib;\n\nfunction main() { value; }\n"
+            "pragma solcore;\n// license\npragma no-patterson-condition;\nimport {value} from lib;\n\nfunction main() { value; }\n"
         );
     }
 
     #[test]
-    fn new_import_follows_header_comments_without_consuming_blank_line() {
-        let source = "// Copyright\n/* License */\n\nfunction main() { value; }\n";
+    fn new_import_follows_pragma_after_header_comments_without_consuming_blank_line() {
+        let source = "// Copyright\n/* License */\npragma solcore;\n\nfunction main() { value; }\n";
         let edit = plan(source, "lib", "value").expect("edit");
 
         assert_eq!(
             apply(source, &edit),
-            "// Copyright\n/* License */\nimport {value} from lib;\n\nfunction main() { value; }\n"
+            "// Copyright\n/* License */\npragma solcore;\nimport {value} from lib;\n\nfunction main() { value; }\n"
         );
     }
 
     #[test]
-    fn new_import_follows_a_complete_nested_header_comment() {
-        let source = "/* outer /* inner */ still outer */\n\nfunction main() { value; }\n";
+    fn new_import_follows_pragma_after_a_nested_header_comment() {
+        let source =
+            "/* outer /* inner */ still outer */\npragma solcore;\n\nfunction main() { value; }\n";
         let edit = plan(source, "lib", "value").expect("edit");
 
         assert_eq!(
             apply(source, &edit),
-            "/* outer /* inner */ still outer */\nimport {value} from lib;\n\nfunction main() { value; }\n"
+            "/* outer /* inner */ still outer */\npragma solcore;\nimport {value} from lib;\n\nfunction main() { value; }\n"
         );
     }
 
     #[test]
-    fn empty_source_gets_a_top_level_import() {
-        let edit = plan("", "lib.math", "value").expect("edit");
+    fn pragma_only_source_gets_an_import_after_the_pragma() {
+        let source = "pragma solcore;\n";
+        let edit = plan(source, "lib.math", "value").expect("edit");
         assert_eq!(
-            edit,
-            insertion(0, "import {value} from lib.math;\n".to_owned())
+            apply(source, &edit),
+            "pragma solcore;\nimport {value} from lib.math;\n"
         );
+    }
+
+    #[test]
+    fn source_without_pragma_solcore_gets_no_import() {
+        assert_eq!(plan("", "lib.math", "value"), None);
+        assert_eq!(plan("function main() { value; }\n", "lib", "value"), None);
     }
 
     #[test]
     fn import_at_eof_stays_on_its_own_line() {
-        let source = "import {a} from first; // first";
+        let source = "pragma solcore;\nimport {a} from first; // first";
         let edit = plan(source, "lib", "value").expect("edit");
         assert_eq!(
             apply(source, &edit),
-            "import {a} from first; // first\nimport {value} from lib;"
+            "pragma solcore;\nimport {a} from first; // first\nimport {value} from lib;"
         );
     }
 
     #[test]
     fn supports_external_import_paths() {
-        let source = "function main() { value; }\n";
+        let source = "pragma solcore;\nfunction main() { value; }\n";
         let edit = plan(source, "@dep.util", "value").expect("edit");
         assert_eq!(
             apply(source, &edit),
-            "import {value} from @dep.util;\nfunction main() { value; }\n"
+            "pragma solcore;\nimport {value} from @dep.util;\nfunction main() { value; }\n"
         );
     }
 
     #[test]
     fn plans_a_plain_module_import() {
-        let source = "function main() { lib.value; }\n";
+        let source = "pragma solcore;\nfunction main() { lib.value; }\n";
         let edit = plan_module(source, "lib.math").expect("edit");
 
         assert_eq!(
             apply(source, &edit),
-            "import lib.math;\nfunction main() { lib.value; }\n"
+            "pragma solcore;\nimport lib.math;\nfunction main() { lib.value; }\n"
         );
     }
 
     #[test]
     fn identical_plain_module_import_needs_no_edit() {
-        let source = "import lib.math; // already imported\nfunction main() { lib.value; }\n";
+        let source = "pragma solcore;\nimport lib.math; // already imported\nfunction main() { lib.value; }\n";
         assert_eq!(plan_module(source, "lib.math"), None);
     }
 
     #[test]
     fn selected_wildcard_and_aliased_imports_do_not_count_as_plain() {
         for existing in [
-            "import {value} from lib.math;",
-            "import {other} from lib.math hiding {other};",
-            "import * from lib.math;",
-            "import * as Math from lib.math;",
+            "pragma solcore; import {value} from lib.math;",
+            "pragma solcore; import {other} from lib.math hiding {other};",
+            "pragma solcore; import * from lib.math;",
+            "pragma solcore; import * as Math from lib.math;",
         ] {
             let source = format!("{existing}\nfunction main() {{ lib.value; }}\n");
             let edit =
@@ -905,30 +884,29 @@ mod tests {
 
     #[test]
     fn plain_module_import_preserves_crlf_after_nested_trailing_comment() {
-        let source = "import first; /* outer\r\n  /* inner */\r\n  still outer */\r\n\r\nfunction main() { lib.value; }\r\n";
+        let source = "pragma solcore;\r\nimport first; /* outer\r\n  /* inner */\r\n  still outer */\r\n\r\nfunction main() { lib.value; }\r\n";
         let edit = plan_module(source, "lib.math").expect("edit");
 
         assert_eq!(
             apply(source, &edit),
-            "import first; /* outer\r\n  /* inner */\r\n  still outer */\r\nimport lib.math;\r\n\r\nfunction main() { lib.value; }\r\n"
+            "pragma solcore;\r\nimport first; /* outer\r\n  /* inner */\r\n  still outer */\r\nimport lib.math;\r\n\r\nfunction main() { lib.value; }\r\n"
         );
     }
 
     #[test]
-    fn plain_module_import_follows_nested_header_comments() {
-        let source =
-            "/* license /* generated detail */ remains */\n\nfunction main() { lib.value; }\n";
+    fn plain_module_import_follows_pragma_after_nested_header_comments() {
+        let source = "/* license /* generated detail */ remains */\npragma solcore;\n\nfunction main() { lib.value; }\n";
         let edit = plan_module(source, "@dep.math").expect("edit");
 
         assert_eq!(
             apply(source, &edit),
-            "/* license /* generated detail */ remains */\nimport @dep.math;\n\nfunction main() { lib.value; }\n"
+            "/* license /* generated detail */ remains */\npragma solcore;\nimport @dep.math;\n\nfunction main() { lib.value; }\n"
         );
     }
 
     #[test]
     fn plain_module_import_rejects_invalid_paths_and_stale_metadata() {
-        let source = "function main() { lib.value; }\n";
+        let source = "pragma solcore;\nfunction main() { lib.value; }\n";
         assert_eq!(plan_module(source, "lib; export secret"), None);
         assert_eq!(plan_module(source, ""), None);
 
@@ -941,25 +919,40 @@ mod tests {
         let parsed = parser::parse_file_to_hir(db, file);
 
         assert_eq!(
-            plan_module_import_edit(db, "function main() {}\n", parsed, "lib.math"),
+            plan_module_import_edit(
+                db,
+                "pragma solcore;\nfunction main() {}\n",
+                parsed,
+                "lib.math"
+            ),
             None
         );
     }
 
     #[test]
     fn rejects_malformed_source_and_invalid_generated_syntax() {
-        assert_eq!(plan("import lib.{", "lib", "value"), None);
+        assert_eq!(plan("pragma solcore;\nimport lib.{", "lib", "value"), None);
         assert_eq!(
-            plan("function main() {}\n", "lib; export secret", "value"),
+            plan(
+                "pragma solcore;\nfunction main() {}\n",
+                "lib; export secret",
+                "value"
+            ),
             None
         );
-        assert_eq!(plan("function main() {}\n", "lib", "two names"), None);
-        assert_eq!(plan("function main() {}\n", "", "value"), None);
+        assert_eq!(
+            plan("pragma solcore;\nfunction main() {}\n", "lib", "two names"),
+            None
+        );
+        assert_eq!(
+            plan("pragma solcore;\nfunction main() {}\n", "", "value"),
+            None
+        );
     }
 
     #[test]
     fn rejects_stale_parse_metadata() {
-        let source = "function main() { value; }\n";
+        let source = "pragma solcore;\nfunction main() { value; }\n";
         let mut world = WorldState::new();
         let uri = Url::parse("file:///main/main.sol").expect("uri");
         assert!(world.open_document(uri.clone(), source.to_owned()));
@@ -969,7 +962,13 @@ mod tests {
         let parsed = parser::parse_file_to_hir(db, file);
 
         assert_eq!(
-            plan_import_edit(db, "function main() {}\n", parsed, "lib", "value"),
+            plan_import_edit(
+                db,
+                "pragma solcore;\nfunction main() {}\n",
+                parsed,
+                "lib",
+                "value"
+            ),
             None
         );
     }

@@ -239,10 +239,18 @@ impl LanguageServer for Backend {
                 if world.is_document_open(&uri) {
                     continue;
                 }
-                if kind == FileChangeType::DELETED {
-                    world.remove_workspace_document(&uri);
-                } else if let Some(text) = text {
-                    world.set_workspace_document(uri, text);
+                match text {
+                    _ if kind == FileChangeType::DELETED => {
+                        world.remove_workspace_document(&uri);
+                    }
+                    Some(text) if parser::declares_pragma_solcore(&text) => {
+                        world.set_workspace_document(uri, text);
+                    }
+                    // A file without `pragma solcore;` is not a Solcore source.
+                    Some(_) => {
+                        world.remove_workspace_document(&uri);
+                    }
+                    None => {}
                 }
             }
             diagnostics_with_versions(&world, None)
@@ -542,6 +550,10 @@ fn read_workspace_documents(root: &Url) -> Vec<(Url, String)> {
             let Ok(text) = fs::read_to_string(&path) else {
                 continue;
             };
+            // `.sol` files without the pragma are Solidity, not Solcore sources.
+            if !parser::declares_pragma_solcore(&text) {
+                continue;
+            }
             let Ok(uri) = Url::from_file_path(&path) else {
                 continue;
             };

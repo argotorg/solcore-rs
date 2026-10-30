@@ -1,3 +1,5 @@
+pragma solcore;
+
 contract Dup {
     function f(x: word) public returns (word) {
         return x;

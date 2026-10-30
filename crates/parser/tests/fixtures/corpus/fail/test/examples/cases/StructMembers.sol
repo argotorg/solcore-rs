@@ -1,3 +1,5 @@
+pragma solcore;
+
 /// Other used stdlib classes and types:
 trait Ref<self, deref> {
     function load(x: self) returns (deref) ;

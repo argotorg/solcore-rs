@@ -481,6 +481,7 @@ fn runtime_return_wrapper_uses_an_explicit_checked_entry() {
 fn source_main_lowers_through_hull_to_verified_ir() {
     let (_, ir) = lower_source(
         r#"
+pragma solcore;
 contract SimpleMain {
   function main() returns (word) {
     return 42;
@@ -499,6 +500,7 @@ contract SimpleMain {
 fn source_bool_product_sum_and_branches_lower_to_verified_ir() {
     let (_, ir) = lower_source(
         r#"
+pragma solcore;
 contract AggregateContract {
   enum Choice {Left(word, word) , Right(word)}
 
@@ -544,6 +546,7 @@ case Choice.Right(x) { return x; }}
 fn memoryguard_reserves_aligned_literal_space_through_the_unified_allocator() {
     let (_, ir) = lower_source(
         r#"
+pragma solcore;
 contract MemoryGuardContract {
   function main() returns (word) {
     let guarded : word;
@@ -616,6 +619,7 @@ contract MemoryGuardContract {
 fn contract_storage_load_and_store_lower_to_snapshotted_verified_ir() {
     let (_, ir) = lower_source(
         r#"
+pragma solcore;
 contract StorageContract {
   value: word;
 
@@ -640,6 +644,7 @@ contract StorageContract {
 fn source_bit_not_lowers_to_verified_evm_not() {
     let (_, ir) = lower_source(
         r#"
+pragma solcore;
 import * from std;
 
 contract BitNotContract {
@@ -659,6 +664,7 @@ contract BitNotContract {
 fn inline_yul_for_init_binding_remains_in_loop_scope() {
     let (_, ir) = lower_source(
         r#"
+pragma solcore;
 contract LoopContract {
   function main() returns (word) {
     let result : word;
@@ -682,6 +688,7 @@ contract LoopContract {
 fn inline_yul_functions_lower_arguments_multi_returns_leave_and_recursion() {
     let (_, ir) = lower_source(
         r#"
+pragma solcore;
 contract InlineYulFunctions {
   function main() returns (word) {
     let left : word;
@@ -732,6 +739,7 @@ contract InlineYulFunctions {
 fn inline_yul_named_returns_preserve_zero_defaults_and_position() {
     let (_, ir) = lower_source(
         r#"
+pragma solcore;
 contract InlineYulNamedReturns {
   function main() returns (word) {
     let x : word;
@@ -828,6 +836,7 @@ contract InlineYulNamedReturns {
 fn inline_yul_functions_support_forward_calls_and_mutual_recursion() {
     let (_, ir) = lower_source(
         r#"
+pragma solcore;
 contract InlineYulMutualRecursion {
   function main() returns (word) {
     let result : word;
@@ -871,6 +880,7 @@ contract InlineYulMutualRecursion {
 fn inline_yul_call_arguments_evaluate_right_to_left_without_reordering_parameters() {
     let (_, ir) = lower_source(
         r#"
+pragma solcore;
 contract InlineYulArgumentOrder {
   function main() returns (word) {
     let result : word;
@@ -930,6 +940,7 @@ contract InlineYulArgumentOrder {
 fn inline_yul_function_names_are_isolated_between_assembly_blocks() {
     let (_, ir) = lower_source(
         r#"
+pragma solcore;
 contract InlineYulFunctionScopes {
   function main() returns (word) {
     let result : word;
@@ -1118,6 +1129,7 @@ fn inline_yul_functions_do_not_inherit_outer_loop_targets() {
 fn polymorphic_yul_terminators_end_value_returning_functions() {
     let (_, ir) = lower_source(
         r#"
+pragma solcore;
 function viaStop<a>() returns (a) {
   assembly { stop() }
 }
@@ -1159,6 +1171,7 @@ contract Terminators {
 fn literal_revert_preserves_its_payload() {
     let (_, ir) = lower_source_with_file_url_imports(
         r#"
+pragma solcore;
 import * from std;
 
 function main() returns () {

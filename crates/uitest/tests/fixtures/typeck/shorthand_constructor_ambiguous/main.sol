@@ -1,3 +1,5 @@
+pragma solcore;
+
 enum Choice {
     Same(word),
     Same(bool)

@@ -1,3 +1,5 @@
+pragma solcore;
+
 import * from base;
 export { allA };
 impl Local<word> {

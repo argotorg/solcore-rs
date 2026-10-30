@@ -1,3 +1,5 @@
+pragma solcore;
+
 trait Neg<a> {
     function neg(x: a) returns (a);
 }

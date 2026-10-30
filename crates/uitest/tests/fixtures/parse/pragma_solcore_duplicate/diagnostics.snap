@@ -1,0 +1,14 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/parse/pragma_solcore_duplicate/main.sol
+---
+error[SC0002]: duplicate `pragma solcore;`
+ --> /main/main.sol:7:1
+  |
+5 | }
+6 |
+7 | pragma solcore;
+  | ^^^^^^^^^^^^^^^ the file must declare `pragma solcore;` only once
+  |
+  = help: every Solcore source file must begin with `pragma solcore;`

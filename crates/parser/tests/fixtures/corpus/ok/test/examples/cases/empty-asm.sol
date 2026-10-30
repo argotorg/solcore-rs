@@ -1,3 +1,5 @@
+pragma solcore;
+
 function f(x: word) returns (word) {
     match (x) {
         case 0 {

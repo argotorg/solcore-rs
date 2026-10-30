@@ -1,3 +1,5 @@
+pragma solcore;
+
 import * from base;
 import base;
 export { localB, qualifiedB, argumentB, nestedB, genericB };

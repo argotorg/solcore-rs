@@ -1,3 +1,5 @@
+pragma solcore;
+
 import * from storage_support;
 
 export { Box(*) };

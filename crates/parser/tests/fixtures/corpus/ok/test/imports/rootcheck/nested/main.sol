@@ -1,3 +1,5 @@
+pragma solcore;
+
 import lib.rootcheck.provider;
 
 function main() returns (word) {

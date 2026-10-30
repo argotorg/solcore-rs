@@ -1,3 +1,5 @@
+pragma solcore;
+
 function bool_value() returns (bool) {
     return true;
 }

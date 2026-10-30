@@ -1,3 +1,5 @@
+pragma solcore;
+
 export { Wrap(*), unwrap, Unbox };
 
 enum Wrap {

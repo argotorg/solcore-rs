@@ -1,3 +1,5 @@
+pragma solcore;
+
 // Tests that tryResolveMPTC selects the correct instance when multiple instances
 // of the same class are registered in the resolution table.
 // For getTag(Foo(1)): specmgu (Bar -> RepBar) (Foo -> freshV) fails (Bar != Foo),

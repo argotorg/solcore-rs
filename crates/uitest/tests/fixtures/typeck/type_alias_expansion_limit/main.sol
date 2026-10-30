@@ -1,3 +1,5 @@
+pragma solcore;
+
 type T0 = word;
 type T1 = (T0, T0);
 type T2 = (T1, T1);

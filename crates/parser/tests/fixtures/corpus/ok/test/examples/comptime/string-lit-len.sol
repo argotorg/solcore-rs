@@ -1,3 +1,5 @@
+pragma solcore;
+
 import std;
 pragma no-patterson-condition;
 pragma no-coverage-condition;

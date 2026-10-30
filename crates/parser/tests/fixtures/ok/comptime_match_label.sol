@@ -1,3 +1,5 @@
+pragma solcore;
+
 function classify(x: word) returns (word) {
     match (x) {
         case comptime 1 {

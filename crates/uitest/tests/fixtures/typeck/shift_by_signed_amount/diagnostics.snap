@@ -4,12 +4,12 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/shift_by_signed_amount/main.sol
 ---
 error[SC0207]: cannot satisfy trait constraint: uint256: Shl<int8>
- --> /main/main.sol:7:12
-  |
-6 | function f(x: uint256, s: int8) returns (uint256) {
-7 |     return x << s;
-  |            ^^^^^^ constraint originates here
-8 | }
-  |
-  = note: no visible impl matches `uint256: Shl<int8>`
-  = help: the shift amount must be an unsigned type (`word`, `uint8` .. `uint256`); signed amounts are not allowed
+  --> /main/main.sol:9:12
+   |
+ 8 | function f(x: uint256, s: int8) returns (uint256) {
+ 9 |     return x << s;
+   |            ^^^^^^ constraint originates here
+10 | }
+   |
+   = note: no visible impl matches `uint256: Shl<int8>`
+   = help: the shift amount must be an unsigned type (`word`, `uint8` .. `uint256`); signed amounts are not allowed

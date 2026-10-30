@@ -4,12 +4,12 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/manual_sigstring_input/main.sol
 ---
 error[SC0231]: public function `echo` ABI for contract `C` cannot use visible manual `SigString` evidence
-  --> /main/main.sol:17:5
+  --> /main/main.sol:19:5
    |
-16 | contract C {
-17 |     function echo(value: Input) public returns (Input) {
+18 | contract C {
+19 |     function echo(value: Input) public returns (Input) {
    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ external ABI evidence must be compiler-owned and canonical
-18 |         return value;
+20 |         return value;
    |
    = note: impl `SigString` can override canonical `SigString` behavior
    = help: remove the visible manual ABI impl or keep this declaration out of the external ABI

@@ -1,3 +1,5 @@
+pragma solcore;
+
 import * as keep from foo;
 
 function keep() returns (word) {

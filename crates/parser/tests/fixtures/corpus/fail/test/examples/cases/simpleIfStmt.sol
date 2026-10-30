@@ -1,3 +1,5 @@
+pragma solcore;
+
 contract SimpleIfStmt {
     function main() public {
         if (true) {

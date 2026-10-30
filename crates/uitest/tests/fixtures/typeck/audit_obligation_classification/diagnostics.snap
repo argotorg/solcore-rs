@@ -4,34 +4,34 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/audit_obligation_classification/main.sol
 ---
 error[SC0201]: type mismatch: expected function() returns (word), found numeric
- --> /main/main.sol:2:12
+ --> /main/main.sol:4:12
   |
-1 | function literal_as_callee() returns (word) {
-2 |     return 1 ();
+3 | function literal_as_callee() returns (word) {
+4 |     return 1 ();
   |            ^ expression has mismatched type
-3 | }
+5 | }
   |
   = note: expected type: function() returns (word)
   = note: found type: numeric
 ---
 
 error[SC0206]: non-callable value of type word
- --> /main/main.sol:7:12
-  |
-6 |     let x: word;
-7 |     return x();
-  |            ^ callee is not callable
-8 | }
-  |
+  --> /main/main.sol:9:12
+   |
+ 8 |     let x: word;
+ 9 |     return x();
+   |            ^ callee is not callable
+10 | }
+   |
 ---
 
 error[SC0201]: argument type mismatch in call to `fromInteger`
-  --> /main/main.sol:11:28
+  --> /main/main.sol:13:28
    |
-10 | function from_integer_bad_arg() returns (word) {
-11 |     return Int.fromInteger(true);
+12 | function from_integer_bad_arg() returns (word) {
+13 |     return Int.fromInteger(true);
    |                            ^^^^ argument has mismatched type
-12 | }
+14 | }
    |
    = note: expected `integer` because parameter 1 of `fromInteger` has type `integer`
    = note: found type: bool
@@ -39,12 +39,12 @@ error[SC0201]: argument type mismatch in call to `fromInteger`
 ---
 
 error[SC0207]: cannot satisfy trait constraint: a: invokable<(), word>
-  --> /main/main.sol:14:25
+  --> /main/main.sol:16:25
    |
-13 |
-14 | function open_invokable<a>(x: a) returns (word) {
+15 |
+16 | function open_invokable<a>(x: a) returns (word) {
    |                         ^ constraint originates here
-15 |     return invoke(x, ());
+17 |     return invoke(x, ());
    |
    = note: no visible impl matches `a: invokable<(), word>`
    = help: add a matching impl or strengthen the surrounding type context

@@ -1,3 +1,5 @@
+pragma solcore;
+
 trait A<self> {}
 trait B<self> {}
 trait C<self> {}

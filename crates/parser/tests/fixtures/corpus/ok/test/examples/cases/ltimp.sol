@@ -1,3 +1,5 @@
+pragma solcore;
+
 import { ltproxy } from ltproxy;
 
 contract LtImp {

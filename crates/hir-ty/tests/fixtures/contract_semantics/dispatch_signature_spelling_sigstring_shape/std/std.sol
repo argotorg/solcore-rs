@@ -1,3 +1,5 @@
+pragma solcore;
+
 export { string, address(*), bytes, bytes32(*), memory(*) };
 enum string {}
 enum address {

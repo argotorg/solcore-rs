@@ -4,9 +4,11 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/parse/impl_missing_head/main.sol
 ---
 error[SC0001]: parse error: unexpected `{`
- --> /main/main.sol:1:6
+ --> /main/main.sol:3:6
   |
-1 | impl {}
+1 | pragma solcore;
+2 |
+3 | impl {}
   |      ^ unexpected token
   |
   = note: expecting `<`

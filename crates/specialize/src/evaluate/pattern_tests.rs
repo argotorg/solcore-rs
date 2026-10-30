@@ -14,7 +14,7 @@ fn structural_matches_do_not_skip_runtime_literal_decisions() {
     let file = SourceFile::new(
         &db,
         "memory:///structural-pattern.sol".parse().unwrap(),
-        Some(String::new()),
+        Some("pragma solcore;".to_owned()),
     );
     let span = parse_file_to_hir(&db, file).module(&db).span(&db);
     let word = MonoTy::new_unchecked(Ty::builtin(&db, BuiltinTyCtor::Word));
@@ -141,7 +141,7 @@ fn expression_projection_preserves_a_runtime_callable_payload() {
     let file = SourceFile::new(
         &db,
         "memory:///callable-projection.sol".parse().unwrap(),
-        Some(String::new()),
+        Some("pragma solcore;".to_owned()),
     );
     let hir = parse_file_to_hir(&db, file).module(&db);
     let span = hir.span(&db);
@@ -234,7 +234,7 @@ fn expression_match_bindings_inherit_scrutinee_availability_and_shadow_outer_nam
     let file = SourceFile::new(
         &db,
         "memory:///pattern.sol".parse().unwrap(),
-        Some(String::new()),
+        Some("pragma solcore;".to_owned()),
     );
     let hir = parse_file_to_hir(&db, file).module(&db);
     let span = hir.span(&db);
@@ -339,7 +339,7 @@ fn closure_expression_match_labels_capture_before_pattern_binders() {
     let file = SourceFile::new(
         &db,
         "memory:///closure-pattern-label.sol".parse().unwrap(),
-        Some(String::new()),
+        Some("pragma solcore;".to_owned()),
     );
     let hir = parse_file_to_hir(&db, file).module(&db);
     let span = hir.span(&db);

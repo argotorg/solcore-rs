@@ -1,3 +1,5 @@
+pragma solcore;
+
 export { g };
 
 function g() returns (word) {

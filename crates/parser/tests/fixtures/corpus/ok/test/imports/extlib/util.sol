@@ -1,3 +1,5 @@
+pragma solcore;
+
 export { offset };
 
 function offset() returns (word) {

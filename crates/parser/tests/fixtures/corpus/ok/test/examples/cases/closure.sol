@@ -1,3 +1,5 @@
+pragma solcore;
+
 function foo(z: word, k: (), a: word) returns (word) {
     let f = lam (x: word, y: word) {
         k;

@@ -1,3 +1,5 @@
+pragma solcore;
+
 function app<a, b, c>(f: c, x: a) returns (b) where c: invokable<a, b> {
     return invokable.invoke(f, x);
 }

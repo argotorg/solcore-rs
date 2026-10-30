@@ -1,3 +1,5 @@
+pragma solcore;
+
 // A user-defined instance of the primitive `Str` class.
 //
 // `Str` has two bodyless primitive instances (`string`, `memory(string)`) that

@@ -1,3 +1,5 @@
+pragma solcore;
+
 contract Sstore {
     function main() public {
         let res: word;

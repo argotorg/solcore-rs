@@ -1,3 +1,5 @@
+pragma solcore;
+
 trait Enum<a> {
     function fromEnum(x: a) returns (word);
 }

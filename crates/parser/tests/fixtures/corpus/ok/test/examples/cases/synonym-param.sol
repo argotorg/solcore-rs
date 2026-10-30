@@ -1,3 +1,5 @@
+pragma solcore;
+
 type MyPair(a, b) = pair<a, b>;
 type IntPair = MyPair<word, word>;
 

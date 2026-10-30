@@ -1,1 +1,3 @@
+pragma solcore;
+
 function ok() {}

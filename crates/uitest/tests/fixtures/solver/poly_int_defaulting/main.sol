@@ -1,3 +1,5 @@
+pragma solcore;
+
 function poly<a>(x: a) returns (a) where a: Int {
     return x;
 }

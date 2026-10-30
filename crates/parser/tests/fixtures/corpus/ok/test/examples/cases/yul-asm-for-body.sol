@@ -1,3 +1,5 @@
+pragma solcore;
+
 import * from std;
 
 function yul_asm_for_body() {

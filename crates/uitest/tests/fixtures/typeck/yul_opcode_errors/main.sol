@@ -1,3 +1,5 @@
+pragma solcore;
+
 function badYul() returns (word) {
     let x: word;
     assembly {

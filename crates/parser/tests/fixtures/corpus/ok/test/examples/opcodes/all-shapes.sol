@@ -1,3 +1,5 @@
+pragma solcore;
+
 import * from std.opcodes;
 
 // Compilation test for the std/opcodes wrappers.

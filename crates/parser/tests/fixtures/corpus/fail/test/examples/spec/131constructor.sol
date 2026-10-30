@@ -1,3 +1,5 @@
+pragma solcore;
+
 // test constructor
 
 contract Counter {

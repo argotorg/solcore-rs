@@ -1,1 +1,3 @@
+pragma solcore;
+
 enum Choice { Choice, Other } function main(input: (Choice, word)) returns (word) { match (input) { case ((value, other)) { return 7; } default { return 9; } } }

@@ -4,12 +4,13 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/nameres/glob_shadow_local/main.sol
 ---
 error[SC0108]: duplicate declaration `value` in term namespace
- --> /main/main.sol:3:10
+ --> /main/main.sol:5:10
   |
-1 | import * from lib;
-  | ------------------ previous declaration
 2 |
-3 | function value(x: word) returns (word) {
+3 | import * from lib;
+  | ------------------ previous declaration
+4 |
+5 | function value(x: word) returns (word) {
   |          ^^^^^ duplicate declaration
-4 |     return x;
+6 |     return x;
   |

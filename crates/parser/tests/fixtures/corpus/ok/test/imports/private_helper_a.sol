@@ -1,3 +1,5 @@
+pragma solcore;
+
 export { foo };
 
 function helper(x: word) returns (word) {

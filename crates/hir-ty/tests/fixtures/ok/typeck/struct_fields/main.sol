@@ -1,3 +1,5 @@
+pragma solcore;
+
 // Solidity-style structs: named fields accessed via dot notation.
 //
 // A `struct` is represented internally as a single-constructor product; the

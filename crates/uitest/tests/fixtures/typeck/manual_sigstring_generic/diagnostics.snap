@@ -8,17 +8,17 @@ error[SC0218]: Overlapping impls are not supported
                a: SigString
                overlaps with:
                uint256: SigString
-  --> /main/main.sol:4:9
+  --> /main/main.sol:6:9
    |
- 3 |
- 4 | impl<a> SigString<a> {
+ 5 |
+ 6 | impl<a> SigString<a> {
    |         ^^^^^^^^^^^^ overlapping impl
- 5 |     function sigStr(p: Proxy<a>) returns (string) {
+ 7 |     function sigStr(p: Proxy<a>) returns (string) {
    |
-  ::: /std/dispatch.sol:60
+  ::: /std/dispatch.sol:62
    |
-60 |
-61 | impl SigString<uint256> {
+62 |
+63 | impl SigString<uint256> {
    |      ------------------ previous overlapping impl
-62 |     function sigStr(x: Proxy<uint256>) returns (string) {
+64 |     function sigStr(x: Proxy<uint256>) returns (string) {
    |

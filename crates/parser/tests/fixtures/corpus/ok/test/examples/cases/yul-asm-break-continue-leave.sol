@@ -1,3 +1,5 @@
+pragma solcore;
+
 import * from std;
 
 function yul_asm_break_continue_leave() {

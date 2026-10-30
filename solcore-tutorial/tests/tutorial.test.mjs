@@ -19,7 +19,7 @@ async function fixture(t, chapter) {
   await writeFile(join(source, "SUMMARY.md"), "# Summary\n\n- [Hello](hello.md)\n");
   await writeFile(join(source, "hello.md"), chapter);
   await writeFile(join(examples, "catalog.json"), JSON.stringify([entry]));
-  await writeFile(join(examples, "hello/greetings/Hello.sol"), "function main() returns (word) { return 42; }\n");
+  await writeFile(join(examples, "hello/greetings/Hello.sol"), "pragma solcore;\nfunction main() returns (word) { return 42; }\n");
   return root;
 }
 
@@ -71,8 +71,8 @@ test("tutorial links accept function signatures and check reference and HTML lin
 
 test("source listings must be owned by a tested tutorial project", async (t) => {
   const root = await fixture(t, "```sol\n{{#include ../../Playground.sol}}\n```\n\n```solidity\n{{#include ../../copied-source.txt}}\n```\n");
-  await writeFile(join(root, "Playground.sol"), "function main() returns (word) { return 42; }\n");
-  await writeFile(join(root, "copied-source.txt"), "function main() returns (word) { return 42; }\n");
+  await writeFile(join(root, "Playground.sol"), "pragma solcore;\nfunction main() returns (word) { return 42; }\n");
+  await writeFile(join(root, "copied-source.txt"), "pragma solcore;\nfunction main() returns (word) { return 42; }\n");
   const errors = await checkTutorial({ root });
   assert.equal(errors.length, 2, errors.join("\n"));
   assert.ok(errors.every((error) => error.includes("not owned and tested by the tutorial")));

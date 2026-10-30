@@ -1,3 +1,5 @@
+pragma solcore;
+
 contract Unit {
     function one(x: ()) public returns (word) {
         return 1;

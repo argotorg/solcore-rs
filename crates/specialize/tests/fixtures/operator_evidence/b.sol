@@ -1,3 +1,5 @@
+pragma solcore;
+
 import * from base;
 export { directB, genericB, explicitB };
 impl Phantom<word, bool> {

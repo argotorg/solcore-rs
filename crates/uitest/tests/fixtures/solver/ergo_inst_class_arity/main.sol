@@ -1,3 +1,5 @@
+pragma solcore;
+
 trait Rel<a, b> {
     function rel(x: a, y: b) returns (word);
 }

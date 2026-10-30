@@ -4,9 +4,11 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/parse/struct_field_missing_semicolon/main.sol
 ---
 error[SC0001]: parse error: unexpected `}`
- --> /main/main.sol:1:24
+ --> /main/main.sol:3:24
   |
-1 | struct Point { x: word }
+1 | pragma solcore;
+2 |
+3 | struct Point { x: word }
   |                        ^ unexpected token
   |
   = note: expecting `.`, `;`, or `<`

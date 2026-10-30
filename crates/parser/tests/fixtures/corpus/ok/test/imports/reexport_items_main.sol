@@ -1,3 +1,5 @@
+pragma solcore;
+
 import { unwrap, Wrap } from reexport_items.pkg.api;
 
 function main() returns (word) {

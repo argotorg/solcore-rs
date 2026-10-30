@@ -1,3 +1,5 @@
+pragma solcore;
+
 import std;
 
 trait FromLit<a, b> {

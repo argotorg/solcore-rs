@@ -1,3 +1,5 @@
+pragma solcore;
+
 // Same test but with pragma to disable bound variable check
 // This SHOULD PASS
 

@@ -4,22 +4,22 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/struct_opaque_field/main.sol
 ---
 error[SC0205]: cannot resolve field `value`
- --> /main/main.sol:5:18
+ --> /main/main.sol:7:18
   |
-4 | function read(value: Opaque) returns (word) {
-5 |     return value.value;
+6 | function read(value: Opaque) returns (word) {
+7 |     return value.value;
   |                  ^^^^^ unknown field
-6 | }
+8 | }
   |
   = help: check that the receiver has this field or constructor path
 ---
 
 error[SC0205]: cannot resolve field `value`
-  --> /main/main.sol:9:29
+  --> /main/main.sol:11:29
    |
- 8 | function main() returns (word) {
- 9 |     return API.makeSecret().value;
+10 | function main() returns (word) {
+11 |     return API.makeSecret().value;
    |                             ^^^^^ unknown field
-10 | }
+12 | }
    |
    = help: check that the receiver has this field or constructor path

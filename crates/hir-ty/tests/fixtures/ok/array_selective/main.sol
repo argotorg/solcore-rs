@@ -1,3 +1,5 @@
+pragma solcore;
+
 import { memory, DynArray, uint256, Typedef, ridx } from std;
 
 contract ArraySelectiveImport {

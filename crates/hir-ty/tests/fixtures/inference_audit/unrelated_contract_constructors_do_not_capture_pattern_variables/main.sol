@@ -1,3 +1,5 @@
+pragma solcore;
+
 contract Other {
     enum Hidden {
         value

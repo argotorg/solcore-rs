@@ -351,7 +351,7 @@ mod tests {
 
     #[test]
     fn plain_main_returns_a_word_without_deployment() {
-        let result = run_source("function main() returns (word) { return 42; }");
+        let result = run_source("pragma solcore; function main() returns (word) { return 42; }");
         assert_eq!(result.status, RunStatus::Success, "{result:?}");
         assert_eq!(result.return_word.as_deref(), Some("42"));
         assert!(result.gas_used > 21_000);
@@ -362,6 +362,7 @@ mod tests {
     fn a_helper_with_main_in_its_name_is_not_the_entry() {
         let result = run_source(
             r#"
+pragma solcore;
 function a_main_helper() returns (word) {
     let value: word;
     assembly { value := sload(0) }
@@ -381,7 +382,7 @@ function main() returns (word) {
     #[test]
     fn default_contract_example_returns_42() {
         let result = run_source(
-            "import * from std; import * from std.dispatch; contract Answer { function main() public returns (uint256) { return uint256(42); } }",
+            "pragma solcore; import * from std; import * from std.dispatch; contract Answer { function main() public returns (uint256) { return uint256(42); } }",
         );
         assert_eq!(result.status, RunStatus::Success, "{result:?}");
         assert_eq!(result.return_word.as_deref(), Some("42"));
@@ -403,6 +404,7 @@ function main() returns (word) {
     fn contract_runtime_main_receives_empty_calldata() {
         let result = run_source(
             r#"
+pragma solcore;
 import * from std;
 import * from std.dispatch;
 contract Input {
@@ -421,6 +423,7 @@ contract Input {
     #[test]
     fn contract_constructor_runs_and_each_run_has_fresh_storage() {
         let source = r#"
+pragma solcore;
 import * from std;
 import * from std.dispatch;
 contract Counter {
@@ -443,11 +446,11 @@ contract Counter {
     #[test]
     fn missing_or_parameterized_main_is_not_silently_executed() {
         for source in [
-            "function helper() returns (word) { return 42; }",
-            "function main() { return (); }",
-            "function main(x: word) returns (word) { return x; }",
-            "import * from std; import * from std.dispatch; contract C { function answer() public returns (uint256) { return uint256(42); } }",
-            "import * from std; import * from std.dispatch; contract C { constructor(x: uint256) {} function main() public returns (uint256) { return uint256(42); } }",
+            "pragma solcore; function helper() returns (word) { return 42; }",
+            "pragma solcore; function main() { return (); }",
+            "pragma solcore; function main(x: word) returns (word) { return x; }",
+            "pragma solcore; import * from std; import * from std.dispatch; contract C { function answer() public returns (uint256) { return uint256(42); } }",
+            "pragma solcore; import * from std; import * from std.dispatch; contract C { constructor(x: uint256) {} function main() public returns (uint256) { return uint256(42); } }",
         ] {
             let result = run_source(source);
             assert_eq!(result.status, RunStatus::Error, "{result:?}");
@@ -460,7 +463,8 @@ contract Counter {
         let result = run_impl(CompileInput {
             files: vec![FileInput {
                 path: "main.sol".to_owned(),
-                content: "function main() returns (word) { return missing; }".to_owned(),
+                content: "pragma solcore; function main() returns (word) { return missing; }"
+                    .to_owned(),
             }],
             entry: "main.sol".to_owned(),
             options: Options::for_tests(),

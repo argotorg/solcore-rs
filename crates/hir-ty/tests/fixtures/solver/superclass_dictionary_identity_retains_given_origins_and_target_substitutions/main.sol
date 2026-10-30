@@ -1,3 +1,5 @@
+pragma solcore;
+
 trait A<a, r> {}
 trait B<a, r> where a: A<r> {}
 trait C<a, r> where a: A<r> {}

@@ -1,3 +1,5 @@
+pragma solcore;
+
 import selfcycle;
 
 function main() returns (word) {

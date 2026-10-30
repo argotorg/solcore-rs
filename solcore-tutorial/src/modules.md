@@ -17,6 +17,8 @@ Select `option.sol` in the file list.
 {{#include ../examples/option/option.sol}}
 ```
 
+Like every Solcore source file, the module begins with `pragma solcore;`.
+
 The `a` in `Option<a>` is a type parameter.
 For `Option<uint256>`, `Some` carries an integer and `None` carries no value.
 `unwrapOr<a>` is a generic function: its control flow works for different choices of `a`.

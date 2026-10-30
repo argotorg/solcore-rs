@@ -1203,7 +1203,7 @@ mod tests {
 
     #[test]
     fn hovers_integer_literal_type() {
-        let source = "function main() returns (word) {\n  return 42;\n}\n";
+        let source = "pragma solcore;\nfunction main() returns (word) {\n  return 42;\n}\n";
         let (world, uri) = world_with_main(source);
         let literal_offset = source.find("42").expect("literal");
 
@@ -1227,7 +1227,7 @@ mod tests {
 
     #[test]
     fn function_and_parameter_references_show_signatures_and_identifier_ranges() {
-        let source = "// Returns its input.\nfunction id(x: word) returns (word) {\n  return x;\n}\n\nfunction main() returns (word) {\n  return id(42);\n}\n";
+        let source = "pragma solcore;\n// Returns its input.\nfunction id(x: word) returns (word) {\n  return x;\n}\n\nfunction main() returns (word) {\n  return id(42);\n}\n";
         let (world, uri) = world_with_main(source);
         let line_index = world.line_index(&uri).expect("line index");
 
@@ -1258,7 +1258,7 @@ mod tests {
 
     #[test]
     fn inferred_local_reference_hover_uses_local_name_range() {
-        let source = "function main() returns (word) {\n  let result = 42;\n  return result;\n}\n";
+        let source = "pragma solcore;\nfunction main() returns (word) {\n  let result = 42;\n  return result;\n}\n";
         let (world, uri) = world_with_main(source);
         let line_index = world.line_index(&uri).expect("line index");
         let reference = source.rfind("result").expect("local reference");
@@ -1278,7 +1278,7 @@ mod tests {
 
     #[test]
     fn type_and_constructor_references_have_rich_hover_and_leaf_ranges() {
-        let source = "enum Maybe {None , Some(word)}\n\nfunction main() returns (Maybe) {\n  return Maybe.Some(42);\n}\n";
+        let source = "pragma solcore;\nenum Maybe {None , Some(word)}\n\nfunction main() returns (Maybe) {\n  return Maybe.Some(42);\n}\n";
         let (world, uri) = world_with_main(source);
         let line_index = world.line_index(&uri).expect("line index");
 

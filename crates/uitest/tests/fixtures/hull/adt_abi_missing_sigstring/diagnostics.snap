@@ -4,32 +4,32 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/hull/adt_abi_missing_sigstring/main.sol
 ---
 error[SC0401]: cannot specialize expression: type is not concrete
-  --> /main/main.sol:12:12
+  --> /main/main.sol:14:12
    |
-11 | function main() returns (word) {
-12 |     return ABIEncode.encodeInto(Choice.First(uint256(7)), 128, 0, 192);
+13 | function main() returns (word) {
+14 |     return ABIEncode.encodeInto(Choice.First(uint256(7)), 128, 0, 192);
    |            ^^^^^^^^^^^^^^^^^^^^ type must be concrete here
-13 | }
+15 | }
    |
    = note: this can happen when a constructor or expression leaves a type parameter unresolved
    = note: help: add a type annotation that fixes the concrete type
 ---
 
 error[SC0406]: missing evidence: encodeInto
-  --> /main/main.sol:12:12
+  --> /main/main.sol:14:12
    |
-11 | function main() returns (word) {
-12 |     return ABIEncode.encodeInto(Choice.First(uint256(7)), 128, 0, 192);
+13 | function main() returns (word) {
+14 |     return ABIEncode.encodeInto(Choice.First(uint256(7)), 128, 0, 192);
    |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ trait evidence required here
-13 | }
+15 | }
    |
 ---
 
 error[SC0407]: unsupported evidence: cannot generate ABIEncode.encodeInto: import std.dispatch in the ADT's defining module to make SigString visible
-  --> /main/main.sol:12:12
+  --> /main/main.sol:14:12
    |
-11 | function main() returns (word) {
-12 |     return ABIEncode.encodeInto(Choice.First(uint256(7)), 128, 0, 192);
+13 | function main() returns (word) {
+14 |     return ABIEncode.encodeInto(Choice.First(uint256(7)), 128, 0, 192);
    |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ unsupported trait evidence here
-13 | }
+15 | }
    |

@@ -1,3 +1,5 @@
+pragma solcore;
+
 import * from std;
 import { caller as caller_, callvalue as callvalue_, selfbalance, gas, call } from std.opcodes;
 import * from std.dispatch;

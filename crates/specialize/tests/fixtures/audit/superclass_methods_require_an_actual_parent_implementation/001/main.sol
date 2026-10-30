@@ -1,3 +1,5 @@
+pragma solcore;
+
 //~ specialize: loader bare
 //~ specialize: diagnostic missing-evidence
 

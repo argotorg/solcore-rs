@@ -69,12 +69,20 @@ The TextMate grammar in `vscode-solcore/syntaxes/solcore.tmLanguage.json` is
 also used by the playground. The playground embeds its own WASM compiler and
 LSP from the same release source; it does not search for a native executable.
 
+## Solcore and Solidity files
+
+Solcore and Solidity both use the `.sol` extension. A `.sol` file is Solcore
+when its first declaration is `pragma solcore;` (comments may precede it); the
+compiler requires this pragma in every source file. The editor integrations open
+only such files as Solcore and leave other `.sol` files to the editor's Solidity
+support, so the Solcore language server never runs on Solidity code.
+
 ## Language features
 
-On initialization, the native server indexes `.sol` files below every workspace
-folder. Each root has an isolated compiler namespace, and dynamic
-workspace-folder and watched-file changes keep unopened import targets and
-workspace symbols up to date.
+On initialization, the native server indexes the `.sol` files that declare
+`pragma solcore;` below every workspace folder. Each root has an isolated
+compiler namespace, and dynamic workspace-folder and watched-file changes keep
+unopened import targets and workspace symbols up to date.
 
 The top-level directory names `__solcore_workspace__` and
 `__solcore_detached__` are reserved for the server's virtual filesystem and

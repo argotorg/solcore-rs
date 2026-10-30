@@ -4,24 +4,24 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/manual_abi_decode_fixed_representation/main.sol
 ---
 error[SC0231]: constructor ABI for contract `FixedField` cannot use visible manual `ABIDecode` evidence
-  --> /main/main.sol:23:5
+  --> /main/main.sol:25:5
    |
-22 | contract FixedField {
-23 |     constructor(value: Fixed) {}
+24 | contract FixedField {
+25 |     constructor(value: Fixed) {}
    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ external ABI evidence must be compiler-owned and canonical
-24 | }
+26 | }
    |
    = note: impl `ABIDecode` can override canonical `ABIDecode` behavior
    = help: remove the visible manual ABI impl or keep this declaration out of the external ABI
 ---
 
 error[SC0231]: constructor ABI for contract `NestedParameter` cannot use visible manual `ABIDecode` evidence
-  --> /main/main.sol:27:5
+  --> /main/main.sol:29:5
    |
-26 | contract NestedParameter {
-27 |     constructor(value: Box<Wrap<word>>) {}
+28 | contract NestedParameter {
+29 |     constructor(value: Box<Wrap<word>>) {}
    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ external ABI evidence must be compiler-owned and canonical
-28 | }
+30 | }
    |
    = note: impl `ABIDecode` can override canonical `ABIDecode` behavior
    = help: remove the visible manual ABI impl or keep this declaration out of the external ABI

@@ -1,3 +1,5 @@
+pragma solcore;
+
 import { uint256, Proxy, string } from std;
 import * from std.dispatch;
 import { a, bothA, valueA } from a;

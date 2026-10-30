@@ -1,3 +1,5 @@
+pragma solcore;
+
 function fromWord<a>(x: word) returns (a) {
     let result: a;
     assembly {

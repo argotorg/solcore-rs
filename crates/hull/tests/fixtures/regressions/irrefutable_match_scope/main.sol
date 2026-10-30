@@ -1,3 +1,5 @@
+pragma solcore;
+
 //~ hull: loader memory
 
 function main() returns (word) {

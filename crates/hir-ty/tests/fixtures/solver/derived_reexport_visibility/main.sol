@@ -1,3 +1,5 @@
+pragma solcore;
+
 import { Reexported } from api;
 import { Visible } from classes;
 

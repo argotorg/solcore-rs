@@ -1,3 +1,5 @@
+pragma solcore;
+
 function foo(z: word) returns (word) {
     let f = lam (x: word, y: word) {
         return primAddWord(x, primAddWord(y, 1));

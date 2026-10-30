@@ -9,9 +9,9 @@ error[SC0212]: Coverage condition fails for trait:
                Box<a>
                does not determine:
                b
- --> /main/main.sol:6:12
+ --> /main/main.sol:8:12
   |
-4 | trait MyClass<a, b> {}
-5 |
-6 | impl<a, b> MyClass<Box<a>, b> {}
+6 | trait MyClass<a, b> {}
+7 |
+8 | impl<a, b> MyClass<Box<a>, b> {}
   |            ^^^^^^^^^^^^^^^^^^ impl head does not determine these variables

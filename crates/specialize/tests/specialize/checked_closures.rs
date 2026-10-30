@@ -4,6 +4,7 @@ use super::*;
 fn computed_closure_captures_residualize_the_factory() {
     let output = specialize_src_with_std(
         r#"
+pragma solcore;
 import * from std;
 function makeAdder(value: uint256) returns (function (uint256) returns (uint256)) {
     let incremented = value + uint256(1);
@@ -34,6 +35,7 @@ contract C {
 fn unused_factory_keeps_a_checked_operation_outside_its_capture() {
     let output = specialize_src_with_std(
         r#"
+pragma solcore;
 import * from std;
 function makeConstant(value: uint256) returns (function () returns (uint256)) {
     let unused = value + uint256(1);
@@ -82,6 +84,7 @@ fn factory_capture_scope_distinguishes_locals_from_storage() {
     ] {
         let output = specialize_src_with_std(&format!(
             r#"
+pragma solcore;
 import * from std;
 contract C {{
     count: uint256;

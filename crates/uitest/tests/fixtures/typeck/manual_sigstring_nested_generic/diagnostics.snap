@@ -4,12 +4,12 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/manual_sigstring_nested_generic/main.sol
 ---
 error[SC0231]: public function `inspect` ABI for contract `C` cannot use visible manual `SigString` evidence
-  --> /main/main.sol:17:5
+  --> /main/main.sol:19:5
    |
-16 | contract C {
-17 |     function inspect(value: Box<Box<Box<uint256>>>) public returns (uint256) {
+18 | contract C {
+19 |     function inspect(value: Box<Box<Box<uint256>>>) public returns (uint256) {
    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ external ABI evidence must be compiler-owned and canonical
-18 |         return uint256(7);
+20 |         return uint256(7);
    |
    = note: impl `SigString` can override canonical `SigString` behavior
    = help: remove the visible manual ABI impl or keep this declaration out of the external ABI

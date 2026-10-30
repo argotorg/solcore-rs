@@ -1,3 +1,5 @@
+pragma solcore;
+
 // v4: Simplified Member AccessProxy (no Proxy(offset))
 // variables holding field MAPs
 

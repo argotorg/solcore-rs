@@ -1,3 +1,5 @@
+pragma solcore;
+
 import cycleA;
 export { fromCycleB };
 export cycleA.{ fromCycleA };

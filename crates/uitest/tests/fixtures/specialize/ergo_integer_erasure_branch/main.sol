@@ -1,3 +1,5 @@
+pragma solcore;
+
 // integer value that survives to runtime because it is chosen by a runtime
 // branch: the comptime evaluator cannot fold sload, so the integer inside
 // Box cannot be erased.  Judge cascade volume and span quality.

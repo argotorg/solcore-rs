@@ -1,3 +1,5 @@
+pragma solcore;
+
 // Minimal test for bound variable condition
 // This SHOULD FAIL - variable 'bad' in context but not in instance head
 

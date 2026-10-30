@@ -1,3 +1,5 @@
+pragma solcore;
+
 enum P<a> {
     Mk(a)
 }

@@ -1,3 +1,5 @@
+pragma solcore;
+
 import { valu } from util;
 
 function main() returns (word) {

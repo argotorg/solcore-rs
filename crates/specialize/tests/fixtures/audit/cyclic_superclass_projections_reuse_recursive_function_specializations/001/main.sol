@@ -1,3 +1,5 @@
+pragma solcore;
+
 //~ specialize: loader bare
 
 trait Parent<t> where t: Child {

@@ -4,12 +4,12 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/ergo_assign_mismatch/main.sol
 ---
 error[SC0201]: type mismatch: expected word, found bool
- --> /main/main.sol:3:9
+ --> /main/main.sol:5:9
   |
-2 |     let x: word = 1;
-3 |     x = true;
+4 |     let x: word = 1;
+5 |     x = true;
   |         ^^^^ expression has mismatched type
-4 |     return x;
+6 |     return x;
   |
   = note: expected type: word
   = note: found type: bool

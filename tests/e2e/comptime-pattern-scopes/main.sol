@@ -1,3 +1,5 @@
+pragma solcore;
+
 //~ specialize: loader fixture
 
 import * from std;

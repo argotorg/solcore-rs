@@ -773,6 +773,7 @@ mod tests {
     #[test]
     fn test_contract_snippet() {
         let input = r#"
+            pragma solcore;
             contract Foo {
                 function bar() returns (u256) {
                     let x = 0x1234;
@@ -785,6 +786,9 @@ mod tests {
         assert_eq!(
             tokens,
             vec![
+                Token::Pragma,
+                Token::Ident("solcore"),
+                Token::Semi,
                 Token::Contract,
                 Token::Ident("Foo"),
                 Token::LBrace,

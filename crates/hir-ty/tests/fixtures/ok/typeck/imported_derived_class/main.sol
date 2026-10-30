@@ -1,3 +1,5 @@
+pragma solcore;
+
 import { Marker, Box, Phantom } from lib;
 
 // The derived instance is declared in an imported module and recursively

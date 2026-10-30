@@ -1,3 +1,5 @@
+pragma solcore;
+
 // Tests that both Template A and Template B fire when the class has methods in
 // both directions.  Both should discover the same binding rep=word; the second
 // application is idempotent (extSpSubst with the same binding is a no-op).

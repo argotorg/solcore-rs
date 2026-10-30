@@ -221,7 +221,7 @@ mod tests {
 
     #[test]
     fn document_symbols_include_top_level_items_and_contract_children() {
-        let source = "function foo(x: word) returns (word) {\n  return x;\n}\n\ntype Pair = pair<word, word>;\n\nenum Maybe {None , Some(word)}\n\ncontract Box {\n  item: word;\n  function get() returns (word) {\n    return item;\n  }\n}\n";
+        let source = "pragma solcore;\nfunction foo(x: word) returns (word) {\n  return x;\n}\n\ntype Pair = pair<word, word>;\n\nenum Maybe {None , Some(word)}\n\ncontract Box {\n  item: word;\n  function get() returns (word) {\n    return item;\n  }\n}\n";
         let (world, uri) = world_with_main(source);
         let response = handle_document_symbol(&world, &uri).expect("symbols");
         let DocumentSymbolResponse::Nested(symbols) = response else {

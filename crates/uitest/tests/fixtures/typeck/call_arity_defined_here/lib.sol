@@ -1,3 +1,5 @@
+pragma solcore;
+
 export { id };
 
 function id(x: word) returns (word) {

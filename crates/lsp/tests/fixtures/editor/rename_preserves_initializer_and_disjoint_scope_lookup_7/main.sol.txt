@@ -1,1 +1,3 @@
+pragma solcore;
+
 function main(value: word) returns (word) { match (7) { case (renamed) { assembly { pop(renamed) } } } return value; }

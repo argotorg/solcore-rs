@@ -1,3 +1,5 @@
+pragma solcore;
+
 function id_ct(x: word) returns (comptime<word>) {
     return x;
 }

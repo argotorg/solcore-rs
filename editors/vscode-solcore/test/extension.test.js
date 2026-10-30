@@ -5,15 +5,23 @@ const Module = require("node:module");
 const path = require("node:path");
 const test = require("node:test");
 
-function loadExtension({ startResults = [Promise.resolve()], trusted = true } = {}) {
+function loadExtension({
+  startResults = [Promise.resolve()],
+  trusted = true,
+  documents = [],
+  languages = ["solcore", "plaintext"],
+} = {}) {
   let compilerPath = "/installed/solcore";
   let trustListener;
   let configuredPath = "";
   let configurationListener;
+  let openListener;
+  let saveListener;
   const errors = [];
   const executedCommands = [];
   const output = [];
   const clients = [];
+  const languageChanges = [];
 
   class FakeLanguageClient {
     constructor(_id, _name, serverOptions) {
@@ -57,8 +65,27 @@ function loadExtension({ startResults = [Promise.resolve()], trusted = true } = 
         return Promise.resolve("Open Settings");
       },
     },
+    languages: {
+      getLanguages() {
+        return Promise.resolve(languages);
+      },
+      setTextDocumentLanguage(document, languageId) {
+        languageChanges.push([document.uri.path, languageId]);
+        document.languageId = languageId;
+        return Promise.resolve(document);
+      },
+    },
     workspace: {
       isTrusted: trusted,
+      textDocuments: documents,
+      onDidOpenTextDocument(listener) {
+        openListener = listener;
+        return { dispose() {} };
+      },
+      onDidSaveTextDocument(listener) {
+        saveListener = listener;
+        return { dispose() {} };
+      },
       onDidGrantWorkspaceTrust(listener) {
         trustListener = listener;
         return { dispose() {} };
@@ -104,7 +131,14 @@ function loadExtension({ startResults = [Promise.resolve()], trusted = true } = 
     errors,
     executedCommands,
     extension,
+    languageChanges,
     output,
+    open(document) {
+      openListener(document);
+    },
+    save(document) {
+      saveListener(document);
+    },
     grantTrust() {
       vscode.workspace.isTrusted = true;
       trustListener();
@@ -129,6 +163,62 @@ function loadExtension({ startResults = [Promise.resolve()], trusted = true } = 
 function context() {
   return { subscriptions: [] };
 }
+
+function document(path, text, languageId) {
+  return {
+    uri: { scheme: "file", path },
+    languageId,
+    text,
+    getText() {
+      return this.text;
+    },
+  };
+}
+
+function settled() {
+  return new Promise((resolve) => setImmediate(resolve));
+}
+
+test("sol files are Solcore exactly when they declare pragma solcore", async () => {
+  const harness = loadExtension({ languages: ["solcore", "solidity", "plaintext"] });
+  harness.extension.activate(context());
+  harness.open(document("/w/a.sol", "// header\npragma solcore;\n", "solidity"));
+  harness.open(document("/w/b.sol", "pragma solidity ^0.8.0;\n", "solcore"));
+  harness.open(document("/w/c.sol", "pragma solcore;\n", "solcore"));
+  harness.open(document("/w/d.sol", "pragma solidity ^0.8.0;\n", "solidity"));
+  harness.open(document("/w/notes.txt", "pragma solcore;\n", "plaintext"));
+  await settled();
+  await harness.extension.deactivate();
+
+  assert.deepEqual(harness.languageChanges, [
+    ["/w/a.sol", "solcore"],
+    ["/w/b.sol", "solidity"],
+  ]);
+});
+
+test("without a Solidity extension other sol files become plain text", async () => {
+  const harness = loadExtension({
+    documents: [document("/w/token.sol", "contract Token {}\n", "solcore")],
+  });
+  harness.extension.activate(context());
+  await settled();
+  await harness.extension.deactivate();
+
+  assert.deepEqual(harness.languageChanges, [["/w/token.sol", "plaintext"]]);
+});
+
+test("saving a file that now declares the pragma makes it Solcore", async () => {
+  const harness = loadExtension();
+  harness.extension.activate(context());
+  const created = document("/w/new.sol", "", "plaintext");
+  harness.open(created);
+  created.text = "pragma solcore;\n";
+  harness.save(created);
+  await settled();
+  await harness.extension.deactivate();
+
+  assert.deepEqual(harness.languageChanges, [["/w/new.sol", "solcore"]]);
+});
 
 test("spawn failure explains how to configure the server executable", async () => {
   const harness = loadExtension({

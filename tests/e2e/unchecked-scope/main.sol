@@ -1,3 +1,5 @@
+pragma solcore;
+
 // `unchecked { ... }` is lexical: only operators written directly inside the
 // block wrap. Operators after the block, in called functions, and in lambda
 // bodies written inside the block stay checked and revert with Panic(0x11).

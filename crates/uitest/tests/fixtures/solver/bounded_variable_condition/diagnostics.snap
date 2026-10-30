@@ -4,9 +4,9 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/solver/bounded_variable_condition/main.sol
 ---
 error[SC0214]: Bounded variable condition fails!
- --> /main/main.sol:7:12
+ --> /main/main.sol:9:12
   |
-5 | trait Container<a, b> {}
-6 |
-7 | impl<a, c> Container<Box<a>, a> where c: Eq {}
+7 | trait Container<a, b> {}
+8 |
+9 | impl<a, c> Container<Box<a>, a> where c: Eq {}
   |            ^^^^^^^^^^^^^^^^^^^^ impl head is missing context variables

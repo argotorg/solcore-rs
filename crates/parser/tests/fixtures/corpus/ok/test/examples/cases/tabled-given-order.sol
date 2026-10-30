@@ -1,3 +1,5 @@
+pragma solcore;
+
 pragma no-patterson-condition C;
 
 trait A<a> {}

@@ -1,3 +1,5 @@
+pragma solcore;
+
 import vault;
 
 function main() returns (word) {

@@ -1,3 +1,5 @@
+pragma solcore;
+
 import * as MathApi from @extlib.math.api;
 
 function main() returns (word) {

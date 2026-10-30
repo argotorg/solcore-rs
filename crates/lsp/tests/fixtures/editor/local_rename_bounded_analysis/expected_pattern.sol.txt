@@ -1,3 +1,5 @@
+pragma solcore;
+
 function unrelated0(value: word) returns (word) { return value; }
 function unrelated1(value: word) returns (word) { return value; }
 function unrelated2(value: word) returns (word) { return value; }

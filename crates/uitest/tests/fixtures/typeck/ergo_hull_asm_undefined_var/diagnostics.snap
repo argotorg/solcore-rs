@@ -4,10 +4,10 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/ergo_hull_asm_undefined_var/main.sol
 ---
 error[SC0211]: unknown Yul identifier or function: someUndefinedThing
- --> /main/main.sol:5:18
+ --> /main/main.sol:7:18
   |
-4 |         assembly {
-5 |             x := someUndefinedThing
+6 |         assembly {
+7 |             x := someUndefinedThing
   |                  ^^^^^^^^^^^^^^^^^^ unknown Yul name
-6 |         }
+8 |         }
   |

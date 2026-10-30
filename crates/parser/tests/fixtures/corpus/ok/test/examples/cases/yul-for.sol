@@ -1,3 +1,5 @@
+pragma solcore;
+
 contract YulFor {
     function main() public returns (word) {
         let loopStart: word = 128;

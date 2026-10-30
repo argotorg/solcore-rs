@@ -8,35 +8,35 @@ error[SC0218]: Overlapping impls are not supported
                DispatchNameTy_C_hello: SigString
                overlaps with:
                DispatchNameTy_C_hello: SigString
-  --> /main/main.sol:4:6
+  --> /main/main.sol:6:6
    |
- 3 |
- 4 | impl SigString<DispatchNameTy_C_hello> {
+ 5 |
+ 6 | impl SigString<DispatchNameTy_C_hello> {
    |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ overlapping impl
- 5 |     function sigStr(p: Proxy<DispatchNameTy_C_hello>) returns (string) {
+ 7 |     function sigStr(p: Proxy<DispatchNameTy_C_hello>) returns (string) {
 ...
-10 | contract C {
-11 |     function hello() public returns (uint256) {
+12 | contract C {
+13 |     function hello() public returns (uint256) {
    |     ----------------------------------------- previous overlapping impl
-12 |         return uint256(7);
+14 |         return uint256(7);
    |
 ---
 
 error[SC0103]: undefined type constructor: DispatchNameTy_C_hello
- --> /main/main.sol:4:16
+ --> /main/main.sol:6:16
   |
-3 |
-4 | impl SigString<DispatchNameTy_C_hello> {
+5 |
+6 | impl SigString<DispatchNameTy_C_hello> {
   |                ^^^^^^^^^^^^^^^^^^^^^^ undefined type constructor
-5 |     function sigStr(p: Proxy<DispatchNameTy_C_hello>) returns (string) {
+7 |     function sigStr(p: Proxy<DispatchNameTy_C_hello>) returns (string) {
   |
 ---
 
 error[SC0103]: undefined type constructor: DispatchNameTy_C_hello
- --> /main/main.sol:5:30
+ --> /main/main.sol:7:30
   |
-4 | impl SigString<DispatchNameTy_C_hello> {
-5 |     function sigStr(p: Proxy<DispatchNameTy_C_hello>) returns (string) {
+6 | impl SigString<DispatchNameTy_C_hello> {
+7 |     function sigStr(p: Proxy<DispatchNameTy_C_hello>) returns (string) {
   |                              ^^^^^^^^^^^^^^^^^^^^^^ undefined type constructor
-6 |         return "changed";
+8 |         return "changed";
   |

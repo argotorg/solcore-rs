@@ -1,3 +1,5 @@
+pragma solcore;
+
 // Exercises std.signed and std.unsigned semantics. Each function returns the raw
 // two's-complement word (via Typedef.rep) so the harness can check exact values.
 import * from std;

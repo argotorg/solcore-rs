@@ -1,2 +1,4 @@
+pragma solcore;
+
 enum Option { Some(word), None }
 export {Option(Some)};

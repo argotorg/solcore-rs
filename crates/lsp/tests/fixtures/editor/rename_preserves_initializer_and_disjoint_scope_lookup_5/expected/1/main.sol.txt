@@ -1,1 +1,3 @@
+pragma solcore;
+
 function main(renamed: word) returns (word) { assembly { pop(renamed) } let renamed: word = 7; return renamed; }

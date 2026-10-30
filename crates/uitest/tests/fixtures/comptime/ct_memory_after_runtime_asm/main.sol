@@ -1,3 +1,5 @@
+pragma solcore;
+
 function storeLoad(x: word) returns (word) {
     let result: word;
     assembly {

@@ -1,3 +1,5 @@
+pragma solcore;
+
 function main(flag: bool) returns (word) {
     let outer: word = 1;
     if (flag) {

@@ -4,22 +4,22 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/shorthand_constructor_ambiguous/main.sol
 ---
 error[SC0108]: duplicate declaration `Choice.Same` in term namespace
- --> /main/main.sol:3:5
+ --> /main/main.sol:5:5
   |
-1 | enum Choice {
-2 |     Same(word),
+3 | enum Choice {
+4 |     Same(word),
   |     ---- previous declaration
-3 |     Same(bool)
+5 |     Same(bool)
   |     ^^^^ duplicate declaration
-4 | }
+6 | }
   |
 ---
 
 error[SC0224]: cannot resolve shorthand constructor `.Same`: ambiguous candidates: Same, Same
- --> /main/main.sol:7:12
-  |
-6 | function ambiguous() returns (Choice) {
-7 |     return .Same(1);
-  |            ^^^^^^^^ shorthand constructor
-8 | }
-  |
+  --> /main/main.sol:9:12
+   |
+ 8 | function ambiguous() returns (Choice) {
+ 9 |     return .Same(1);
+   |            ^^^^^^^^ shorthand constructor
+10 | }
+   |

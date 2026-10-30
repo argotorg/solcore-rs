@@ -1002,16 +1002,17 @@ mod tests {
 
     #[test]
     fn fork_preserves_virtual_roots_overlays_and_entry_without_sharing_mutations() {
-        let source = "import * from @math.lib; import * from std; function main() returns (word) { return answer(); }";
+        let source = "pragma solcore; import * from @math.lib; import * from std; function main() returns (word) { return answer(); }";
         let mut original = workspace_with_main(source);
         original.set_external_file(
             "math",
             "lib.sol",
-            "export {answer}; function answer() returns (word) { return 42; }".to_owned(),
+            "pragma solcore; export {answer}; function answer() returns (word) { return 42; }"
+                .to_owned(),
         );
         original.db_mut().set_virtual_file(
             "/std/lib.sol",
-            "function custom() returns (word) { return 7; }".to_owned(),
+            "pragma solcore; function custom() returns (word) { return 7; }".to_owned(),
         );
         let missing = original
             .db_mut()
@@ -1027,7 +1028,10 @@ mod tests {
             assert_eq!(copied.content(fork.db()), file.content(original.db()));
         }
 
-        fork.set_file("main.sol", "function changed() {}".to_owned());
+        fork.set_file(
+            "main.sol",
+            "pragma solcore; function changed() {}".to_owned(),
+        );
         fork.remove_external_file("math", "lib.sol");
         assert_eq!(
             original
@@ -1100,7 +1104,7 @@ mod tests {
 
     #[test]
     fn main_only_clean_program_has_driver_ordered_diagnostics() {
-        let source = "function main() returns (word) {\n  return 1;\n}\n";
+        let source = "pragma solcore;\nfunction main() returns (word) {\n  return 1;\n}\n";
         let workspace = workspace_with_main(source);
 
         assert_eq!(messages(&workspace), driver_style_messages(source));
@@ -1109,7 +1113,7 @@ mod tests {
 
     #[test]
     fn owned_diagnostics_preserve_heuristic_suggestion_applicability() {
-        let source = "function value() returns (word) { return 1; }\nfunction main() returns (word) { return vaue(); }\n";
+        let source = "pragma solcore;\nfunction value() returns (word) { return 1; }\nfunction main() returns (word) { return vaue(); }\n";
         let workspace = workspace_with_main(source);
         let diagnostic = workspace
             .diagnostics()
@@ -1145,7 +1149,7 @@ mod tests {
 
     #[test]
     fn owned_diagnostics_preserve_exact_suggestion_applicability() {
-        let source = "enum Option {None , Some(word)}\nfunction main(x: word) returns (Option) { return Some(x); }\n";
+        let source = "pragma solcore;\nenum Option {None , Some(word)}\nfunction main(x: word) returns (Option) { return Some(x); }\n";
         let workspace = workspace_with_main(source);
         let diagnostic = workspace
             .diagnostics()
@@ -1181,7 +1185,7 @@ mod tests {
 
     #[test]
     fn main_only_type_error_matches_lowered_driver_messages() {
-        let source = "function f() returns (word) {\n  return true;\n}\n";
+        let source = "pragma solcore;\nfunction f() returns (word) {\n  return true;\n}\n";
         let workspace = workspace_with_main(source);
         let diagnostics = workspace.diagnostics();
 
@@ -1196,7 +1200,7 @@ mod tests {
 
     #[test]
     fn main_only_name_resolution_error_matches_lowered_driver_messages() {
-        let source = "function addOne(x: word) returns (word) {\n  return x + missingVar;\n}\n";
+        let source = "pragma solcore;\nfunction addOne(x: word) returns (word) {\n  return x + missingVar;\n}\n";
         let workspace = workspace_with_main(source);
         let diagnostics = workspace.diagnostics();
 
@@ -1222,7 +1226,7 @@ mod tests {
         // for whole-frontend analysis of the embedded standard library.
         solcore_test_utils::run_in_large_stack(|| {
             let workspace = workspace_with_main(
-                "import {addWord} from std;\n\nfunction main() returns (word) {\n  return addWord(1, 2);\n}\n",
+                "pragma solcore;\nimport {addWord} from std;\n\nfunction main() returns (word) {\n  return addWord(1, 2);\n}\n",
             );
 
             assert!(workspace.diagnostics().is_empty());
@@ -1236,11 +1240,12 @@ mod tests {
         let mut workspace = Workspace::new();
         workspace.set_file(
             "foo.sol",
-            "function value() returns (word) { return 1; }\nexport { value };\n".to_owned(),
+            "pragma solcore;\nfunction value() returns (word) { return 1; }\nexport { value };\n"
+                .to_owned(),
         );
         workspace.set_file(
             "main.sol",
-            "import {value} from foo;\nfunction main() returns (word) { return value(); }\n"
+            "pragma solcore;\nimport {value} from foo;\nfunction main() returns (word) { return value(); }\n"
                 .to_owned(),
         );
         workspace.set_entry("main.sol");
@@ -1256,13 +1261,19 @@ mod tests {
     #[test]
     fn non_sol_entry_is_not_a_module_even_when_the_file_exists() {
         let mut workspace = Workspace::new();
-        workspace.set_file("main.solc", "function main() {}\n".to_owned());
+        workspace.set_file(
+            "main.solc",
+            "pragma solcore;\nfunction main() {}\n".to_owned(),
+        );
         workspace.set_entry("main.solc");
 
         assert!(workspace.entry_module().is_none());
         assert!(workspace.raw_diagnostics().is_empty());
 
-        workspace.set_file("main.sol", "function main() {}\n".to_owned());
+        workspace.set_file(
+            "main.sol",
+            "pragma solcore;\nfunction main() {}\n".to_owned(),
+        );
         workspace.set_entry("main.sol");
         assert!(workspace.entry_module().is_some());
         assert!(workspace.raw_diagnostics().is_empty());
@@ -1273,12 +1284,12 @@ mod tests {
         let mut workspace = Workspace::new();
         workspace.set_file(
             "main.sol",
-            "import {double} from math;\n\nfunction main() returns (word) {\n  return double(21);\n}\n"
+            "pragma solcore;\nimport {double} from math;\n\nfunction main() returns (word) {\n  return double(21);\n}\n"
                 .to_owned(),
         );
         workspace.set_file(
             "math.sol",
-            "function double(x: word) returns (word) { return x; }\n\nexport { double };\n"
+            "pragma solcore;\nfunction double(x: word) returns (word) { return x; }\n\nexport { double };\n"
                 .to_owned(),
         );
         workspace.set_entry("main.sol");
@@ -1312,7 +1323,7 @@ mod tests {
 
     #[test]
     fn incremental_file_updates_reanalyze_existing_source_file() {
-        let clean = "function main() returns (word) {\n  return 1;\n}\n";
+        let clean = "pragma solcore;\nfunction main() returns (word) {\n  return 1;\n}\n";
         let mut workspace = workspace_with_main(clean);
         assert!(workspace.diagnostics().is_empty());
 
@@ -1322,7 +1333,7 @@ mod tests {
             .expect("main source file");
         workspace.set_file(
             "main.sol",
-            "function addOne(x: word) returns (word) {\n  return x + missingVar;\n}\n".to_owned(),
+            "pragma solcore;\nfunction addOne(x: word) returns (word) {\n  return x + missingVar;\n}\n".to_owned(),
         );
         let after_file = workspace
             .db()
@@ -1342,7 +1353,7 @@ mod tests {
 
     #[test]
     fn removed_virtual_file_is_revived_with_the_same_salsa_identity() {
-        let source = "function main() returns (word) { return 1; }\n";
+        let source = "pragma solcore;\nfunction main() returns (word) { return 1; }\n";
         let mut host = AnalysisHost::new();
         let path = main_path("main.sol");
         let original = host.set_virtual_file(path.clone(), source.to_owned());
@@ -1360,7 +1371,7 @@ mod tests {
 
     #[test]
     fn identical_virtual_and_workspace_updates_do_not_reexecute_queries() {
-        let source = "function main() returns (word) { return 1; }\n";
+        let source = "pragma solcore;\nfunction main() returns (word) { return 1; }\n";
         let (mut host, executed) = host_with_execution_log();
         let file = host.set_virtual_file(main_path("main.sol"), source.to_owned());
         let _ = parser::parse_file_to_hir(&host, file);
@@ -1397,18 +1408,17 @@ mod tests {
 
     #[test]
     fn incremental_diagnostics_match_a_fresh_workspace_across_batch_changes() {
-        let initial_main =
-            "import {value} from util;\nfunction main() returns (word) { return value(); }\n";
-        let initial_util = "function value() returns (word) { return 1; }\nexport { value };\n";
+        let initial_main = "pragma solcore;\nimport {value} from util;\nfunction main() returns (word) { return value(); }\n";
+        let initial_util =
+            "pragma solcore;\nfunction value() returns (word) { return 1; }\nexport { value };\n";
         let mut incremental = workspace_from_files(
             &[("main.sol", initial_main), ("util.sol", initial_util)],
             "main.sol",
         );
         assert!(incremental.diagnostics().is_empty());
 
-        let broken_main = "import {answer} from helper;\nfunction main() returns (word) { return answer(missing); }\n";
-        let broken_helper =
-            "function answer(x: bool) returns (word) { return x; }\nexport { answer };\n";
+        let broken_main = "pragma solcore;\nimport {answer} from helper;\nfunction main() returns (word) { return answer(missing); }\n";
+        let broken_helper = "pragma solcore;\nfunction answer(x: bool) returns (word) { return x; }\nexport { answer };\n";
         incremental.apply_file_changes([
             WorkspaceFileChange::Set {
                 path: "main.sol".to_owned(),
@@ -1428,9 +1438,8 @@ mod tests {
         );
         assert_eq!(incremental.diagnostics(), fresh.diagnostics());
 
-        let fixed_main = "import {answer} from helper;\nfunction main() returns (word) { return answer(true); }\n";
-        let fixed_helper =
-            "function answer(x: bool) returns (word) { return 1; }\nexport { answer };\n";
+        let fixed_main = "pragma solcore;\nimport {answer} from helper;\nfunction main() returns (word) { return answer(true); }\n";
+        let fixed_helper = "pragma solcore;\nfunction answer(x: bool) returns (word) { return 1; }\nexport { answer };\n";
         incremental.apply_file_changes([
             WorkspaceFileChange::Set {
                 path: "main.sol".to_owned(),
@@ -1455,15 +1464,15 @@ mod tests {
             &[
                 (
                     "main.sol",
-                    "import {fromA} from a;\nfunction main() returns (word) { return fromA(); }\n",
+                    "pragma solcore;\nimport {fromA} from a;\nfunction main() returns (word) { return fromA(); }\n",
                 ),
                 (
                     "a.sol",
-                    "import {value} from b;\nfunction fromA() returns (word) { return value(); }\nexport { fromA };\n",
+                    "pragma solcore;\nimport {value} from b;\nfunction fromA() returns (word) { return value(); }\nexport { fromA };\n",
                 ),
                 (
                     "b.sol",
-                    "function value() returns (word) { return 42; }\nexport { value };\n",
+                    "pragma solcore;\nfunction value() returns (word) { return 42; }\nexport { value };\n",
                 ),
             ],
             "main.sol",
@@ -1502,7 +1511,7 @@ mod tests {
         let mut workspace = Workspace::new();
         workspace.set_file(
             "nested/数 学#1.sol",
-            "function value() returns (word) { return 1; }\n".to_owned(),
+            "pragma solcore;\nfunction value() returns (word) { return 1; }\n".to_owned(),
         );
 
         let file = workspace
@@ -1520,7 +1529,7 @@ mod tests {
     #[ignore = "pathology workload run by scripts/check-compile-performance.sh"]
     fn incremental_diagnostics_scaling_workload() {
         fn source(revision: usize) -> String {
-            let mut source = String::new();
+            let mut source = String::from("pragma solcore;\n");
             for index in 0..256 {
                 source.push_str(&format!(
                     "function value{index}(x: word) returns (word) {{ return x; }}\n"

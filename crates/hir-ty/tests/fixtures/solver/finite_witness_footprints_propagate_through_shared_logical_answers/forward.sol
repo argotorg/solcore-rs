@@ -1,3 +1,5 @@
+pragma solcore;
+
 trait Target<a> {}
 trait Super<a> where a: Target {}
 trait Bridge<a> {}

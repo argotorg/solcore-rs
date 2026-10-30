@@ -39,6 +39,7 @@ fn booleans_remain_valid_values_and_patterns_and_fallback_remains_an_entry_point
         &db,
         "reserved-positive",
         r#"
+pragma solcore;
 function flip(value: bool) returns (bool) {
   match (value) {
     case true { return false; }
@@ -58,18 +59,24 @@ contract C {
 #[test]
 fn reserved_values_and_entry_point_name_are_rejected_as_identifiers() {
     let cases = [
-        ("function-true", "function true() {}"),
-        ("function-false", "function false() {}"),
+        ("function-true", "pragma solcore; function true() {}"),
+        ("function-false", "pragma solcore; function false() {}"),
         (
             "ordinary-function-fallback",
-            "contract C { function fallback() {} }",
+            "pragma solcore; contract C { function fallback() {} }",
         ),
-        ("let-true", "function f() { let true = false; }"),
-        ("field-false", "contract C { false: word; }"),
-        ("parameter-fallback", "function f(fallback: word) {}"),
-        ("type-true", "function f(value: true) {}"),
-        ("import-false", "import {false} from std;"),
-        ("enum-fallback", "enum fallback { Value }"),
+        (
+            "let-true",
+            "pragma solcore; function f() { let true = false; }",
+        ),
+        ("field-false", "pragma solcore; contract C { false: word; }"),
+        (
+            "parameter-fallback",
+            "pragma solcore; function f(fallback: word) {}",
+        ),
+        ("type-true", "pragma solcore; function f(value: true) {}"),
+        ("import-false", "pragma solcore; import {false} from std;"),
+        ("enum-fallback", "pragma solcore; enum fallback { Value }"),
     ];
 
     for (name, source) in cases {

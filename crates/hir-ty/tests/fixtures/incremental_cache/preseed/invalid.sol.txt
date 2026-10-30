@@ -1,1 +1,2 @@
+pragma solcore;
 function main( {

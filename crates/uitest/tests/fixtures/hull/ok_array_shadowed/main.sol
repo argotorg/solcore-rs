@@ -1,3 +1,5 @@
+pragma solcore;
+
 import * from std hiding { arrayLitNew, arrayLitInit, storeArrayLit };
 
 function arrayLitNew() returns (word) {

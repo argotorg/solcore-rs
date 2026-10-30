@@ -1,3 +1,5 @@
+pragma solcore;
+
 contract Token {
     constructor(amount: word) payable {}
 

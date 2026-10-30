@@ -1,3 +1,5 @@
+pragma solcore;
+
 export { keep, drop };
 
 function keep(x: word) returns (word) {

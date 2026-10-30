@@ -1,3 +1,5 @@
+pragma solcore;
+
 function viaStop<a>() returns (a) {
     assembly {
         stop()

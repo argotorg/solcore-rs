@@ -1,3 +1,5 @@
+pragma solcore;
+
 function first(p: (word, word)) returns (word) {
     match (p) {
         case (a, b) {

@@ -1,3 +1,5 @@
+pragma solcore;
+
 import * from glob_amb_a;
 import * from glob_amb_b;
 

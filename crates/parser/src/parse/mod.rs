@@ -564,7 +564,7 @@ mod tests {
 
     #[test]
     fn yul_call_in_assignment_parses() {
-        let source = "function f() { assembly { res := add(x, y) } }";
+        let source = "pragma solcore; function f() { assembly { res := add(x, y) } }";
         let parsed = parse_supported_items(source);
         assert!(
             parsed.errors.is_empty(),
@@ -572,7 +572,10 @@ mod tests {
             parsed.errors
         );
         let body_span = match parsed.output.as_slice() {
-            [ParsedTopItem::Function { body_span, .. }] => *body_span,
+            [
+                ParsedTopItem::Pragma { .. },
+                ParsedTopItem::Function { body_span, .. },
+            ] => *body_span,
             other => panic!("unexpected parse output: {other:?}"),
         };
         let body = parse_body_statements(source, body_span);
@@ -846,7 +849,8 @@ mod tests {
 
     #[test]
     fn yul_only_identifiers_parse_in_full_assembly() {
-        let source = r#"function f() {
+        let source = r#"pragma solcore;
+function f() {
             assembly {
                 let _slot := $load(value$offset)
                 $slot := _slot
@@ -862,7 +866,10 @@ mod tests {
             parsed.errors
         );
         let body_span = match parsed.output.as_slice() {
-            [ParsedTopItem::Function { body_span, .. }] => *body_span,
+            [
+                ParsedTopItem::Pragma { .. },
+                ParsedTopItem::Function { body_span, .. },
+            ] => *body_span,
             other => panic!("unexpected parse output: {other:#?}"),
         };
         let body = parse_body_statements(source, body_span);
@@ -906,7 +913,7 @@ mod tests {
 
     #[test]
     fn yul_meta_diagnostic_survives_full_assembly_parsing() {
-        let source = "function f() { assembly { let value := ${templateValue} } }";
+        let source = "pragma solcore; function f() { assembly { let value := ${templateValue} } }";
         let parsed = parse_supported_items(source);
         assert!(
             parsed.errors.is_empty(),
@@ -914,7 +921,10 @@ mod tests {
             parsed.errors
         );
         let body_span = match parsed.output.as_slice() {
-            [ParsedTopItem::Function { body_span, .. }] => *body_span,
+            [
+                ParsedTopItem::Pragma { .. },
+                ParsedTopItem::Function { body_span, .. },
+            ] => *body_span,
             other => panic!("unexpected parse output: {other:#?}"),
         };
         let body = parse_body_statements(source, body_span);
@@ -1011,7 +1021,7 @@ mod tests {
 
     #[test]
     fn unicode_identifier_parses() {
-        let source = "function fλ(x: word) returns (word) { return x; }";
+        let source = "pragma solcore; function fλ(x: word) returns (word) { return x; }";
         let parsed = parse_supported_items(source);
         assert!(
             parsed.errors.is_empty(),
@@ -1020,7 +1030,7 @@ mod tests {
         );
         assert!(matches!(
             parsed.output.as_slice(),
-            [ParsedTopItem::Function { sig, .. }] if sig.name.0 == "fλ"
+            [ParsedTopItem::Pragma { .. }, ParsedTopItem::Function { sig, .. }] if sig.name.0 == "fλ"
         ));
     }
 
@@ -1098,11 +1108,12 @@ case y { return y; }
 
     #[test]
     fn import_with_alias_parses() {
-        let parsed = parse_supported_items("import * as Bits from math.bits;");
+        let parsed = parse_supported_items("pragma solcore; import * as Bits from math.bits;");
         assert!(parsed.errors.is_empty(), "errors: {:?}", parsed.errors);
 
         match parsed.output.as_slice() {
             [
+                ParsedTopItem::Pragma { .. },
                 ParsedTopItem::Import {
                     external,
                     path,
@@ -1127,11 +1138,13 @@ case y { return y; }
 
     #[test]
     fn import_with_selected_items_parses() {
-        let parsed = parse_supported_items("import {addWord, subWord} from math.words;");
+        let parsed =
+            parse_supported_items("pragma solcore; import {addWord, subWord} from math.words;");
         assert!(parsed.errors.is_empty(), "errors: {:?}", parsed.errors);
 
         match parsed.output.as_slice() {
             [
+                ParsedTopItem::Pragma { .. },
                 ParsedTopItem::Import {
                     external,
                     path,
@@ -1167,11 +1180,12 @@ case y { return y; }
 
     #[test]
     fn import_with_wildcard_and_hiding_parses() {
-        let parsed = parse_supported_items("import * from glob hiding {drop};");
+        let parsed = parse_supported_items("pragma solcore; import * from glob hiding {drop};");
         assert!(parsed.errors.is_empty(), "errors: {:?}", parsed.errors);
 
         match parsed.output.as_slice() {
             [
+                ParsedTopItem::Pragma { .. },
                 ParsedTopItem::Import {
                     selector, hiding, ..
                 },
@@ -1191,18 +1205,24 @@ case y { return y; }
 
     #[test]
     fn import_and_export_operator_names_parse() {
-        let parsed = parse_supported_items("import {pow, (^^)} from math;\nexport { f, (^^) };");
+        let parsed = parse_supported_items(
+            "pragma solcore;\nimport {pow, (^^)} from math;\nexport { f, (^^) };",
+        );
         assert!(parsed.errors.is_empty(), "errors: {:?}", parsed.errors);
 
         assert!(matches!(
             parsed.output.as_slice(),
-            [ParsedTopItem::Import { .. }, ParsedTopItem::Export { .. }]
+            [
+                ParsedTopItem::Pragma { .. },
+                ParsedTopItem::Import { .. },
+                ParsedTopItem::Export { .. }
+            ]
         ));
     }
 
     #[test]
     fn import_with_trailing_dot_is_rejected() {
-        let parsed = parse_supported_items("import foo.;");
+        let parsed = parse_supported_items("pragma solcore; import foo.;");
         assert!(
             !parsed.errors.is_empty(),
             "expected parse errors for invalid import"
@@ -1212,6 +1232,7 @@ case y { return y; }
     #[test]
     fn canonical_function_headers_and_return_shapes_parse() {
         let source = r#"
+pragma solcore;
 contract Box<T> {
   function one<U>(value: U) public payable returns (Option<U>) where U: Eq {
     return Option.Some(value);
@@ -1225,6 +1246,7 @@ contract Box<T> {
         assert!(parsed.errors.is_empty(), "errors: {:#?}", parsed.errors);
 
         let [
+            ParsedTopItem::Pragma { .. },
             ParsedTopItem::Contract {
                 ty_params, items, ..
             },
@@ -1281,6 +1303,7 @@ contract Box<T> {
     #[test]
     fn canonical_composite_and_function_types_parse() {
         let source = r#"
+pragma solcore;
 function useTypes(
   callback: function(word) returns (bool),
   fire: function(word),
@@ -1289,7 +1312,11 @@ function useTypes(
 "#;
         let parsed = parse_supported_items(source);
         assert!(parsed.errors.is_empty(), "errors: {:#?}", parsed.errors);
-        let [ParsedTopItem::Function { sig, .. }] = parsed.output.as_slice() else {
+        let [
+            ParsedTopItem::Pragma { .. },
+            ParsedTopItem::Function { sig, .. },
+        ] = parsed.output.as_slice()
+        else {
             panic!("unexpected parse output: {:#?}", parsed.output);
         };
 
@@ -1338,8 +1365,8 @@ function useTypes(
     #[test]
     fn generic_argument_and_where_lists_require_at_least_one_entry() {
         for source in [
-            "function value<T>(x: Box<T>) returns (T) where T: Eq { return x; }",
-            "function pair<T, U>(x: Pair<T, U>) where (T: Eq, U: Eq) {}",
+            "pragma solcore; function value<T>(x: Box<T>) returns (T) where T: Eq { return x; }",
+            "pragma solcore; function pair<T, U>(x: Pair<T, U>) where (T: Eq, U: Eq) {}",
         ] {
             let parsed = parse_supported_items(source);
             assert!(
@@ -1351,12 +1378,12 @@ function useTypes(
 
         // syntax-migration: preserve-literals-begin
         for source in [
-            "function emptyArgs(x: Box<>) {}",
-            "function emptyConstraintArgs<T>(x: T) where T: Eq<> {}",
-            "function genericMapping(x: mapping<address, word>) {}",
-            "function bareMapping(x: mapping) {}",
-            "function emptyWhere<T>(x: T) where {}",
-            "function emptyParenWhere<T>(x: T) where () {}",
+            "pragma solcore; function emptyArgs(x: Box<>) {}",
+            "pragma solcore; function emptyConstraintArgs<T>(x: T) where T: Eq<> {}",
+            "pragma solcore; function genericMapping(x: mapping<address, word>) {}",
+            "pragma solcore; function bareMapping(x: mapping) {}",
+            "pragma solcore; function emptyWhere<T>(x: T) where {}",
+            "pragma solcore; function emptyParenWhere<T>(x: T) where () {}",
         ] {
             let parsed = parse_supported_items(source);
             assert!(
@@ -1371,6 +1398,7 @@ function useTypes(
     #[test]
     fn enum_trait_and_impl_surface_lowers_to_existing_nodes() {
         let source = r#"
+pragma solcore;
 enum Option<T> { None, Some(T), }
 trait Eq<T> {
   function eq(left: T, right: T) returns (bool);
@@ -1385,6 +1413,7 @@ default impl ABIAttribs<word> {}
         assert!(matches!(
             parsed.output.as_slice(),
             [
+                ParsedTopItem::Pragma { .. },
                 ParsedTopItem::Adt { ty_params, ctors, .. },
                 ParsedTopItem::Class { type_vars, methods, .. },
                 ParsedTopItem::Instance { type_vars: impl_vars, preds, default_kw: None, .. },
@@ -1443,11 +1472,11 @@ match (left, right) {
     #[test]
     fn named_function_like_parameters_require_explicit_types() {
         for source in [
-            "function f(value) {}",
-            "function f(comptime value) {}",
-            "trait T<Self> { function f(value); }",
-            "impl T<word> { function f(value) {} }",
-            "contract C { constructor(value) {} }",
+            "pragma solcore; function f(value) {}",
+            "pragma solcore; function f(comptime value) {}",
+            "pragma solcore; trait T<Self> { function f(value); }",
+            "pragma solcore; impl T<word> { function f(value) {} }",
+            "pragma solcore; contract C { constructor(value) {} }",
         ] {
             let parsed = parse_supported_items(source);
             assert!(
@@ -1460,13 +1489,13 @@ match (left, right) {
         }
 
         let parsed = parse_supported_items(
-            "function f(value: word, comptime offset: word) returns (word) { return value; }",
+            "pragma solcore; function f(value: word, comptime offset: word) returns (word) { return value; }",
         );
         assert!(parsed.errors.is_empty(), "errors: {:#?}", parsed.errors);
 
         for source in [
-            "function f(value: comptime<word>) {}",
-            "function f(comptime value: comptime<word>) {}",
+            "pragma solcore; function f(value: comptime<word>) {}",
+            "pragma solcore; function f(comptime value: comptime<word>) {}",
         ] {
             let parsed = parse_supported_items(source);
             assert!(
@@ -1610,14 +1639,14 @@ match (left, right) {
         // spelling. Keep this list as the explicit compatibility boundary.
         // syntax-migration: preserve-literals-begin
         for source in [
-            "data Option(T) = None;",
-            "class Eq(T) {}",
-            "instance Eq: word {}",
-            "forall T. function id(x: T) -> T { return x; }",
+            "pragma solcore; data Option(T) = None;",
+            "pragma solcore; class Eq(T) {}",
+            "pragma solcore; instance Eq: word {}",
+            "pragma solcore; forall T. function id(x: T) -> T { return x; }",
             "public function exposed() -> word { return 0; }",
             "function arrowResult() -> word { return 0; }",
-            "function oldType(value: array(word)) {}",
-            "import old.module.{item};",
+            "pragma solcore; function oldType(value: array(word)) {}",
+            "pragma solcore; import old.module.{item};",
         ] {
             let parsed = parse_supported_items(source);
             assert!(

@@ -1,3 +1,5 @@
+pragma solcore;
+
 export { wrapper(wrapper), boxed(boxed) };
 
 enum wrapper {

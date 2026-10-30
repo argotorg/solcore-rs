@@ -1,3 +1,5 @@
+pragma solcore;
+
 // v5: nested struct
 // variables holding field MAPs
 

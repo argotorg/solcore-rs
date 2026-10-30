@@ -1,3 +1,5 @@
+pragma solcore;
+
 function add_(x: word, y: word) { // _add is not a legal identifier :(
     let res: word;
     assembly {

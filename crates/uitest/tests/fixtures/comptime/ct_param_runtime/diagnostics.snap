@@ -4,20 +4,20 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/comptime/ct_param_runtime/main.sol
 ---
 error[SC0406]: missing evidence: add
-  --> /main/main.sol:11:16
+  --> /main/main.sol:13:16
    |
-10 |     function double(comptime x: word) returns (comptime<word>) {
-11 |         return x + x;
+12 |     function double(comptime x: word) returns (comptime<word>) {
+13 |         return x + x;
    |                ^^^^^ trait evidence required here
-12 |     }
+14 |     }
    |
 ---
 
 error[SC0409]: comptime evaluation failed: runtime value passed to comptime parameter 'x' of 'double'
-  --> /main/main.sol:14:16
+  --> /main/main.sol:16:16
    |
-13 |     function process(value: word) returns (word) {
-14 |         return double(value);
+15 |     function process(value: word) returns (word) {
+16 |         return double(value);
    |                ^^^^^^^^^^^^^ comptime evaluation failed here
-15 |     }
+17 |     }
    |

@@ -1,3 +1,5 @@
+pragma solcore;
+
 export { LeftOpt(*) };
 
 enum LeftOpt {

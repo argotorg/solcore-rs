@@ -4,30 +4,30 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/nameres/undefined_name_namespaces/main.sol
 ---
 error[SC0103]: undefined type constructor: MissingTy
- --> /main/main.sol:1:18
+ --> /main/main.sol:3:18
   |
-1 | function f<a>(x: MissingTy) returns (word) where a: MissingClass {
+2 |
+3 | function f<a>(x: MissingTy) returns (word) where a: MissingClass {
   |                  ^^^^^^^^^ undefined type constructor
-2 |     return missingName;
-3 | }
+4 |     return missingName;
   |
 ---
 
 error[SC0105]: undefined trait: MissingClass
- --> /main/main.sol:1:53
+ --> /main/main.sol:3:53
   |
-1 | function f<a>(x: MissingTy) returns (word) where a: MissingClass {
+2 |
+3 | function f<a>(x: MissingTy) returns (word) where a: MissingClass {
   |                                                     ^^^^^^^^^^^^ undefined trait
-2 |     return missingName;
-3 | }
+4 |     return missingName;
   |
 ---
 
 error[SC0101]: undefined name: missingName
- --> /main/main.sol:2:12
+ --> /main/main.sol:4:12
   |
-1 | function f<a>(x: MissingTy) returns (word) where a: MissingClass {
-2 |     return missingName;
+3 | function f<a>(x: MissingTy) returns (word) where a: MissingClass {
+4 |     return missingName;
   |            ^^^^^^^^^^^ unknown name
-3 | }
+5 | }
   |

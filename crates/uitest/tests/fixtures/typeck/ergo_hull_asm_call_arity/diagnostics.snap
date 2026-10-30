@@ -4,12 +4,12 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/ergo_hull_asm_call_arity/main.sol
 ---
 error[SC0203]: Yul call `dbl` expects 1 argument, but 2 were provided
- --> /main/main.sol:8:18
-  |
-7 |             }
-8 |             x := dbl(1, 2)
-  |                  ^^^^^^^^^ wrong number of arguments
-9 |         }
-  |
-  = note: expected 1 argument
-  = note: found 2 arguments
+  --> /main/main.sol:10:18
+   |
+ 9 |             }
+10 |             x := dbl(1, 2)
+   |                  ^^^^^^^^^ wrong number of arguments
+11 |         }
+   |
+   = note: expected 1 argument
+   = note: found 2 arguments

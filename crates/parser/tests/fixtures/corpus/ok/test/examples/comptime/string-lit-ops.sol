@@ -1,3 +1,5 @@
+pragma solcore;
+
 import std;
 import * from std;
 pragma no-patterson-condition;

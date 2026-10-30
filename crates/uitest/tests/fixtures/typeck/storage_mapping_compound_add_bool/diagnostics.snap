@@ -4,12 +4,12 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/storage_mapping_compound_add_bool/main.sol
 ---
 error[SC0207]: cannot satisfy trait constraint: bool: Add
-  --> /main/main.sol:33:9
+  --> /main/main.sol:35:9
    |
-32 |     function f(k: word) {
-33 |         m[k] += true;
+34 |     function f(k: word) {
+35 |         m[k] += true;
    |         ^^^^^^^^^^^^ constraint originates here
-34 |     }
+36 |     }
    |
    = note: no visible impl matches `bool: Add`
    = help: add a matching impl or strengthen the surrounding type context

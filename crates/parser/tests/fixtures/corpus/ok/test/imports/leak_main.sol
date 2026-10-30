@@ -1,3 +1,5 @@
+pragma solcore;
+
 import leak_a;
 import leak_b;
 

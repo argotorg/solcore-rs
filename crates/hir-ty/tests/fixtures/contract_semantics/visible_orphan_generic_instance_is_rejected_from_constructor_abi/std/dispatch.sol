@@ -1,1 +1,1 @@
-
+pragma solcore;

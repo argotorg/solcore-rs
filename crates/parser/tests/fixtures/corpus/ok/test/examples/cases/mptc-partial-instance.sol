@@ -1,3 +1,5 @@
+pragma solcore;
+
 // Exercises the PARTIAL guard in tryResolveMPTC.
 //
 // The instance  forall a b. instance Zero:Nth((a,b), a)  has free type variables

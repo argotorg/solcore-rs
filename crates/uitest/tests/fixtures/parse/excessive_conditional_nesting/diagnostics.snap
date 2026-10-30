@@ -4,12 +4,10 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/parse/excessive_conditional_nesting/main.sol
 ---
 error[SC0001]: expression nesting exceeds the compiler limit of 128
-   --> /main/main.sol:5:5
+   --> /main/main.sol:7:5
     |
-  4 |       true ? 0 :
-  5 | /     true ? 0 :
-  6 | |     true ? 0 :
-  7 | |     true ? 0 :
+  6 |       true ? 0 :
+  7 | /     true ? 0 :
   8 | |     true ? 0 :
   9 | |     true ? 0 :
  10 | |     true ? 0 :
@@ -135,7 +133,9 @@ error[SC0001]: expression nesting exceeds the compiler limit of 128
 130 | |     true ? 0 :
 131 | |     true ? 0 :
 132 | |     true ? 0 :
-133 | |     0;
+133 | |     true ? 0 :
+134 | |     true ? 0 :
+135 | |     0;
     | |_____^
-134 |   }
+136 |   }
     |

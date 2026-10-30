@@ -1,3 +1,5 @@
+pragma solcore;
+
 function one() returns (word) {
     return primAddWord(1, zero());
 }

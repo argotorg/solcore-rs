@@ -1,3 +1,5 @@
+pragma solcore;
+
 contract C {
     function pick(x: word) returns (word) {
         match (x) {

@@ -1,3 +1,5 @@
+pragma solcore;
+
 import core.math
 function bad() {
     let x = ;

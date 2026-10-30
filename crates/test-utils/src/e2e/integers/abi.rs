@@ -15,7 +15,7 @@ pub(super) fn fixtures() -> Vec<(String, String)> {
 
 fn source(name: &str, ty: &IntegerType) -> String {
     let mut source = String::from(
-        "import * from std;\nimport * from std.signed;\nimport * from std.unsigned;\n\
+        "pragma solcore;\nimport * from std;\nimport * from std.signed;\nimport * from std.unsigned;\n\
          import * from std.dispatch;\nimport * from std.Generic;\nimport * from std.ABIGeneric;\n\
          import { mstore } from std.opcodes;\n\
          // #[scenario(\"integer_abi\")]\n// #[deploy(0x) -> success]\n",

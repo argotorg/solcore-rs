@@ -4,11 +4,11 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/parse/fallback_with_params/main.sol
 ---
 error[SC0001]: fallback function must not declare input parameters
- --> /main/main.sol:2:11
+ --> /main/main.sol:4:11
   |
-1 | contract Bad {
-2 |   fallback(x: word) {}
+3 | contract Bad {
+4 |   fallback(x: word) {}
   |           ^^^^^^^^^
-3 |
+5 |
   |
   = note: while parsing fallback definition

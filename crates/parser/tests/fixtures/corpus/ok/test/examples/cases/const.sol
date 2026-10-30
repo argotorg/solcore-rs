@@ -1,3 +1,5 @@
+pragma solcore;
+
 function constApplied(x: word, y: word) returns (word) {
     return y;
 }

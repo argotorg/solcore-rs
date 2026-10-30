@@ -319,7 +319,7 @@ mod tests {
     fn defaults_to_main_entrypoint_and_hull_stage() {
         let request = parse_request(json!({
             "language": "Solcore",
-            "sources": {"main.sol": {"content": "function main() returns (word) { return 0; }"}},
+            "sources": {"main.sol": {"content": "pragma solcore; function main() returns (word) { return 0; }"}},
         }))
         .expect("valid request");
 

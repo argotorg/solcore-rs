@@ -1,3 +1,5 @@
+pragma solcore;
+
 contract Pair {
 
     function fst(p: (word, word)) public returns (word) {

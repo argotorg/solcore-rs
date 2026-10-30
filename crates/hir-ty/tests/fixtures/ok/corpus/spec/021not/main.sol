@@ -1,3 +1,5 @@
+pragma solcore;
+
 contract Not {
     enum Bool {
         False,

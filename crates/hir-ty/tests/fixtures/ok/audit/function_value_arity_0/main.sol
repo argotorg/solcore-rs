@@ -1,3 +1,5 @@
+pragma solcore;
+
 function f() returns (word) {
     return 7;
 }

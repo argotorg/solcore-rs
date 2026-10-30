@@ -1,3 +1,5 @@
+pragma solcore;
+
 trait C<self> {
     function size(x: self) returns (word);
 }

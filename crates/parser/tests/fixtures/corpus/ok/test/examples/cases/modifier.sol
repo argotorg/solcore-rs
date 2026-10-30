@@ -1,3 +1,5 @@
+pragma solcore;
+
 contract C {
     function add(x: word, y: word) public returns (word) {
         let r: word;

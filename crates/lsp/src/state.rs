@@ -749,14 +749,17 @@ mod tests {
         let root = Url::parse("file:///project/").unwrap();
         let main = Url::parse("file:///project/main.sol").unwrap();
         let library = Url::parse("file:///project/math.sol").unwrap();
-        let saved = "function main() returns (word) { return 1; }";
-        let unsaved = "function main() returns (word) { return 2; }";
+        let saved = "pragma solcore; function main() returns (word) { return 1; }";
+        let unsaved = "pragma solcore; function main() returns (word) { return 2; }";
         let mut original = WorldState::new();
         original.load_workspace_documents(
             root,
             [
                 (main.clone(), saved.to_owned()),
-                (library.clone(), "function library() {}".to_owned()),
+                (
+                    library.clone(),
+                    "pragma solcore; function library() {}".to_owned(),
+                ),
             ],
         );
         assert!(original.open_document(main.clone(), unsaved.to_owned()));
@@ -794,8 +797,8 @@ mod tests {
     fn open_change_and_close_document() {
         let mut world = WorldState::new();
         let uri = Url::parse("file:///main/main.sol").expect("uri");
-        let clean = "function main() returns (word) {\n  return 1;\n}\n";
-        let changed = "function main() returns (word) {\n  return 2;\n}\n";
+        let clean = "pragma solcore;\nfunction main() returns (word) {\n  return 1;\n}\n";
+        let changed = "pragma solcore;\nfunction main() returns (word) {\n  return 2;\n}\n";
 
         assert!(world.open_document(uri.clone(), clean.to_owned()));
         assert_eq!(world.document_text(&uri), Some(clean));
@@ -874,11 +877,13 @@ mod tests {
                 [
                     (
                         main_uri.clone(),
-                        "function main() returns (word) { return 1; }\n".to_owned()
+                        "pragma solcore;\nfunction main() returns (word) { return 1; }\n"
+                            .to_owned()
                     ),
                     (
                         util_uri.clone(),
-                        "function util() returns (word) { return 2; }\n".to_owned()
+                        "pragma solcore;\nfunction util() returns (word) { return 2; }\n"
+                            .to_owned()
                     ),
                 ],
             ),
@@ -894,7 +899,7 @@ mod tests {
         );
         assert!(world.open_document(
             main_uri.clone(),
-            "function main() returns (word) { return 1; }\n".to_owned()
+            "pragma solcore;\nfunction main() returns (word) { return 1; }\n".to_owned()
         ));
         assert_eq!(world.open_document_uris(), vec![main_uri]);
         assert_eq!(world.workspace_document_uris().len(), 2);
@@ -911,7 +916,7 @@ mod tests {
                 root,
                 [(
                     uri.clone(),
-                    "function value() returns (word) { return 1; }\n".to_owned()
+                    "pragma solcore;\nfunction value() returns (word) { return 1; }\n".to_owned()
                 )]
             ),
             1
@@ -935,7 +940,7 @@ mod tests {
         let right_root = Url::from_directory_path(&right_path).expect("right root uri");
         let left_uri = Url::from_file_path(left_path.join("src/main.sol")).expect("left uri");
         let right_uri = Url::from_file_path(right_path.join("src/main.sol")).expect("right uri");
-        let source = "function value() returns (word) { return 1; }\n";
+        let source = "pragma solcore;\nfunction value() returns (word) { return 1; }\n";
 
         let mut world = WorldState::new();
         assert_eq!(
@@ -989,11 +994,17 @@ mod tests {
         world.load_workspace_roots([
             (
                 main_root,
-                vec![(main_uri.clone(), "function left() {}\n".to_owned())],
+                vec![(
+                    main_uri.clone(),
+                    "pragma solcore;\nfunction left() {}\n".to_owned(),
+                )],
             ),
             (
                 other_root,
-                vec![(other_uri.clone(), "function right() {}\n".to_owned())],
+                vec![(
+                    other_uri.clone(),
+                    "pragma solcore;\nfunction right() {}\n".to_owned(),
+                )],
             ),
         ]);
 
@@ -1012,7 +1023,7 @@ mod tests {
         let mut world = WorldState::new();
         assert!(world.open_document(
             main_uri.clone(),
-            "function value() returns (word) { return 1; }\n".to_owned()
+            "pragma solcore;\nfunction value() returns (word) { return 1; }\n".to_owned()
         ));
         assert_eq!(
             world.vfs_path_for_uri(&main_uri),
@@ -1043,12 +1054,10 @@ mod tests {
         let left_math = Url::from_file_path(left_path.join("math.sol")).expect("left math uri");
         let right_main = Url::from_file_path(right_path.join("main.sol")).expect("right main uri");
         let right_math = Url::from_file_path(right_path.join("math.sol")).expect("right math uri");
-        let left_source = "import {leftValue} from lib.math;\nfunction runLeft() returns (word) { return leftValue(); }\n";
-        let left_library =
-            "function leftValue() returns (word) { return 1; }\nexport { leftValue };\n";
-        let right_source = "import {rightValue} from lib.math;\nfunction runRight() returns (word) { return rightValue(); }\n";
-        let right_library =
-            "function rightValue() returns (word) { return 2; }\nexport { rightValue };\n";
+        let left_source = "pragma solcore;\nimport {leftValue} from lib.math;\nfunction runLeft() returns (word) { return leftValue(); }\n";
+        let left_library = "pragma solcore;\nfunction leftValue() returns (word) { return 1; }\nexport { leftValue };\n";
+        let right_source = "pragma solcore;\nimport {rightValue} from lib.math;\nfunction runRight() returns (word) { return rightValue(); }\n";
+        let right_library = "pragma solcore;\nfunction rightValue() returns (word) { return 2; }\nexport { rightValue };\n";
 
         let mut world = WorldState::new();
         world.load_workspace_roots([
@@ -1111,16 +1120,22 @@ mod tests {
         world.load_workspace_roots([
             (
                 left_root,
-                vec![(left_uri.clone(), "function left() {}\n".to_owned())],
+                vec![(
+                    left_uri.clone(),
+                    "pragma solcore;\nfunction left() {}\n".to_owned(),
+                )],
             ),
             (
                 right_root,
-                vec![(right_uri.clone(), "function right() {}\n".to_owned())],
+                vec![(
+                    right_uri.clone(),
+                    "pragma solcore;\nfunction right() {}\n".to_owned(),
+                )],
             ),
         ]);
         assert!(world.set_workspace_document(
             generated_uri.clone(),
-            "function generated() {}\n".to_owned()
+            "pragma solcore;\nfunction generated() {}\n".to_owned()
         ));
 
         let generated_vfs = world
@@ -1152,8 +1167,8 @@ mod tests {
         let left_main = Url::from_file_path(left_path.join("main.sol")).expect("left main uri");
         let left_util = Url::from_file_path(left_path.join("util.sol")).expect("left util uri");
         let right_main = Url::from_file_path(right_path.join("main.sol")).expect("right main uri");
-        let disk_source = "function value() returns (word) { return 1; }\n";
-        let unsaved_source = "function value() returns (word) { return 99; }\n";
+        let disk_source = "pragma solcore;\nfunction value() returns (word) { return 1; }\n";
+        let unsaved_source = "pragma solcore;\nfunction value() returns (word) { return 99; }\n";
 
         let mut world = WorldState::new();
         world.load_workspace_roots([
@@ -1161,12 +1176,18 @@ mod tests {
                 left_root.clone(),
                 vec![
                     (left_main.clone(), disk_source.to_owned()),
-                    (left_util.clone(), "function util() {}\n".to_owned()),
+                    (
+                        left_util.clone(),
+                        "pragma solcore;\nfunction util() {}\n".to_owned(),
+                    ),
                 ],
             ),
             (
                 right_root,
-                vec![(right_main.clone(), "function right() {}\n".to_owned())],
+                vec![(
+                    right_main.clone(),
+                    "pragma solcore;\nfunction right() {}\n".to_owned(),
+                )],
             ),
         ]);
         assert!(world.open_document(left_main.clone(), unsaved_source.to_owned()));
@@ -1199,7 +1220,10 @@ mod tests {
                 left_root.clone(),
                 vec![
                     (left_main.clone(), disk_source.to_owned()),
-                    (left_util.clone(), "function util() {}\n".to_owned()),
+                    (
+                        left_util.clone(),
+                        "pragma solcore;\nfunction util() {}\n".to_owned(),
+                    ),
                 ],
             )],
         );
@@ -1234,11 +1258,9 @@ mod tests {
         let left_math = Url::from_file_path(left_path.join("math.sol")).expect("left math");
         let right_math = Url::from_file_path(right_path.join("math.sol")).expect("right math");
         let third_file = Url::from_file_path(third_path.join("third.sol")).expect("third file");
-        let main_source = "import {leftValue} from lib.math;\nfunction main() returns (word) { return leftValue(); }\n";
-        let left_source =
-            "function leftValue() returns (word) { return 1; }\nexport { leftValue };\n";
-        let right_source =
-            "function rightValue() returns (word) { return 2; }\nexport { rightValue };\n";
+        let main_source = "pragma solcore;\nimport {leftValue} from lib.math;\nfunction main() returns (word) { return leftValue(); }\n";
+        let left_source = "pragma solcore;\nfunction leftValue() returns (word) { return 1; }\nexport { leftValue };\n";
+        let right_source = "pragma solcore;\nfunction rightValue() returns (word) { return 2; }\nexport { rightValue };\n";
 
         let mut world = WorldState::new();
         world.load_workspace_roots([
@@ -1274,7 +1296,7 @@ mod tests {
                 third_root,
                 vec![(
                     third_file,
-                    "function third() returns (word) { return 3; }\n".to_owned(),
+                    "pragma solcore;\nfunction third() returns (word) { return 3; }\n".to_owned(),
                 )],
             )],
         );
@@ -1328,7 +1350,7 @@ mod tests {
 
         assert!(world.open_document(
             uri.clone(),
-            "function main() returns (word) { return 1; }\n".to_owned()
+            "pragma solcore;\nfunction main() returns (word) { return 1; }\n".to_owned()
         ));
 
         assert!(world.has_workspace_root());
@@ -1344,7 +1366,7 @@ mod tests {
         let uri = Url::parse("untitled:Untitled-1").expect("untitled uri");
         assert!(world.open_document(
             uri.clone(),
-            "function main() returns (word) { return 1; }\n".to_owned()
+            "pragma solcore;\nfunction main() returns (word) { return 1; }\n".to_owned()
         ));
         assert_eq!(
             world.vfs_path_for_uri(&uri),
@@ -1362,7 +1384,7 @@ mod tests {
         let uri = Url::parse("untitled:Untitled-1").expect("untitled uri");
         assert!(world.open_document(
             uri.clone(),
-            "function main() returns (word) { return 1; }\n".to_owned()
+            "pragma solcore;\nfunction main() returns (word) { return 1; }\n".to_owned()
         ));
 
         world.close_document(&uri);

@@ -1,1 +1,3 @@
+pragma solcore;
+
 type Target = word; enum Wrap<a> { Pick(Target, a) }

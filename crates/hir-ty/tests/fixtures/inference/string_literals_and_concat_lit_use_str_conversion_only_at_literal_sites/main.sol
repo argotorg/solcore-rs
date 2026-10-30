@@ -1,3 +1,5 @@
+pragma solcore;
+
 import std;
 import { memory, string, strlenLit } from std;
 

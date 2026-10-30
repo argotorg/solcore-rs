@@ -1,3 +1,5 @@
+pragma solcore;
+
 // Defaults remain available when no structural function rule applies,
 // including defaults used to satisfy another default's prerequisite.
 enum Callable<a> {

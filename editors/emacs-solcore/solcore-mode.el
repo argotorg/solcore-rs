@@ -233,7 +233,30 @@ left to the caller so declaration patterns can consume whitespace once."
               (append "{}();," electric-indent-chars)))
 
 ;;;###autoload
-(add-to-list 'auto-mode-alist '("\\.sol\\'" . solcore-mode))
+(defun solcore-declares-pragma-p ()
+  "Return non-nil when the buffer starts with `pragma solcore;'.
+Leading whitespace and comments are skipped.  The compiler requires this
+declaration first in every source file; it tells Solcore `.sol' files apart
+from Solidity files, which use the same extension."
+  (save-excursion
+    (save-restriction
+      (widen)
+      (goto-char (point-min))
+      (with-syntax-table solcore-mode-syntax-table
+        (forward-comment (buffer-size)))
+      (looking-at-p "pragma[ \t\n\r\f]+solcore[ \t\n\r\f]*;"))))
+
+;;;###autoload
+(defun solcore-source-buffer-p ()
+  "Return non-nil for a `.sol' file buffer that declares `pragma solcore;'."
+  (and buffer-file-name
+       (string-match-p "\\.sol\\'" buffer-file-name)
+       (solcore-declares-pragma-p)))
+
+;; `.sol' files without the pragma are left to other modes, such as a
+;; Solidity mode.
+;;;###autoload
+(add-to-list 'magic-mode-alist '(solcore-source-buffer-p . solcore-mode))
 
 (defvar lsp-language-id-configuration)
 (declare-function lsp-activate-on "lsp-mode")

@@ -1,3 +1,5 @@
+pragma solcore;
+
 /* Test comptime expression match labels: the intended use case is
    matching function selectors against keccak hashes of signatures.
    Covers: keccakLit of a literal, keccakLit of a concatenation, wildcard.

@@ -4,12 +4,12 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/nonexhaustive_contract/main.sol
 ---
 error[SC0302]: non-exhaustive pattern match
- --> /main/main.sol:8:16
-  |
-7 |     function pick(x: Flag) public returns (word) {
-8 |         match (x) {
-  |                ^ non-exhaustive match
-9 |             case Flag.Off {
-  |
-  = note: missing case: Flag.On
-  = note: help: add a clause that covers the missing case
+  --> /main/main.sol:10:16
+   |
+ 9 |     function pick(x: Flag) public returns (word) {
+10 |         match (x) {
+   |                ^ non-exhaustive match
+11 |             case Flag.Off {
+   |
+   = note: missing case: Flag.On
+   = note: help: add a clause that covers the missing case

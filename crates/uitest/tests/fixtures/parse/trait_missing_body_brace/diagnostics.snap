@@ -4,9 +4,11 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/parse/trait_missing_body_brace/main.sol
 ---
 error[SC0001]: parse error: unexpected end of input
- --> /main/main.sol:1:12
+ --> /main/main.sol:3:12
   |
-1 | trait T<a>
+1 | pragma solcore;
+2 |
+3 | trait T<a>
   |           ^ unexpected token
   |
   = note: expecting `{`

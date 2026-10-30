@@ -1,3 +1,5 @@
+pragma solcore;
+
 function fst<a, b>(x: (a, b)) returns (a) {
     match (x) {
         case (a, _) {

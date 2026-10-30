@@ -1,3 +1,5 @@
+pragma solcore;
+
 pragma no-patterson-condition ABIAttribs, ABIEncode, ABIDecode;
 pragma no-bounded-variable-condition ABIAttribs, ABIEncode, ABIDecode;
 pragma no-coverage-condition ABIDecode;

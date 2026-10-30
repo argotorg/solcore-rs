@@ -4,12 +4,12 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/struct_local_assignment/main.sol
 ---
 error[SC0201]: type mismatch: expected struct field of a contract storage variable, found non-storage struct field assignment
- --> /main/main.sol:7:5
-  |
-6 | function update(p: Point) returns (()) {
-7 |     p.x = 1;
-  |     ^^^ expression has mismatched type
-8 | }
-  |
-  = note: expected type: struct field of a contract storage variable
-  = note: found type: non-storage struct field assignment
+  --> /main/main.sol:9:5
+   |
+ 8 | function update(p: Point) returns (()) {
+ 9 |     p.x = 1;
+   |     ^^^ expression has mismatched type
+10 | }
+   |
+   = note: expected type: struct field of a contract storage variable
+   = note: found type: non-storage struct field assignment

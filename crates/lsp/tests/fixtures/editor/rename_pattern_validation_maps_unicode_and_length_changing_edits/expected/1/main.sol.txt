@@ -1,2 +1,4 @@
+pragma solcore;
+
 // 🦀
 enum Choice { Choice, Other } function renamed漢(input: Choice) returns (word) { match (input) { case (value) { return 7; } } } function main() returns (word) { return renamed漢(Choice()); }

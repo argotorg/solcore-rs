@@ -1,3 +1,5 @@
+pragma solcore;
+
 // std.unchecked.signed: unchecked (wrapping) arithmetic for int8..int256.
 // The compiler desugars `+ - * / %` written inside an `unchecked { ... }` block
 // to the Unchecked* classes, which this module re-exports from

@@ -1,3 +1,5 @@
+pragma solcore;
+
 import { double } from math;
 
 function f() returns (word) {

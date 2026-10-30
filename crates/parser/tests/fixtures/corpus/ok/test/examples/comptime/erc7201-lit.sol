@@ -1,3 +1,5 @@
+pragma solcore;
+
 import * from std;
 
 // erc7201 is comptime-only: given a string-literal namespace it folds the two

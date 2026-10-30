@@ -1,3 +1,5 @@
+pragma solcore;
+
 /* Negative: comptime let bound to a runtime expression — must fail.
    sloadWord reads from storage (sload); storage is mutable state,
    so its result is runtime.  Binding it with 'let y : comptime word'

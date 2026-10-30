@@ -1,3 +1,5 @@
+pragma solcore;
+
 import { memory, DynArray, uint256, Typedef, ridx, arrayLitNew as allocate, arrayLitInit as initialize } from std;
 
 contract ArrayHelperAlias {

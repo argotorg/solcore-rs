@@ -1,3 +1,5 @@
+pragma solcore;
+
 import * from std;
 import * from std.dispatch;
 import { address, uint256, mapping, Num, Add, Sub, Bounded, Eq, Ord, Typedef, ge, ne, not } from std;

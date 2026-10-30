@@ -1,1 +1,3 @@
+pragma solcore;
+
 import {Target as Kept} from math; function id<a>(x: Kept, y: a) returns (Kept) { return x; }

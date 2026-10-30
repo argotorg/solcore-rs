@@ -1,3 +1,5 @@
+pragma solcore;
+
 // Integer literals at word-typed sites receive automatic wordFromInteger coercions.
 // Tests:
 //   let x : word = N         -- explicit word annotation

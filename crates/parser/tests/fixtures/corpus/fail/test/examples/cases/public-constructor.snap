@@ -4,11 +4,11 @@ expression: value
 input_file: crates/parser/tests/fixtures/corpus/fail/test/examples/cases/public-constructor.sol
 ---
 error[SC0001]: constructor is implicitly public; remove the 'public' keyword
- --> /public-constructor.sol:5:19
+ --> /public-constructor.sol:7:19
   |
-4 | contract PublicConstructor {
-5 |     constructor() public {}
+6 | contract PublicConstructor {
+7 |     constructor() public {}
   |                   ^^^^^^
-6 |
+8 |
   |
   = note: while parsing constructor definition

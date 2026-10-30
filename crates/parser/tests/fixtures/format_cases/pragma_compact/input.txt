@@ -1,1 +1,3 @@
+pragma solcore;
+
 pragma no-patterson-condition C,D;pragma no - default - if C;function f(a:word,b:word)returns(word){return a-b;}

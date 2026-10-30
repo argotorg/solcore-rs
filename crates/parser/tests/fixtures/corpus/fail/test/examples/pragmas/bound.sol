@@ -1,3 +1,5 @@
+pragma solcore;
+
 trait D<a> {
     function f(x: a);
 }

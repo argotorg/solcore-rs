@@ -1,3 +1,5 @@
+pragma solcore;
+
 enum uint256 {
     uint256(word)
 }

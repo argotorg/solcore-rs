@@ -1,3 +1,5 @@
+pragma solcore;
+
 function read(x: word) returns (word) {
     let value: word;
     assembly {

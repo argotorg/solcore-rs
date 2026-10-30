@@ -1,3 +1,5 @@
+pragma solcore;
+
 pragma no-coverage-condition;
 
 enum List<a> {

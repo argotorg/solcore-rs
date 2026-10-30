@@ -1,3 +1,5 @@
+pragma solcore;
+
 function rec(n: word, b: word, f: word) returns (word) {
     match (n) {
         case 0 {

@@ -1,3 +1,5 @@
+pragma solcore;
+
 import dupqual_a;
 import dupqual_b;
 

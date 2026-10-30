@@ -4,11 +4,11 @@ expression: value
 input_file: crates/parser/tests/fixtures/corpus/fail/test/examples/cases/public-top-level-function.sol
 ---
 error[SC0001]: 'public' is only allowed on functions declared inside a contract
- --> /public-top-level-function.sol:6:19
+ --> /public-top-level-function.sol:8:19
   |
-5 | // top-level function (outside any `contract { … }` body) must be rejected.
-6 | function answer() public returns (uint256) {
+7 | // top-level function (outside any `contract { … }` body) must be rejected.
+8 | function answer() public returns (uint256) {
   |                   ^^^^^^
-7 |     return uint256(42);
+9 |     return uint256(42);
   |
   = note: while parsing function signature

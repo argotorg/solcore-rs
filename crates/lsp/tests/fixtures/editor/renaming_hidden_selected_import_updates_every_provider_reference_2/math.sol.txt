@@ -1,2 +1,4 @@
+pragma solcore;
+
 export {hidden};
 function hidden() returns (word) { return 7; }

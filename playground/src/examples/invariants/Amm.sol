@@ -1,3 +1,5 @@
+pragma solcore;
+
 import * from std;
 import * from std.dispatch;
 import { Pool, mkPool, reserveX, reserveY, swapXforY, addLiquidity } from pool;

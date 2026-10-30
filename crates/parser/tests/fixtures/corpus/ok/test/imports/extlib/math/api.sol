@@ -1,3 +1,5 @@
+pragma solcore;
+
 import internals.add;
 import lib.util;
 

@@ -1,1 +1,3 @@
+pragma solcore;
+
 type Target = word; type Wrap(a) = (Target, a);

@@ -1,3 +1,5 @@
+pragma solcore;
+
 contract WordMatchDefault {
     function f(n: word) public returns (word) {
         let result: word;

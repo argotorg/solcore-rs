@@ -1,0 +1,5 @@
+pragma solcore;
+
+import {solcoreValue} from lib;
+
+function main() returns (word) { return solcoreValue(); }

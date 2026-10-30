@@ -1,3 +1,5 @@
+pragma solcore;
+
 function go<a>(x: a) returns (word) {
     return go((x, x));
 }

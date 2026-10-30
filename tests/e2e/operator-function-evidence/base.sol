@@ -1,3 +1,5 @@
+pragma solcore;
+
 export { Phantom, Other, ne, lt, le, ge, and, or, not, generic };
 trait Phantom<t, r> {
     function pick(x: t) returns (bool);

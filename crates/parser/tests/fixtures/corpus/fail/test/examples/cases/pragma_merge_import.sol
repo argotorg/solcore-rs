@@ -1,3 +1,5 @@
+pragma solcore;
+
 // Test import file for pragma merging functionality
 // This file imports pragma_merge_base and adds its own violations with pragmas
 // Testing that pragmas from both files are properly merged

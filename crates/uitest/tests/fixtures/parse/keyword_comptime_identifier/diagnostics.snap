@@ -4,18 +4,22 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/parse/keyword_comptime_identifier/main.sol
 ---
 error[SC0001]: `comptime` is a parameter modifier; expected parameter name
- --> /main/main.sol:1:12
+ --> /main/main.sol:3:12
   |
-1 | function f(comptime) returns (word) { return comptime; }
+1 | pragma solcore;
+2 |
+3 | function f(comptime) returns (word) { return comptime; }
   |            ^^^^^^^^
   |
   = note: while parsing function parameter
 ---
 
 error[SC0001]: named function parameter requires an explicit type
- --> /main/main.sol:1:12
+ --> /main/main.sol:3:12
   |
-1 | function f(comptime) returns (word) { return comptime; }
+1 | pragma solcore;
+2 |
+3 | function f(comptime) returns (word) { return comptime; }
   |            ^^^^^^^^
   |
   = note: while parsing function signature

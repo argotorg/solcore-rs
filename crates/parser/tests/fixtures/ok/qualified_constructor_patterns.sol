@@ -1,3 +1,5 @@
+pragma solcore;
+
 contract QualifiedConstructorPatterns {
     enum Option<a> {
         None,

@@ -1,3 +1,5 @@
+pragma solcore;
+
 // Integer literal patterns against word and integer scrutinees.
 
 import { Add } from std;

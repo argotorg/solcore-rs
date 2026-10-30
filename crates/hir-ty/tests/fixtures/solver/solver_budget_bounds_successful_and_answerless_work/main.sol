@@ -1,3 +1,5 @@
+pragma solcore;
+
 trait Known<a> {}
 impl Known<word> {}
 trait Missing<a> {}

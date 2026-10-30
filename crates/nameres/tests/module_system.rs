@@ -130,41 +130,44 @@ fn auto_imports_index_unreachable_public_symbols_and_rank_direct_exports_first()
     let (db, entry) = load_sources([
         (
             vec!["main"],
-            "export { wanted }; function wanted() returns (word) { return 0; }",
+            "pragma solcore; export { wanted }; function wanted() returns (word) { return 0; }",
         ),
         (
             vec!["direct"],
-            "export { wanted, Thing, Eqish }; function wanted() returns (word) { return 1; } enum Thing { Thing } trait Eqish<a> {}",
+            "pragma solcore; export { wanted, Thing, Eqish }; function wanted() returns (word) { return 1; } enum Thing { Thing } trait Eqish<a> {}",
         ),
-        (vec!["wrapper"], "export direct.{wanted};"),
+        (vec!["wrapper"], "pragma solcore; export direct.{wanted};"),
         (
             vec!["private"],
-            "function wanted() returns (word) { return 2; }",
+            "pragma solcore; function wanted() returns (word) { return 2; }",
         ),
         (
             vec!["broken"],
-            "export { wanted }; lost(x) returns (word) { return 0; } function wanted() returns (word) { return 3; }",
+            "pragma solcore; export { wanted }; lost(x) returns (word) { return 0; } function wanted() returns (word) { return 3; }",
         ),
-        (vec!["broken_wrapper"], "export broken.{wanted};"),
+        (
+            vec!["broken_wrapper"],
+            "pragma solcore; export broken.{wanted};",
+        ),
         (
             vec!["ambiguous"],
-            "export direct.{wanted}; export other.{wanted};",
+            "pragma solcore; export direct.{wanted}; export other.{wanted};",
         ),
         (
             vec!["other"],
-            "export { wanted }; function wanted() returns (word) { return 4; }",
+            "pragma solcore; export { wanted }; function wanted() returns (word) { return 4; }",
         ),
         (
             vec!["term_collision"],
-            "export { Clash }; function Clash() returns (word) { return 5; }",
+            "pragma solcore; export { Clash }; function Clash() returns (word) { return 5; }",
         ),
         (
             vec!["type_collision"],
-            "export { Clash }; enum Clash { Clash }",
+            "pragma solcore; export { Clash }; enum Clash { Clash }",
         ),
         (
             vec!["namespace_ambiguous"],
-            "export term_collision.{Clash}; export type_collision.{Clash};",
+            "pragma solcore; export term_collision.{Clash}; export type_collision.{Clash};",
         ),
     ]);
     let importing = module_id_from_key(&db, &entry);
@@ -246,20 +249,23 @@ fn auto_imports_index_unreachable_public_symbols_and_rank_direct_exports_first()
 #[test]
 fn constructor_auto_imports_require_the_requested_constructor_to_be_visible() {
     let (db, entry) = load_sources([
-        (vec!["main"], "function main() {}"),
+        (vec!["main"], "pragma solcore; function main() {}"),
         (
             vec!["full"],
-            "export { Option(*) }; enum Option { None, Some(word) }",
+            "pragma solcore; export { Option(*) }; enum Option { None, Some(word) }",
         ),
         (
             vec!["opaque"],
-            "export { Option }; enum Option { None, Some(word) }",
+            "pragma solcore; export { Option }; enum Option { None, Some(word) }",
         ),
         (
             vec!["partial"],
-            "export { Option(Some) }; enum Option { None, Some(word) }",
+            "pragma solcore; export { Option(Some) }; enum Option { None, Some(word) }",
         ),
-        (vec!["wrapper"], "export full.{Option(Some)};"),
+        (
+            vec!["wrapper"],
+            "pragma solcore; export full.{Option(Some)};",
+        ),
     ]);
     let importing = module_id_from_key(&db, &entry);
 
@@ -281,27 +287,30 @@ fn constructor_auto_imports_require_the_requested_constructor_to_be_visible() {
 #[test]
 fn module_auto_imports_match_the_default_qualifier_and_public_member() {
     let (db, entry) = load_sources([
-        (vec!["main"], "function main() {}"),
+        (vec!["main"], "pragma solcore; function main() {}"),
         (
             vec!["one", "math"],
-            "export { value }; function value() returns (word) { return 1; }",
+            "pragma solcore; export { value }; function value() returns (word) { return 1; }",
         ),
         (
             vec!["two", "math"],
-            "export { value }; function value() returns (word) { return 2; }",
+            "pragma solcore; export { value }; function value() returns (word) { return 2; }",
         ),
-        (vec!["aaa", "math"], "export lib.one.math.{value};"),
+        (
+            vec!["aaa", "math"],
+            "pragma solcore; export lib.one.math.{value};",
+        ),
         (
             vec!["private", "math"],
-            "function value() returns (word) { return 3; }",
+            "pragma solcore; function value() returns (word) { return 3; }",
         ),
         (
             vec!["broken", "math"],
-            "export { value }; lost(x) returns (word) { return 0; } function value() returns (word) { return 4; }",
+            "pragma solcore; export { value }; lost(x) returns (word) { return 0; } function value() returns (word) { return 4; }",
         ),
         (
             vec!["other"],
-            "export { value }; function value() returns (word) { return 5; }",
+            "pragma solcore; export { value }; function value() returns (word) { return 5; }",
         ),
     ]);
     let importing = module_id_from_key(&db, &entry);
@@ -324,15 +333,18 @@ fn module_auto_imports_match_the_default_qualifier_and_public_member() {
 #[test]
 fn module_auto_imports_require_an_immediate_term_member() {
     let (db, entry) = load_sources([
-        (vec!["main"], "function main() {}"),
+        (vec!["main"], "pragma solcore; function main() {}"),
         (
             vec!["types", "math"],
-            "export { Value }; enum Value { Value(word) }",
+            "pragma solcore; export { Value }; enum Value { Value(word) }",
         ),
-        (vec!["aliases", "math"], "export lib.target as nested;"),
+        (
+            vec!["aliases", "math"],
+            "pragma solcore; export lib.target as nested;",
+        ),
         (
             vec!["target"],
-            "export { value }; function value() returns (word) { return 1; }",
+            "pragma solcore; export { value }; function value() returns (word) { return 1; }",
         ),
     ]);
     let importing = module_id_from_key(&db, &entry);
@@ -344,14 +356,17 @@ fn module_auto_imports_require_an_immediate_term_member() {
 #[test]
 fn module_auto_imports_do_not_create_duplicate_default_qualifiers() {
     let (db, entry) = load_sources([
-        (vec!["main"], "import lib.existing.math; function main() {}"),
+        (
+            vec!["main"],
+            "pragma solcore; import lib.existing.math; function main() {}",
+        ),
         (
             vec!["existing", "math"],
-            "export { old }; function old() returns (word) { return 1; }",
+            "pragma solcore; export { old }; function old() returns (word) { return 1; }",
         ),
         (
             vec!["candidate", "math"],
-            "export { value }; function value() returns (word) { return 2; }",
+            "pragma solcore; export { value }; function value() returns (word) { return 2; }",
         ),
     ]);
     let importing = module_id_from_key(&db, &entry);
@@ -360,29 +375,32 @@ fn module_auto_imports_do_not_create_duplicate_default_qualifiers() {
     let (db, entry) = load_sources([
         (
             vec!["main"],
-            "import * as math from lib.existing; function main() {}",
+            "pragma solcore; import * as math from lib.existing; function main() {}",
         ),
         (
             vec!["existing"],
-            "export { old }; function old() returns (word) { return 1; }",
+            "pragma solcore; export { old }; function old() returns (word) { return 1; }",
         ),
         (
             vec!["candidate", "math"],
-            "export { value }; function value() returns (word) { return 2; }",
+            "pragma solcore; export { value }; function value() returns (word) { return 2; }",
         ),
     ]);
     let importing = module_id_from_key(&db, &entry);
     assert!(auto_import_module_candidates(&db, importing, "math", "value").is_empty());
 
     let (db, entry) = load_sources([
-        (vec!["main"], "import lib.math.deep; function main() {}"),
+        (
+            vec!["main"],
+            "pragma solcore; import lib.math.deep; function main() {}",
+        ),
         (
             vec!["math", "deep"],
-            "export { old }; function old() returns (word) { return 1; }",
+            "pragma solcore; export { old }; function old() returns (word) { return 1; }",
         ),
         (
             vec!["other", "math"],
-            "export { value }; function value() returns (word) { return 2; }",
+            "pragma solcore; export { value }; function value() returns (word) { return 2; }",
         ),
     ]);
     let importing = module_id_from_key(&db, &entry);
@@ -394,11 +412,11 @@ fn module_auto_imports_do_not_conflict_with_unqualified_bindings() {
     let (db, entry) = load_sources([
         (
             vec!["main"],
-            "function math() returns (word) { return 0; } function main() {}",
+            "pragma solcore; function math() returns (word) { return 0; } function main() {}",
         ),
         (
             vec!["candidate", "math"],
-            "export { value }; function value() returns (word) { return 1; }",
+            "pragma solcore; export { value }; function value() returns (word) { return 1; }",
         ),
     ]);
     let importing = module_id_from_key(&db, &entry);
@@ -407,15 +425,15 @@ fn module_auto_imports_do_not_conflict_with_unqualified_bindings() {
     let (db, entry) = load_sources([
         (
             vec!["main"],
-            "import {math} from lib.names; function main() {}",
+            "pragma solcore; import {math} from lib.names; function main() {}",
         ),
         (
             vec!["names"],
-            "export { math }; function math() returns (word) { return 0; }",
+            "pragma solcore; export { math }; function math() returns (word) { return 0; }",
         ),
         (
             vec!["candidate", "math"],
-            "export { value }; function value() returns (word) { return 1; }",
+            "pragma solcore; export { value }; function value() returns (word) { return 1; }",
         ),
     ]);
     let importing = module_id_from_key(&db, &entry);
@@ -425,26 +443,26 @@ fn module_auto_imports_do_not_conflict_with_unqualified_bindings() {
 #[test]
 fn module_qualifier_conflicts_with_selected_term_in_either_import_order() {
     for imports in [
-        "import util; import {util} from other;",
-        "import {util} from other; import util;",
+        "pragma solcore; import util; import {util} from other;",
+        "pragma solcore; import {util} from other; import util;",
     ] {
         let main = format!("{imports} function main() {{}}");
         let (db, entry) = load_sources([
             (vec!["main"], main.as_str()),
             (
                 vec!["util"],
-                "function value() returns (word) { return 0; }",
+                "pragma solcore; function value() returns (word) { return 0; }",
             ),
             (
                 vec!["other"],
-                "export { util }; function util() returns (word) { return 1; }",
+                "pragma solcore; export { util }; function util() returns (word) { return 1; }",
             ),
         ]);
         let module = module_id_from_key(&db, &entry);
         assert_eq!(
             module_diagnostic_codes(&db, module),
             ["SC0121"],
-            "import order should not affect qualifier conflicts: {imports}"
+            "pragma solcore; import order should not affect qualifier conflicts: {imports}"
         );
     }
 }
@@ -454,15 +472,15 @@ fn module_auto_imports_check_every_generated_prefix_binding() {
     let (db, entry) = load_sources([
         (
             vec!["main"],
-            "function one() returns (word) { return 0; } function main() {}",
+            "pragma solcore; function one() returns (word) { return 0; } function main() {}",
         ),
         (
             vec!["one", "math"],
-            "export { value }; function value() returns (word) { return 1; }",
+            "pragma solcore; export { value }; function value() returns (word) { return 1; }",
         ),
         (
             vec!["two", "math"],
-            "export { value }; function value() returns (word) { return 2; }",
+            "pragma solcore; export { value }; function value() returns (word) { return 2; }",
         ),
     ]);
     let importing = module_id_from_key(&db, &entry);
@@ -473,10 +491,13 @@ fn module_auto_imports_check_every_generated_prefix_binding() {
     assert_eq!(paths, ["lib.two.math"]);
 
     let (db, entry) = load_sources([
-        (vec!["main"], "enum one { One } function main() {}"),
+        (
+            vec!["main"],
+            "pragma solcore; enum one { One } function main() {}",
+        ),
         (
             vec!["one", "math"],
-            "export { value }; function value() returns (word) { return 1; }",
+            "pragma solcore; export { value }; function value() returns (word) { return 1; }",
         ),
     ]);
     let importing = module_id_from_key(&db, &entry);
@@ -485,15 +506,15 @@ fn module_auto_imports_check_every_generated_prefix_binding() {
     let (db, entry) = load_sources([
         (
             vec!["main"],
-            "import {one} from lib.names; function main() {}",
+            "pragma solcore; import {one} from lib.names; function main() {}",
         ),
         (
             vec!["names"],
-            "export { one }; function one() returns (word) { return 0; }",
+            "pragma solcore; export { one }; function one() returns (word) { return 0; }",
         ),
         (
             vec!["one", "math"],
-            "export { value }; function value() returns (word) { return 1; }",
+            "pragma solcore; export { value }; function value() returns (word) { return 1; }",
         ),
     ]);
     let importing = module_id_from_key(&db, &entry);
@@ -505,19 +526,19 @@ fn module_auto_imports_check_contract_local_prefix_bindings() {
     let (db, entry) = load_sources([
         (
             vec!["main"],
-            "contract C {\n                one: word;\n                enum two {Two}\n                function three() returns (word) { return 0; }\n                function main() {}\n            }",
+            "pragma solcore;\ncontract C {\n                one: word;\n                enum two {Two}\n                function three() returns (word) { return 0; }\n                function main() {}\n            }",
         ),
         (
             vec!["one", "math"],
-            "export { value }; function value() returns (word) { return 1; }",
+            "pragma solcore; export { value }; function value() returns (word) { return 1; }",
         ),
         (
             vec!["two", "math"],
-            "export { value }; function value() returns (word) { return 2; }",
+            "pragma solcore; export { value }; function value() returns (word) { return 2; }",
         ),
         (
             vec!["three", "math"],
-            "export { value }; function value() returns (word) { return 3; }",
+            "pragma solcore; export { value }; function value() returns (word) { return 3; }",
         ),
     ]);
     let importing = module_id_from_key(&db, &entry);
@@ -527,24 +548,30 @@ fn module_auto_imports_check_contract_local_prefix_bindings() {
 #[test]
 fn module_auto_imports_check_resolved_and_unresolved_plain_import_prefixes() {
     let (db, entry) = load_sources([
-        (vec!["main"], "import lib.one.deep; function main() {}"),
+        (
+            vec!["main"],
+            "pragma solcore; import lib.one.deep; function main() {}",
+        ),
         (
             vec!["one", "deep"],
-            "export { old }; function old() returns (word) { return 0; }",
+            "pragma solcore; export { old }; function old() returns (word) { return 0; }",
         ),
         (
             vec!["one", "math"],
-            "export { value }; function value() returns (word) { return 1; }",
+            "pragma solcore; export { value }; function value() returns (word) { return 1; }",
         ),
     ]);
     let importing = module_id_from_key(&db, &entry);
     assert!(auto_import_module_candidates(&db, importing, "math", "value").is_empty());
 
     let (db, entry) = load_sources([
-        (vec!["main"], "import lib.missing.deep; function main() {}"),
+        (
+            vec!["main"],
+            "pragma solcore; import lib.missing.deep; function main() {}",
+        ),
         (
             vec!["missing", "math"],
-            "export { value }; function value() returns (word) { return 1; }",
+            "pragma solcore; export { value }; function value() returns (word) { return 1; }",
         ),
     ]);
     let importing = module_id_from_key(&db, &entry);
@@ -556,11 +583,11 @@ fn module_auto_imports_allow_a_separate_plain_import_after_a_selective_import() 
     let (db, entry) = load_sources([
         (
             vec!["main"],
-            "import {other} from lib.one.math; function main() {}",
+            "pragma solcore; import {other} from lib.one.math; function main() {}",
         ),
         (
             vec!["one", "math"],
-            "export { other, value }; function other() returns (word) { return 0; } function value() returns (word) { return 1; }",
+            "pragma solcore; export { other, value }; function other() returns (word) { return 0; } function value() returns (word) { return 1; }",
         ),
     ]);
     let importing = module_id_from_key(&db, &entry);
@@ -572,10 +599,10 @@ fn module_auto_imports_allow_a_separate_plain_import_after_a_selective_import() 
 #[test]
 fn auto_imports_exclude_namespace_blind_selector_collisions_within_one_provider() {
     let (db, entry) = load_sources([
-        (vec!["main"], "function main() {}"),
+        (vec!["main"], "pragma solcore; function main() {}"),
         (
             vec!["provider"],
-            "export { Shared, term_only, TypeOnly };\n             function Shared() returns (word) { return 1; }\n             enum Shared {Shared}\n             function term_only() returns (word) { return 2; }\n             enum TypeOnly {TypeOnly}",
+            "pragma solcore;\nexport { Shared, term_only, TypeOnly };\n             function Shared() returns (word) { return 1; }\n             enum Shared {Shared}\n             function term_only() returns (word) { return 2; }\n             enum TypeOnly {TypeOnly}",
         ),
     ]);
     let importing = module_id_from_key(&db, &entry);
@@ -598,14 +625,17 @@ fn auto_imports_exclude_namespace_blind_selector_collisions_within_one_provider(
 #[test]
 fn auto_imports_suppress_different_target_for_explicit_selector_but_keep_same_target() {
     let (db, entry) = load_sources([
-        (vec!["main"], "import {Foo} from lib.a; function main() {}"),
+        (
+            vec!["main"],
+            "pragma solcore; import {Foo} from lib.a; function main() {}",
+        ),
         (
             vec!["a"],
-            "export { Foo }; function Foo() returns (word) { return 1; }",
+            "pragma solcore; export { Foo }; function Foo() returns (word) { return 1; }",
         ),
         (
             vec!["b"],
-            "export { Foo }; function Foo() returns (word) { return 2; }",
+            "pragma solcore; export { Foo }; function Foo() returns (word) { return 2; }",
         ),
     ]);
     let importing = module_id_from_key(&db, &entry);
@@ -623,15 +653,15 @@ fn auto_imports_consider_selector_aliases_by_their_local_name() {
     let (db, entry) = load_sources([
         (
             vec!["main"],
-            "import {Original as Foo} from lib.a; function main() {}",
+            "pragma solcore; import {Original as Foo} from lib.a; function main() {}",
         ),
         (
             vec!["a"],
-            "export { Original }; function Original() returns (word) { return 1; }",
+            "pragma solcore; export { Original }; function Original() returns (word) { return 1; }",
         ),
         (
             vec!["b"],
-            "export { Foo }; function Foo() returns (word) { return 2; }",
+            "pragma solcore; export { Foo }; function Foo() returns (word) { return 2; }",
         ),
     ]);
     let importing = module_id_from_key(&db, &entry);
@@ -642,14 +672,17 @@ fn auto_imports_consider_selector_aliases_by_their_local_name() {
 #[test]
 fn auto_imports_consider_bindings_from_wildcard_selectors() {
     let (db, entry) = load_sources([
-        (vec!["main"], "import * from lib.a; function main() {}"),
+        (
+            vec!["main"],
+            "pragma solcore; import * from lib.a; function main() {}",
+        ),
         (
             vec!["a"],
-            "export { Foo }; function Foo() returns (word) { return 1; }",
+            "pragma solcore; export { Foo }; function Foo() returns (word) { return 1; }",
         ),
         (
             vec!["b"],
-            "export { Foo }; function Foo() returns (word) { return 2; }",
+            "pragma solcore; export { Foo }; function Foo() returns (word) { return 2; }",
         ),
     ]);
     let importing = module_id_from_key(&db, &entry);
@@ -662,12 +695,18 @@ fn auto_imports_consider_bindings_from_wildcard_selectors() {
 #[test]
 fn auto_imports_suppress_cross_namespace_collisions_from_different_targets() {
     let (db, entry) = load_sources([
-        (vec!["main"], "import {Foo} from lib.a; function main() {}"),
+        (
+            vec!["main"],
+            "pragma solcore; import {Foo} from lib.a; function main() {}",
+        ),
         (
             vec!["a"],
-            "export { Foo }; function Foo() returns (word) { return 1; }",
+            "pragma solcore; export { Foo }; function Foo() returns (word) { return 1; }",
         ),
-        (vec!["b"], "export { Foo }; enum Foo { Foo }"),
+        (
+            vec!["b"],
+            "pragma solcore; export { Foo }; enum Foo { Foo }",
+        ),
     ]);
     let importing = module_id_from_key(&db, &entry);
 
@@ -682,23 +721,23 @@ fn auto_imports_keep_main_workspace_namespaces_isolated() {
     let (db, entry) = load_sources([
         (
             vec!["__solcore_workspace__", workspace_a, "main"],
-            "function main() {}",
+            "pragma solcore; function main() {}",
         ),
         (
             vec!["__solcore_workspace__", workspace_a, "nested", "util"],
-            "export { wanted }; function wanted() returns (word) { return 1; }",
+            "pragma solcore; export { wanted }; function wanted() returns (word) { return 1; }",
         ),
         (
             vec!["__solcore_workspace__", workspace_b, "nested", "util"],
-            "export { wanted }; function wanted() returns (word) { return 2; }",
+            "pragma solcore; export { wanted }; function wanted() returns (word) { return 2; }",
         ),
         (
             vec!["__solcore_detached__", detached, "main"],
-            "function main() {}",
+            "pragma solcore; function main() {}",
         ),
         (
             vec!["__solcore_detached__", detached, "nested", "util"],
-            "export { wanted }; function wanted() returns (word) { return 3; }",
+            "pragma solcore; export { wanted }; function wanted() returns (word) { return 3; }",
         ),
     ]);
     let importing = module_id_from_key(
@@ -789,10 +828,10 @@ fn source_import_paths_use_canonical_library_syntax() {
         },
     ];
     let sources = [
-        "function main() {}",
-        "function local_only() {}",
-        "export { std_value }; function std_value() returns (word) { return 1; }",
-        "export { external_value }; function external_value() returns (word) { return 2; }",
+        "pragma solcore; function main() {}",
+        "pragma solcore; function local_only() {}",
+        "pragma solcore; export { std_value }; function std_value() returns (word) { return 1; }",
+        "pragma solcore; export { external_value }; function external_value() returns (word) { return 2; }",
     ];
     for (key, source) in keys.iter().zip(sources) {
         let file = SourceFile::new(&db, fixture_url(key), Some(source.to_owned()));
@@ -829,7 +868,7 @@ fn source_import_paths_use_canonical_library_syntax() {
             format!("memory:///roundtrip-{index}.sol")
                 .parse()
                 .expect("round-trip test URL"),
-            Some(format!("import {path};")),
+            Some(format!("pragma solcore; import {path};")),
         );
         let import_ref = module_imports(&db, file)
             .import_refs
@@ -931,15 +970,15 @@ fn glob_hiding_uses_the_renamed_reexport_name() {
     let (db, entry) = load_sources([
         (
             vec!["main"],
-            "import * from lib.wrapper hiding {renamed};\nfunction renamed() returns (word) { return 1; }",
+            "pragma solcore;\nimport * from lib.wrapper hiding {renamed};\nfunction renamed() returns (word) { return 1; }",
         ),
         (
             vec!["base"],
-            "export { original };\nfunction original() returns (word) { return 0; }",
+            "pragma solcore;\nexport { original };\nfunction original() returns (word) { return 0; }",
         ),
         (
             vec!["wrapper"],
-            "import {original as renamed} from lib.base;\nexport { renamed };",
+            "pragma solcore;\nimport {original as renamed} from lib.base;\nexport { renamed };",
         ),
     ]);
 
@@ -995,13 +1034,13 @@ fn selective_alias_hiding_uses_the_source_name() {
     let (db, entry) = load_sources([
         (
             vec!["main"],
-            "import {original as renamed} from lib hiding {original};\n\
+            "pragma solcore;\nimport {original as renamed} from lib hiding {original};\n\
              function renamed() returns (word) { return 1; }\n\
              function main() returns (word) { return renamed(); }",
         ),
         (
             vec!["lib"],
-            "export {original}; function original() returns (word) { return 0; }",
+            "pragma solcore; export {original}; function original() returns (word) { return 0; }",
         ),
     ]);
 
@@ -1012,7 +1051,7 @@ fn selective_alias_hiding_uses_the_source_name() {
 #[test]
 fn parse_broken_selected_import_does_not_blame_importer() {
     let (db, entry) = load_sources(parse_broken_provider_sources(
-        "import {lost} from util;\n         function main() returns (word) { return lost(0); }",
+        "pragma solcore;\nimport {lost} from util;\n         function main() returns (word) { return lost(0); }",
     ));
     let main = module_id_from_key(&db, &entry);
     assert_eq!(module_diagnostic_codes(&db, main), Vec::<String>::new());
@@ -1029,7 +1068,7 @@ fn parse_broken_selected_import_does_not_blame_importer() {
 #[test]
 fn parse_broken_qualified_import_does_not_blame_importer() {
     let (db, entry) = load_sources(parse_broken_provider_sources(
-        "import util;\n         function main() returns (word) { return util.lost(0); }",
+        "pragma solcore;\nimport util;\n         function main() returns (word) { return util.lost(0); }",
     ));
     let main = module_id_from_key(&db, &entry);
     assert_eq!(module_diagnostic_codes(&db, main), Vec::<String>::new());
@@ -1040,15 +1079,15 @@ fn parse_broken_leaf_does_not_mark_unrelated_module_prefixes_incomplete() {
     let (db, entry) = load_sources([
         (
             vec!["main"],
-            "import lib.a.b.c; import lib.a.x; function main() returns (word) { return a.missing(); }",
+            "pragma solcore; import lib.a.b.c; import lib.a.x; function main() returns (word) { return a.missing(); }",
         ),
         (
             vec!["a", "b", "c"],
-            "function value() returns (word) { let broken = ; return 1; }",
+            "pragma solcore; function value() returns (word) { let broken = ; return 1; }",
         ),
         (
             vec!["a", "x"],
-            "function other() returns (word) { return 2; }",
+            "pragma solcore; function other() returns (word) { return 2; }",
         ),
     ]);
     let main = module_id_from_key(&db, &entry);
@@ -1081,7 +1120,7 @@ fn parse_broken_leaf_does_not_mark_unrelated_module_prefixes_incomplete() {
 fn parse_broken_module_diagnostics_publish_only_parse_errors() {
     let (db, entry) = load_sources([(
         vec!["main"],
-        "function main() returns (word) {\n           let x = ;\n           return missing;\n         }",
+        "pragma solcore;\nfunction main() returns (word) {\n           let x = ;\n           return missing;\n         }",
     )]);
     let main = module_id_from_key(&db, &entry);
     let diagnostics = lowered_module_diagnostics(&db, main);
@@ -1235,7 +1274,7 @@ fn parse_broken_provider_sources(main: &str) -> [(Vec<&str>, &str); 2] {
         (vec!["main"], main),
         (
             vec!["util"],
-            "lost(x) returns (word) { return 0; }\n             function other() {}",
+            "pragma solcore;\nlost(x) returns (word) { return 0; }\n             function other() {}",
         ),
     ]
 }

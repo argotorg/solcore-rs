@@ -4,11 +4,11 @@ expression: value
 input_file: crates/parser/tests/fixtures/corpus/fail/test/examples/cases/require-annotation-missing-param.sol
 ---
 error[SC0001]: named function parameter requires an explicit type
- --> /require-annotation-missing-param.sol:2:14
+ --> /require-annotation-missing-param.sol:4:14
   |
-1 | // Error: top-level free function with an unannotated parameter
-2 | function add(x, y: word) returns (word) {
+3 | // Error: top-level free function with an unannotated parameter
+4 | function add(x, y: word) returns (word) {
   |              ^
-3 |   let res : word;
+5 |   let res : word;
   |
   = note: while parsing function signature

@@ -4,7 +4,9 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/parse/string_bad_escape/main.sol
 ---
 error[SC0001]: invalid string escape `/q`
- --> /main/main.sol:1:40
+ --> /main/main.sol:3:40
   |
-1 | function f() returns (string) { return "a/q"; }
+1 | pragma solcore;
+2 |
+3 | function f() returns (string) { return "a/q"; }
   |                                        ^^^^^ invalid escape sequence

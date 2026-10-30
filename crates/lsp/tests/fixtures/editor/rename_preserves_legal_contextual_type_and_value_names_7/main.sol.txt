@@ -1,1 +1,3 @@
+pragma solcore;
+
 trait Original<t> { function id(value: t) returns (t); } impl Original<word> { function id(value: word) returns (word) { return value; } }

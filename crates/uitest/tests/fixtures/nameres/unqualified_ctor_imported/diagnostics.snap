@@ -4,22 +4,22 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/nameres/unqualified_ctor_imported/main.sol
 ---
 error[SC0106]: unqualified constructor: Ok
- --> /main/main.sol:4:12
+ --> /main/main.sol:6:12
   |
-3 | function mk(x: word) returns (Token) {
-4 |     return Ok(x);
+5 | function mk(x: word) returns (Token) {
+6 |     return Ok(x);
   |            ^^ constructor must be qualified
-5 | }
+7 | }
   |
   = help: use Type.Constructor form
 ---
 
 error[SC0106]: unqualified constructor: Ok
-  --> /main/main.sol:9:14
+  --> /main/main.sol:11:14
    |
- 8 |     match (t) {
- 9 |         case Ok(v) {
+10 |     match (t) {
+11 |         case Ok(v) {
    |              ^^ constructor must be qualified
-10 |             return v;
+12 |             return v;
    |
    = help: use Type.Constructor form

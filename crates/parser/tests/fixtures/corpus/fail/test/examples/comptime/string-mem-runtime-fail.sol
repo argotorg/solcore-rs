@@ -1,3 +1,5 @@
+pragma solcore;
+
 // A `string` is comptime-only: it has no runtime representation.  Returning a
 // string-typed value where memory(string) is expected, without an explicit
 // Str.fromString conversion, must be rejected by the type checker.

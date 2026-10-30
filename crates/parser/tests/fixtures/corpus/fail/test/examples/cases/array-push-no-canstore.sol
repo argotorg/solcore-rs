@@ -1,3 +1,5 @@
+pragma solcore;
+
 // `push` stores through the element's storage reference, so the value must be
 // something `storage(t)` can store. A type with no `CanStore` instance is
 // rejected -- this is the constraint `storage(t):CanStore(v)` on ArrayPush,

@@ -1,3 +1,5 @@
+pragma solcore;
+
 enum Wrap<a> {
     Wrap(a)
 }

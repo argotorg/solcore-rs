@@ -1,3 +1,5 @@
+pragma solcore;
+
 trait invokable<self, args, ret> {
     function invoke(s: self, a: args) returns (ret);
 }

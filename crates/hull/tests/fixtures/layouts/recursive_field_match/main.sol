@@ -1,3 +1,5 @@
+pragma solcore;
+
 //~ layout: unsupported-recursive
 enum Chain {
     End(word),

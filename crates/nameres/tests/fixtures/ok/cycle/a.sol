@@ -1,3 +1,5 @@
+pragma solcore;
+
 export b.{ fb };
 
 function fa() {}

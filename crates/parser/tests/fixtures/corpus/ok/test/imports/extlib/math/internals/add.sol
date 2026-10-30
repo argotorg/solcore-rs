@@ -1,3 +1,5 @@
+pragma solcore;
+
 import { Add } from std;
 
 export { inc };

@@ -559,7 +559,7 @@ mod tests {
 
     #[test]
     fn function_body_completion_includes_params_locals_and_top_level_items() {
-        let source = "function helper() returns (word) {\n  return 1;\n}\n\nfunction main(input: word) returns (word) {\n  let local = input;\n  return local;\n}\n";
+        let source = "pragma solcore;\nfunction helper() returns (word) {\n  return 1;\n}\n\nfunction main(input: word) returns (word) {\n  let local = input;\n  return local;\n}\n";
         let (world, uri) = world_with_main(source);
         let offset = (source.find("return local").expect("return local") + "return ".len()) as u32;
         let position = world
@@ -577,7 +577,7 @@ mod tests {
 
     #[test]
     fn completion_includes_language_keywords() {
-        let source = "function main() returns (word) {\n  return 1;\n}\n";
+        let source = "pragma solcore;\nfunction main() returns (word) {\n  return 1;\n}\n";
         let (world, uri) = world_with_main(source);
         let offset = source.find('1').expect("literal") as u32;
         let position = world
@@ -595,9 +595,9 @@ mod tests {
 
     #[test]
     fn completion_uses_requested_module_when_unrelated_document_opened_first() {
-        let unrelated = "function unrelated() returns (word) { return 0; }\n";
-        let math = "function combine(a: word, b: word) returns (word) { return a + b; }\n\nexport { combine };\n";
-        let main = "import {combine} from math;\n\nfunction main() returns (word) {\n  return combine(1, 2);\n}\n";
+        let unrelated = "pragma solcore;\nfunction unrelated() returns (word) { return 0; }\n";
+        let math = "pragma solcore;\nfunction combine(a: word, b: word) returns (word) { return a + b; }\n\nexport { combine };\n";
+        let main = "pragma solcore;\nimport {combine} from math;\n\nfunction main() returns (word) {\n  return combine(1, 2);\n}\n";
         let unrelated_uri = Url::parse("file:///main/unrelated.sol").expect("unrelated uri");
         let math_uri = Url::parse("file:///main/math.sol").expect("math uri");
         let main_uri = Url::parse("file:///main/main.sol").expect("main uri");
@@ -620,8 +620,9 @@ mod tests {
 
     #[test]
     fn trailing_dot_module_completion_is_member_only_and_respects_exports() {
-        let math = "function visible() returns (word) { return 1; }\nfunction hidden() returns (word) { return 2; }\nenum Color {Red , Green}\nexport { visible, Color(Red, Green) };\n";
-        let main = "import math;\nfunction main() returns (word) {\n  return math.;\n}\n";
+        let math = "pragma solcore;\nfunction visible() returns (word) { return 1; }\nfunction hidden() returns (word) { return 2; }\nenum Color {Red , Green}\nexport { visible, Color(Red, Green) };\n";
+        let main =
+            "pragma solcore;\nimport math;\nfunction main() returns (word) {\n  return math.;\n}\n";
         let (world, main_uri) = world_with_module(main, "math.sol", math);
         let items = completion_at(&world, &main_uri, main, "math.");
 
@@ -638,8 +639,8 @@ mod tests {
 
     #[test]
     fn qualified_completion_filters_a_typed_member_prefix() {
-        let math = "function visible() returns (word) { return 1; }\nfunction value() returns (word) { return 2; }\nexport { visible, value };\n";
-        let main = "import math;\nfunction main() returns (word) {\n  return math.vis;\n}\n";
+        let math = "pragma solcore;\nfunction visible() returns (word) { return 1; }\nfunction value() returns (word) { return 2; }\nexport { visible, value };\n";
+        let main = "pragma solcore;\nimport math;\nfunction main() returns (word) {\n  return math.vis;\n}\n";
         let (world, main_uri) = world_with_module(main, "math.sol", math);
         let items = completion_at(&world, &main_uri, main, "math.vis");
 
@@ -649,7 +650,7 @@ mod tests {
 
     #[test]
     fn qualified_completion_includes_contract_local_adt_constructors() {
-        let source = "contract Palette {\n  enum Color {Red , Green}\n\n  function main() returns (word) {\n    return Color.;\n  }\n}\n";
+        let source = "pragma solcore;\ncontract Palette {\n  enum Color {Red , Green}\n\n  function main() returns (word) {\n    return Color.;\n  }\n}\n";
         let (world, uri) = world_with_main(source);
         let items = completion_at(&world, &uri, source, "Color.");
 
@@ -660,9 +661,8 @@ mod tests {
 
     #[test]
     fn qualified_completion_includes_imported_trait_methods() {
-        let classes = "trait Eq<a> {\n  function eq(x: a, y: a) returns (bool) ;\n  function unequal(x: a, y: a) returns (bool) ;\n}\nexport { Eq };\n";
-        let main =
-            "import {Eq} from classes;\nfunction main() returns (word) {\n  return Eq.;\n}\n";
+        let classes = "pragma solcore;\ntrait Eq<a> {\n  function eq(x: a, y: a) returns (bool) ;\n  function unequal(x: a, y: a) returns (bool) ;\n}\nexport { Eq };\n";
+        let main = "pragma solcore;\nimport {Eq} from classes;\nfunction main() returns (word) {\n  return Eq.;\n}\n";
         let (world, main_uri) = world_with_module(main, "classes.sol", classes);
         let items = completion_at(&world, &main_uri, main, "Eq.");
 

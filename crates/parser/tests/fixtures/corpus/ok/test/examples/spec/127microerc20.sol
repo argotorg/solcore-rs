@@ -1,3 +1,5 @@
+pragma solcore;
+
 import * from std;
 import { address, uint256, mapping, Num, Add, Sub, Bounded, Eq, Ord, Typedef, ge, ne, not } from std;
 pragma no-patterson-condition;

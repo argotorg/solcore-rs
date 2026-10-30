@@ -99,6 +99,19 @@ pub fn is_valid_identifier(text: &str) -> bool {
     ) && lexer.next().is_none()
 }
 
+/// Returns whether `source` starts with `pragma solcore;`, ignoring leading
+/// whitespace and comments.
+///
+/// The compiler requires this declaration first in every source file. Tools use
+/// this check to tell Solcore `.sol` files apart from Solidity files, which
+/// share the extension, without parsing them.
+pub fn declares_pragma_solcore(source: &str) -> bool {
+    let mut tokens = lexer::tokens(source).map(|(token, _)| token);
+    matches!(tokens.next(), Some(Ok(lexer::Token::Pragma)))
+        && matches!(tokens.next(), Some(Ok(lexer::Token::Ident("solcore"))))
+        && matches!(tokens.next(), Some(Ok(lexer::Token::Semi)))
+}
+
 /// Output of parsing and lowering one source file.
 ///
 /// The module contains HIR items and bodies. `def_locations` maps every
@@ -169,7 +182,28 @@ pub fn parse_diagnostics(db: &dyn Db, file: SourceFile) -> Vec<AnyDiagnostic> {
 
 #[cfg(test)]
 mod tests {
-    use super::is_valid_identifier;
+    use super::{declares_pragma_solcore, is_valid_identifier};
+
+    #[test]
+    fn recognizes_a_leading_pragma_solcore() {
+        for solcore in [
+            "pragma solcore;\n\ncontract C {}\n",
+            "// SPDX-License-Identifier: MIT\n/* header */ pragma  solcore ;\n",
+        ] {
+            assert!(declares_pragma_solcore(solcore), "{solcore:?}");
+        }
+        for other in [
+            "",
+            "// pragma solcore;\n",
+            "pragma solidity ^0.8.0;\n",
+            "import * from std;\npragma solcore;\n",
+            "pragma solcore-extra;\n",
+            "pragma solcore x;\n",
+            "\u{feff}pragma solcore;\n",
+        ] {
+            assert!(!declares_pragma_solcore(other), "{other:?}");
+        }
+    }
 
     #[test]
     fn validates_identifiers_with_the_source_lexer() {

@@ -4,12 +4,12 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/solver/method_extra_forall/main.sol
 ---
 error[SC0299]: ambiguous inferred type
- --> /main/main.sol:7:6
-  |
-6 |
-7 | impl C<word> {
-  |      ^^^^^^^ ambiguous inferred type
-8 |     function f<b>(x: word) returns (word) where b: D {
-  |
-  = note: <b> function(word) returns (word) where b: D
-  = help: add a type annotation or a matching impl to fix the ambiguous type variable
+  --> /main/main.sol:9:6
+   |
+ 8 |
+ 9 | impl C<word> {
+   |      ^^^^^^^ ambiguous inferred type
+10 |     function f<b>(x: word) returns (word) where b: D {
+   |
+   = note: <b> function(word) returns (word) where b: D
+   = help: add a type annotation or a matching impl to fix the ambiguous type variable

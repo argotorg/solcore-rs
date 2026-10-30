@@ -4,11 +4,11 @@ expression: value
 input_file: crates/parser/tests/fixtures/corpus/fail/test/examples/cases/require-annotation-missing-both.sol
 ---
 error[SC0001]: named function parameter requires an explicit type
- --> /require-annotation-missing-both.sol:2:13
+ --> /require-annotation-missing-both.sol:4:13
   |
-1 | // Error: top-level free function with no annotations at all
-2 | function id(x) {
+3 | // Error: top-level free function with no annotations at all
+4 | function id(x) {
   |             ^
-3 |   return x;
+5 |   return x;
   |
   = note: while parsing function signature

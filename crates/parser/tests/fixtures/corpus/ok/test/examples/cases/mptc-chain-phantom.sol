@@ -1,3 +1,5 @@
+pragma solcore;
+
 // Tests resolveMPTCsFromPreds in a "chain" scenario:
 // - f has phantom rep in its monotype (Foo -> ())
 // - inside f, encode returns a value of type rep

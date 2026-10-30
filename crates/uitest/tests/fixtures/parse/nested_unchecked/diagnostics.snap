@@ -4,10 +4,10 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/parse/nested_unchecked/main.sol
 ---
 error[SC0001]: `unchecked` blocks cannot be nested
- --> /main/main.sol:3:9
+ --> /main/main.sol:5:9
   |
-2 |     unchecked {
-3 |         unchecked {
+4 |     unchecked {
+5 |         unchecked {
   |         ^^^^^^^^^
-4 |             return x + x;
+6 |             return x + x;
   |

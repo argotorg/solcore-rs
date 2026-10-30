@@ -1,3 +1,5 @@
+pragma solcore;
+
 // Error case: manual Generic instance without pragma no-generic-instance-for.
 // The compiler must reject this with a conflict error.
 

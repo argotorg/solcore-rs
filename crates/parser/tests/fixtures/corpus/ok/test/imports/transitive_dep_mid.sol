@@ -1,3 +1,5 @@
+pragma solcore;
+
 import { g } from transitive_dep_base;
 
 export { f };

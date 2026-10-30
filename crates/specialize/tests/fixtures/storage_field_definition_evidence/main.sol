@@ -1,3 +1,5 @@
+pragma solcore;
+
 import { keepLibReachable } from lib;
 import { keepCompetitorReachable } from competitor;
 

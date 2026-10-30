@@ -1,3 +1,5 @@
+pragma solcore;
+
 contract C {
     value: word;
 

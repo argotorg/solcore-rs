@@ -1,3 +1,5 @@
+pragma solcore;
+
 export { memory(*), storage(*), calldata(*), DynArray, array(*), uint256(*), address(*), string, Encoded(*), Decoded(*), concatLit, Add, Array, ArrayPush, Length, Typedef, CanStore, RValueIdxAccess };
 
 enum memory<t> {

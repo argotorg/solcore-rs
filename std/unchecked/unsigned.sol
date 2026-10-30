@@ -1,3 +1,5 @@
+pragma solcore;
+
 // std.unchecked.unsigned: unchecked (wrapping) arithmetic for word and
 // uint8..uint256.
 // The compiler desugars `+ - * / %` written inside an `unchecked { ... }` block

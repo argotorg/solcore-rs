@@ -1,3 +1,5 @@
+pragma solcore;
+
 import { add, sub, mul, div, mod, sdiv, smod, addmod as addmod_, mulmod as mulmod_, and as and_, or as or_, xor as xor_, shl, shr, eq, not as not_, gt as gt_, slt, sgt, iszero, keccak256, mstore, mload, mcopy, sstore, sload, gas, caller as caller_, callvalue as callvalue_, calldatasize, calldataload, calldatacopy, returndatasize, returndatacopy, log1 as log1_, call, staticcall, revert_, invalid } from std.opcodes;
 
 pragma no-patterson-condition ABIEncode, Num, Array, ArrayPush, Eq, Ord;

@@ -113,6 +113,7 @@ fn doc_id_yul_snapshot() {
         render_source(
             "doc_id",
             r#"
+pragma solcore;
 import * from std;
 import * from std.dispatch;
 
@@ -133,6 +134,7 @@ fn doc_option_maybe_yul_snapshot() {
         render_source(
             "doc_option_maybe",
             r#"
+pragma solcore;
 contract OptionDoc {
   enum Option<a> {None , Some(a)}
 
@@ -172,6 +174,7 @@ fn dispatch_basic_shape_yul_snapshot() {
         render_source(
             "dispatch_basic_shape",
             r#"
+pragma solcore;
 import * from std;
 import * from std.dispatch;
 
@@ -643,6 +646,7 @@ fn assembly_let_shadowing_does_not_substitute_shadowed_name() {
     let yul = render_source(
         "assembly_let_shadowing",
         r#"
+pragma solcore;
 contract AssemblyLetShadowing {
   function main() public returns (word) {
     let x : bool = false;
@@ -679,6 +683,7 @@ fn assembly_nested_block_shadowing_is_block_local() {
     let yul = render_source(
         "assembly_nested_block_shadowing",
         r#"
+pragma solcore;
 contract AssemblyNestedBlockShadowing {
   function main() public returns (word) {
     let x : bool = false;
@@ -713,6 +718,7 @@ fn assembly_function_params_and_returns_shadow_hull_locals() {
     let yul = render_source(
         "assembly_function_shadowing",
         r#"
+pragma solcore;
 contract AssemblyFunctionShadowing {
   function main() public returns (word) {
     let x : bool = false;
@@ -760,6 +766,7 @@ fn assembly_function_names_are_hoisted_for_forward_and_mutual_calls() {
     let yul = render_source(
         "assembly_function_mutual_recursion",
         r#"
+pragma solcore;
 contract AssemblyFunctionMutualRecursion {
   function main() public returns (word) {
     let result : word;
@@ -849,6 +856,7 @@ fn object_less_source_calls_its_mangled_main_before_returning() {
     let yul = render_source(
         "object_less_main",
         r#"
+pragma solcore;
 function main() returns (word) { return 42; }
 "#,
     );
@@ -866,6 +874,7 @@ fn value_equal_literal_spellings_emit_one_yul_case() {
     let yul = render_source(
         "equal_literal_spellings",
         r#"
+pragma solcore;
 contract C {
   function pick(x : word) returns (word) {
     match (x) {
@@ -904,6 +913,7 @@ fn hygienic_names_canonical_literals_and_break_validation() {
     let add_name_yul = render_source(
         "reserved_add_name",
         r#"
+pragma solcore;
 contract ReservedAddName {
   function main() public returns (word) {
     let add : word = 1;
@@ -918,6 +928,7 @@ contract ReservedAddName {
     let asm_shadow_yul = render_source(
         "asm_shadow",
         r#"
+pragma solcore;
 contract AsmShadow {
   function main() public returns (word) {
     let x : bool = false;
@@ -937,6 +948,7 @@ contract AsmShadow {
     let decimal_yul = render_source(
         "leading_zero_decimal",
         r#"
+pragma solcore;
 contract LeadingZeroDecimal {
   function main() public returns (word) {
     return 01;
@@ -964,6 +976,7 @@ contract LeadingZeroDecimal {
     let break_error = render_source_error(
         "asm_break_outside_loop",
         r#"
+pragma solcore;
 contract BadBreak {
   function main() public returns (word) {
     assembly { break }
@@ -980,6 +993,7 @@ contract BadBreak {
     let continue_error = render_source_error(
         "asm_continue_post",
         r#"
+pragma solcore;
 contract BadContinuePost {
   function main() public returns (word) {
     assembly { for {} 1 { continue } {} }
@@ -997,6 +1011,7 @@ contract BadContinuePost {
 #[test]
 fn strict_assembly_artifact_requires_one_top_level_object_or_selection() {
     let multi_contract = r#"
+pragma solcore;
 contract A {
   function main() public returns (word) { return 1; }
 }
@@ -1041,6 +1056,7 @@ fn solc_strict_assembly_compiles_snapshots_and_repros_when_present() {
         render_source(
             "repro_reserved_add_name",
             r#"
+pragma solcore;
 contract C {
   function main() public returns (word) {
     let add : word = 1;
@@ -1055,6 +1071,7 @@ contract C {
         render_source(
             "repro_decimal_leading_zero",
             r#"
+pragma solcore;
 contract C {
   function main() public returns (word) {
     return 01;
@@ -1068,6 +1085,7 @@ contract C {
         render_source(
             "repro_assembly_shadow_lvalue",
             r#"
+pragma solcore;
 contract C {
   function main() public returns (word) {
     let x : bool = false;
@@ -1090,6 +1108,7 @@ fn nested_pair_tail_binding_preserves_the_tail_product() {
     let yul = render_source(
         "nested_pair_tail_binding",
         r#"
+pragma solcore;
 function nestedSnd<a,b>(p: (a, b)) returns (b) {
   assembly { mstore(0, 0) }
   match (p) {
@@ -1390,6 +1409,7 @@ fn snapshot_yul_cases() -> Vec<(String, String)> {
             render_source(
                 "doc_id",
                 r#"
+pragma solcore;
 import * from std;
 import * from std.dispatch;
 
@@ -1406,6 +1426,7 @@ contract IdDoc {
             render_source(
                 "doc_option_maybe",
                 r#"
+pragma solcore;
 contract OptionDoc {
   enum Option<a> {None , Some(a)}
 
@@ -1439,6 +1460,7 @@ case Option.Some(x) { return x; }}
             render_source(
                 "dispatch_basic_shape",
                 r#"
+pragma solcore;
 import * from std;
 import * from std.dispatch;
 

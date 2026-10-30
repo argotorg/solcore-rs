@@ -65,9 +65,8 @@ mod tests {
 
     #[test]
     fn formats_inline_statements_and_spacing() {
-        let source = "function main(x:word)returns(word){let y=x+1;return y;}";
-        let expected =
-            "function main(x: word) returns (word) {\n  let y = x + 1;\n  return y;\n}\n";
+        let source = "pragma solcore; function main(x:word)returns(word){let y=x+1;return y;}";
+        let expected = "pragma solcore;\nfunction main(x: word) returns (word) {\n  let y = x + 1;\n  return y;\n}\n";
         let options = options(2, true);
         let (world, uri) = world_with_main(source);
 
@@ -83,27 +82,28 @@ mod tests {
 
     #[test]
     fn formats_whole_document_without_touching_braces_in_trivia() {
-        let source = "function main() returns (word) {   \nreturn \"{\";\n/* } { */\nif (true) {\nreturn 1; // }\n}\n}\n\n";
-        let expected = "function main() returns (word) {\n  return \"{\";\n  /* } { */\n  if (true) {\n    return 1; // }\n  }\n}\n";
+        let source = "pragma solcore;\nfunction main() returns (word) {   \nreturn \"{\";\n/* } { */\nif (true) {\nreturn 1; // }\n}\n}\n\n";
+        let expected = "pragma solcore;\nfunction main() returns (word) {\n  return \"{\";\n  /* } { */\n  if (true) {\n    return 1; // }\n  }\n}\n";
         let (world, uri) = world_with_main(source);
 
         let edits = handle_formatting(&world, &uri, &options(2, true)).expect("formatting");
         assert_eq!(edits.len(), 1);
         assert_eq!(edits[0].new_text, expected);
-        assert_eq!(edits[0].range.end, Position::new(8, 0));
+        assert_eq!(edits[0].range.end, Position::new(9, 0));
     }
 
     #[test]
     fn respects_tabs_and_crlf_with_utf16_edit_range() {
-        let source = "function main() returns (string) {\r\nreturn \"😀\";}";
-        let expected = "function main() returns (string) {\r\n\treturn \"😀\";\r\n}\r\n";
+        let source = "pragma solcore;\r\nfunction main() returns (string) {\r\nreturn \"😀\";}";
+        let expected =
+            "pragma solcore;\r\nfunction main() returns (string) {\r\n\treturn \"😀\";\r\n}\r\n";
         let options = options(8, false);
         let (world, uri) = world_with_main(source);
 
         let edits = handle_formatting(&world, &uri, &options).expect("formatting");
         assert_eq!(edits.len(), 1);
         assert_eq!(edits[0].new_text, expected);
-        assert_eq!(edits[0].range.end, Position::new(1, 13));
+        assert_eq!(edits[0].range.end, Position::new(2, 13));
 
         let (world, uri) = world_with_main(&edits[0].new_text);
         assert_eq!(handle_formatting(&world, &uri, &options), Some(Vec::new()));
@@ -111,7 +111,7 @@ mod tests {
 
     #[test]
     fn already_formatted_document_needs_no_edit() {
-        let source = "function main() returns (word) {\n  return 1;\n}\n";
+        let source = "pragma solcore;\nfunction main() returns (word) {\n  return 1;\n}\n";
         let (world, uri) = world_with_main(source);
 
         assert_eq!(
@@ -131,12 +131,12 @@ mod tests {
     fn preserves_multiline_payloads_while_formatting_surrounding_source() {
         for (source, expected) in [
             (
-                "function main()returns(string){return \"first\n    second  \";}\n",
-                "function main() returns (string) {\n  return \"first\n    second  \";\n}\n",
+                "pragma solcore;\nfunction main()returns(string){return \"first\n    second  \";}\n",
+                "pragma solcore;\nfunction main() returns (string) {\n  return \"first\n    second  \";\n}\n",
             ),
             (
-                "function main() returns (word) {\n/* markdown\n    indented code  \n*/\nreturn 1;\n}\n",
-                "function main() returns (word) {\n  /* markdown\n    indented code  \n*/\n  return 1;\n}\n",
+                "pragma solcore;\nfunction main() returns (word) {\n/* markdown\n    indented code  \n*/\nreturn 1;\n}\n",
+                "pragma solcore;\nfunction main() returns (word) {\n  /* markdown\n    indented code  \n*/\n  return 1;\n}\n",
             ),
         ] {
             let (world, uri) = world_with_main(source);
@@ -149,10 +149,10 @@ mod tests {
     #[test]
     fn malformed_source_needs_no_edit() {
         for source in [
-            "function main() {\n  let text = \"café   ",
-            "function main() {\n  /* markdown   ",
-            "function main(){return 1+;}",
-            "function main( { let value=1; }",
+            "pragma solcore;\nfunction main() {\n  let text = \"café   ",
+            "pragma solcore;\nfunction main() {\n  /* markdown   ",
+            "pragma solcore; function main(){return 1+;}",
+            "pragma solcore; function main( { let value=1; }",
         ] {
             let (world, uri) = world_with_main(source);
             assert_eq!(
@@ -165,8 +165,9 @@ mod tests {
 
     #[test]
     fn honors_disabled_trailing_whitespace_trimming() {
-        let source = "function main() returns (word) {   \n   \nreturn 1;   \n}\n";
-        let expected = "function main() returns (word) {   \n   \n  return 1;   \n}\n";
+        let source = "pragma solcore;\nfunction main() returns (word) {   \n   \nreturn 1;   \n}\n";
+        let expected =
+            "pragma solcore;\nfunction main() returns (word) {   \n   \n  return 1;   \n}\n";
         let (world, uri) = world_with_main(source);
         let mut options = options(2, true);
         options.trim_trailing_whitespace = Some(false);
@@ -178,8 +179,8 @@ mod tests {
     #[test]
     fn unspecified_newline_options_preserve_final_newlines() {
         for ending in ["", "\n", "\n\n"] {
-            let source = format!("function main(){{return 1;}}{ending}");
-            let expected = format!("function main() {{\n  return 1;\n}}{ending}");
+            let source = format!("pragma solcore;\nfunction main(){{return 1;}}{ending}");
+            let expected = format!("pragma solcore;\nfunction main() {{\n  return 1;\n}}{ending}");
             let (world, uri) = world_with_main(&source);
             let options = FormattingOptions {
                 tab_size: 2,

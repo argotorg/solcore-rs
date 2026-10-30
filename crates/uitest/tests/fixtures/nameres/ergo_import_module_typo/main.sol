@@ -1,3 +1,5 @@
+pragma solcore;
+
 import { helperValue } from helprs;
 
 function main() returns (word) {

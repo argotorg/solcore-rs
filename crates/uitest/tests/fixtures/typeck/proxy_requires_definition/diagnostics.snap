@@ -4,20 +4,20 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/proxy_requires_definition/main.sol
 ---
 error[SC0103]: undefined type constructor: Proxy
- --> /main/main.sol:2:12
+ --> /main/main.sol:4:12
   |
-1 | function value() returns (word) {
-2 |     return @word;
+3 | function value() returns (word) {
+4 |     return @word;
   |            ^^^^^ undefined type constructor
-3 | }
+5 | }
   |
 ---
 
 error[SC0103]: undefined type constructor: Proxy
- --> /main/main.sol:6:17
+ --> /main/main.sol:8:17
   |
-5 | function inferred() {
-6 |     let proxy = @word;
+7 | function inferred() {
+8 |     let proxy = @word;
   |                 ^^^^^ undefined type constructor
-7 | }
+9 | }
   |

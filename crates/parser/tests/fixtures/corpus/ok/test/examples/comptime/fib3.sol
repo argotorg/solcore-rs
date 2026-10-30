@@ -1,3 +1,5 @@
+pragma solcore;
+
 import * from std;
 
 function fib3(n: word) returns (word) {

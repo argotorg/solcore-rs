@@ -4,11 +4,11 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/solver/ergo_inst_wrong_kind/main.sol
 ---
 error[SC0299]: Invalid number of type arguments!
- --> /main/main.sol:7:8
+ --> /main/main.sol:9:8
   |
-5 | trait C<a> {}
-6 |
-7 | impl C<Box> {}
+7 | trait C<a> {}
+8 |
+9 | impl C<Box> {}
   |        ^^^ diagnostic reported here
   |
   = note: Type Box is expected to have 1 type arguments

@@ -1,3 +1,5 @@
+pragma solcore;
+
 // Bug: local variable named `rep` causes name capture with the type variable `rep`
 // from `class abs : Typedef(rep)`. Resolution must retain the qualifier
 // when distinguishing local variables from class methods. Ignoring it caused

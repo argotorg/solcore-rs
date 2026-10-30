@@ -1,3 +1,5 @@
+pragma solcore;
+
 enum mapping<key, value> {
     mapping(word)
 }

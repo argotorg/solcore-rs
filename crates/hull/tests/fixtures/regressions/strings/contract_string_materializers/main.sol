@@ -1,3 +1,5 @@
+pragma solcore;
+
 import { memory, string } from std;
 
 contract A {

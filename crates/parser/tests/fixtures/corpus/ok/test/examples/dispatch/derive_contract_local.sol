@@ -1,3 +1,5 @@
+pragma solcore;
+
 // Runtime test: `#[derive(Eq, Ord)]` on data types declared INSIDE a contract.
 // The derived instances are top-level, but the types stay contract-local; each
 // public function returns uint256(1) for true / uint256(0) for false.

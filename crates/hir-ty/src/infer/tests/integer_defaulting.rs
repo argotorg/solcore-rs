@@ -2,6 +2,7 @@ use super::*;
 
 // Keep both word and uint256 instances so arithmetic alone cannot select one.
 const NUMERIC_STD: &str = r#"
+pragma solcore;
 export { uint256(*), Sub, Ord };
 enum uint256 { uint256(word) }
 impl Int<uint256> {
@@ -33,6 +34,7 @@ fn arithmetic_literals_default_to_canonical_uint256() {
     for extra in ["", "enum uint256 { Impostor(word) }"] {
         let source = format!(
             r#"
+pragma solcore;
 import * from std;
 {extra}
 function f() returns (bool) {{
@@ -69,6 +71,7 @@ function f() returns (bool) {{
 fn explicit_word_and_generic_numeric_contexts_are_preserved() {
     let (db, key) = numeric_db(
         r#"
+pragma solcore;
 import * from std;
 function f() returns (bool) {
     let x: word = 0;
@@ -108,7 +111,7 @@ fn infer_root_literal<'db>(db: &'db TestDb, module: Module<'db>) -> InferenceRes
 
 #[test]
 fn unconstrained_root_literal_uses_checked_type_without_name_lookup() {
-    let (db, key) = numeric_db("function f() returns (word) { return 1; }");
+    let (db, key) = numeric_db("pragma solcore; function f() returns (word) { return 1; }");
     let module = module_hir(&db, module_id_from_key(&db, &key)).unwrap();
     let result = infer_root_literal(&db, module);
     assert!(result.diagnostics.is_empty(), "{:?}", result.diagnostics);
@@ -124,7 +127,7 @@ fn missing_std_does_not_default_to_word_or_a_same_named_user_type() {
         let db = TestDb::default();
         let module = parse_module(
             &db,
-            &format!("{declaration} function f() returns (word) {{ return 1; }}"),
+            &format!("pragma solcore; {declaration} function f() returns (word) {{ return 1; }}"),
         );
         let result = infer_root_literal(&db, module);
         assert!(
@@ -155,6 +158,7 @@ fn invalid_numeric_patterns_without_std_do_not_trigger_defaulting_errors() {
             &db,
             &format!(
                 r#"
+pragma solcore;
 function f(x: bool) returns (bool) {{
     match (x) {{
         case {literal} {{ return true; }}
@@ -181,6 +185,7 @@ function f(x: bool) returns (bool) {{
 fn uint256_numeric_patterns_share_constructor_coverage() {
     let (db, key) = numeric_db(
         r#"
+pragma solcore;
 import * from std;
 function f(x: uint256) returns (bool) {
     match (x) {
@@ -203,6 +208,7 @@ function f(x: uint256) returns (bool) {
 fn implicit_literal_pattern_uses_checked_default() {
     let (db, key) = numeric_db(
         r#"
+pragma solcore;
 import * from std;
 function f() returns (bool) {
     let x = 0;
@@ -230,6 +236,7 @@ fn uint256_numeric_patterns_reject_values_outside_the_range() {
         for context in ["x: uint256", "x"] {
             let source = format!(
                 r#"
+pragma solcore;
 import * from std;
 function f({context}) returns (bool) {{
     match (x) {{

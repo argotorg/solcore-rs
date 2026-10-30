@@ -4,22 +4,22 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/nameres/unqualified_ctor_pattern_direction/main.sol
 ---
 error[SC0106]: unqualified constructor: north
- --> /main/main.sol:8:14
-  |
-7 |     match (d) {
-8 |         case north {
-  |              ^^^^^ constructor must be qualified
-9 |             return 1;
-  |
-  = help: use `direction.north`
+  --> /main/main.sol:10:14
+   |
+ 9 |     match (d) {
+10 |         case north {
+   |              ^^^^^ constructor must be qualified
+11 |             return 1;
+   |
+   = help: use `direction.north`
 ---
 
 error[SC0106]: unqualified constructor: south
-  --> /main/main.sol:11:14
+  --> /main/main.sol:13:14
    |
-10 |         }
-11 |         case south {
+12 |         }
+13 |         case south {
    |              ^^^^^ constructor must be qualified
-12 |             return 2;
+14 |             return 2;
    |
    = help: use `direction.south`

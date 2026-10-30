@@ -1,3 +1,5 @@
+pragma solcore;
+
 // An uninitialized Yul `let x` must introduce the binding so that later
 // assignments and reads of `x` resolve and are type-checked as `word`.
 // Before the fix `tcYulStmt` dropped `YLet ns Nothing`, so `x` never entered

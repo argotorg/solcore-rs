@@ -1,1 +1,3 @@
+pragma solcore;
+
 function main(renamed: word) returns (word) { let other: word; assembly { renamed, other := pair(renamed) function pair(input) -> a, b { a := input b := input } } return renamed; }
