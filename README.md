@@ -23,8 +23,8 @@ platform, [build from source](#build-and-test).
 ### macOS and Linux
 
 1. Choose a [release](https://github.com/argotorg/solcore-rs/releases) version
-   and the target for your machine. Only targets attached to that release are
-   available.
+   and the target for your machine. The current release, `0.1.0-alpha`, is an
+   alpha prerelease. Only targets attached to that release are available.
 
    | Platform | Target |
    | --- | --- |
@@ -37,7 +37,7 @@ platform, [build from source](#build-and-test).
    verify the archive. For example, on Apple Silicon macOS:
 
    ```sh
-   version=0.1.0
+   version=0.1.0-alpha
    target=aarch64-apple-darwin
    release="solcore-v${version}-${target}"
    archive="${release}.tar.gz"

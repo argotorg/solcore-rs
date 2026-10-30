@@ -2,7 +2,7 @@
   "name": "solcore-language",
   "displayName": "Solcore Language",
   "description": "Solcore language support with the compiler-integrated language server.",
-  "version": "0.1.0",
+  "version": "0.1.0-alpha",
   "publisher": "solcore",
   "license": "Apache-2.0",
   "main": "./extension.js",

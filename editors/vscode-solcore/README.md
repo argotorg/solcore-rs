@@ -16,7 +16,7 @@ Download the `.vsix` file from the same GitHub release. In VS Code, run
 **Extensions: Install from VSIX**, or use:
 
 ```sh
-code --install-extension /path/to/solcore-language-0.1.0.vsix
+code --install-extension /path/to/solcore-language-0.1.0-alpha.vsix
 ```
 
 This distribution does not require a Marketplace publisher account. Upgrading
@@ -56,7 +56,7 @@ Node.js 22 or newer is required by the pinned packaging tool:
 ```sh
 npm ci
 npm run test:unit
-npm run package -- --out /absolute/path/to/solcore-language-0.1.0.vsix
+npm run package -- --out /absolute/path/to/solcore-language-0.1.0-alpha.vsix
 ```
 
 The lockfile pins the packaging tool and language client dependencies. Packaging
