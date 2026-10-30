@@ -1,30 +1,32 @@
 import * from std;
-import { sload, sstore } from std.opcodes;
-import { sender } from context;
+import * from std.Generic;
+import * from std.StorageGeneric;
 
-export { owner, initOwner, requireOwner, transferOwnership };
+// Ownable is exported without its constructor and fields: other modules
+// create and read it only through the functions below.
+export { Ownable, ownedBy, ownerOf, requireOwner, transferred };
 
-// Owner address owned by this module at an ERC-7201 namespaced slot. The
-// zero address doubles as the not-yet-initialized state.
-
-function ownerSlot() returns (word) {
-    return Typedef.rep(erc7201("token.ownable"));
+// The owner of a contract.
+struct Ownable {
+    owner: address;
 }
 
-function owner() returns (address) {
-    return address(sload(ownerSlot()));
+function ownedBy(who: address) returns (Ownable) {
+    return Ownable(who);
 }
 
-function initOwner(who: address) {
-    require(owner() == address(0), "already initialized");
-    sstore(ownerSlot(), Typedef.rep(who));
+function ownerOf(state: Ownable) returns (address) {
+    return state.owner;
 }
 
-function requireOwner() {
-    require(sender() == owner(), "not the owner");
+// Reverts unless the caller is the owner.
+function requireOwner(state: Ownable) {
+    require(msgSender() == state.owner, "not the owner");
 }
 
-function transferOwnership(to: address) {
-    requireOwner();
-    sstore(ownerSlot(), Typedef.rep(to));
+// Returns the state with `to` as the owner. Reverts unless the caller is
+// the owner.
+function transferred(state: Ownable, to: address) returns (Ownable) {
+    requireOwner(state);
+    return Ownable(to);
 }

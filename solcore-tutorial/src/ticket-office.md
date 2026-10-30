@@ -40,11 +40,11 @@ Complete the tasks below and add checks for the required behavior.
 | `pricing.sol` | Declare `Priced`, implement it for `Standard` and `Premium`, and share the generic quote calculation. |
 | `booking.sol` | Represent an empty or active booking and inspect its payload using `match`. |
 | `TicketOffice.sol` | Store bookings, enforce capacity and lifecycle rules, and expose public functions. |
-| `context.sol` | Supply `sender()`, the address of the account making the current call. |
 
 The supplied `mapping(address => Booking)` stores a separate `Booking` for each account address.
 An unset entry reads as the first enum variant, `Booking.Empty`.
-Indexing it with `sender()` lets a caller change their own entry without supplying someone else's address.
+`msgSender()` from std returns the address of the account making the current call.
+Indexing the mapping with it lets a caller change their own entry without supplying someone else's address.
 The constructor saves its caller as the organizer; the supplied `close()` checks that identity before changing the `Sale` enum.
 
 `capacity()` uses a `comptime` helper to multiply 3 rows by 4 seats while compiling.

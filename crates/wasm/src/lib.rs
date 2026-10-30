@@ -988,10 +988,6 @@ mod tests {
                 include_str!("../../../playground/src/examples/composition/Vaults.sol"),
             ),
             (
-                "context.sol",
-                include_str!("../../../playground/src/examples/composition/context.sol"),
-            ),
-            (
                 "engine.sol",
                 include_str!("../../../playground/src/examples/composition/engine.sol"),
             ),

@@ -3,7 +3,6 @@
 // crossings then need override(...) lists. Traits have one impl per type,
 // so there is nothing to disambiguate.
 import * from std;
-import { sender } from context;
 
 export {
     TxnContext,
@@ -29,7 +28,7 @@ enum Direct {
 
 impl TxnContext<Direct> {
     function originator(ctx: Direct) returns (address) {
-        return sender();
+        return msgSender();
     }
 }
 

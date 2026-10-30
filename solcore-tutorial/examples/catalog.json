@@ -61,8 +61,7 @@
     "entry": "MiniNFT.sol",
     "files": [
       "MiniNFT.sol",
-      "option.sol",
-      "context.sol"
+      "option.sol"
     ]
   },
   {
@@ -72,8 +71,7 @@
     "entry": "Vaults.sol",
     "files": [
       "Vaults.sol",
-      "engine.sol",
-      "context.sol"
+      "engine.sol"
     ]
   },
   {
@@ -89,17 +87,14 @@
   {
     "id": "extensions",
     "name": "Extensions",
-    "description": "A token composed from feature modules: each owns its storage and ships a transfer hook, chained once in a single update function.",
+    "description": "A token built from owner, pause and cap modules: each module exports a state struct that the contract stores as a field, and transfer, mint and burn all call one update function.",
     "entry": "Token.sol",
     "files": [
       "Token.sol",
       "erc20core.sol",
       "pausable.sol",
       "capped.sol",
-      "ownable.sol",
-      "hooks.sol",
-      "option.sol",
-      "context.sol"
+      "ownable.sol"
     ]
   },
   {
@@ -109,8 +104,7 @@
     "entry": "Vault.sol",
     "files": [
       "Vault.sol",
-      "reentrancy.sol",
-      "context.sol"
+      "reentrancy.sol"
     ]
   },
   {
@@ -157,8 +151,7 @@
     "files": [
       "TicketOffice.sol",
       "pricing.sol",
-      "booking.sol",
-      "context.sol"
+      "booking.sol"
     ]
   },
   {
@@ -169,8 +162,7 @@
     "files": [
       "TicketOffice.sol",
       "pricing.sol",
-      "booking.sol",
-      "context.sol"
+      "booking.sol"
     ]
   }
 ]

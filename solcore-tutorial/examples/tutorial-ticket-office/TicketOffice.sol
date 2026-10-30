@@ -4,7 +4,6 @@ import * from std.Generic;
 import * from std.StorageGeneric;
 import { Standard, Premium, quote } from pricing;
 import { Booking, seatsOf, costOf } from booking;
-import { sender } from context;
 
 enum Sale {
     Open,
@@ -24,7 +23,7 @@ contract TicketOffice {
     bookings: mapping(address => Booking);
 
     constructor() {
-        organizer = sender();
+        organizer = msgSender();
         sale = Sale.Open;
     }
 
@@ -51,12 +50,12 @@ contract TicketOffice {
     function validate(quantity: uint256) {
         require(isOpen(), "sales closed");
         require(quantity > uint256(0), "choose at least one seat");
-        require(seatsOf(bookings[sender()]) == uint256(0), "already reserved");
+        require(seatsOf(bookings[msgSender()]) == uint256(0), "already reserved");
         require(quantity <= remaining(), "not enough seats");
     }
 
     function record(quantity: uint256, quotedCost: uint256) returns (uint256) {
-        bookings[sender()] = Booking.Active(quantity, quotedCost);
+        bookings[msgSender()] = Booking.Active(quantity, quotedCost);
         reserved = reserved + quantity;
         return quotedCost;
     }
@@ -74,12 +73,12 @@ contract TicketOffice {
 
     // #[() -> 3]
     function mySeats() public returns (uint256) {
-        return seatsOf(bookings[sender()]);
+        return seatsOf(bookings[msgSender()]);
     }
 
     // #[() -> 30]
     function myQuote() public returns (uint256) {
-        return costOf(bookings[sender()]);
+        return costOf(bookings[msgSender()]);
     }
 
     // #[() -> 30]
@@ -87,10 +86,10 @@ contract TicketOffice {
     // #[() -> revert]
     function cancel() public returns (uint256) {
         require(isOpen(), "sales closed");
-        match (bookings[sender()]) {
+        match (bookings[msgSender()]) {
             case Booking.Active(quantity, quotedCost) {
                 reserved = reserved - quantity;
-                bookings[sender()] = Booking.Empty;
+                bookings[msgSender()] = Booking.Empty;
                 return quotedCost;
             }
             case Booking.Empty {
@@ -114,7 +113,7 @@ contract TicketOffice {
     // #[send()]
     // #[() -> revert]
     function close() public {
-        require(sender() == organizer, "organizer only");
+        require(msgSender() == organizer, "organizer only");
         require(isOpen(), "already closed");
         sale = Sale.Closed;
     }

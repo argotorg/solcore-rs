@@ -1,6 +1,5 @@
 import * from std;
 import * from std.dispatch;
-import { sender } from context;
 import { Change, apply } from erc20core;
 import { Pausable, pauseState, isPaused, requireNotPaused } from pausable;
 import { Capped, cappedAt, requireWithinCap } from capped;
@@ -16,7 +15,7 @@ contract Token {
     supply: uint256;
 
     constructor() {
-        ownable = ownedBy(sender());
+        ownable = ownedBy(msgSender());
         capped = cappedAt(uint256(1000000));
     }
 
@@ -30,7 +29,7 @@ contract Token {
     }
 
     function transfer(to: address, amount: uint256) public {
-        update(Change.Transfer(sender(), to), amount);
+        update(Change.Transfer(msgSender(), to), amount);
     }
 
     function mint(to: address, amount: uint256) public {
@@ -39,7 +38,7 @@ contract Token {
     }
 
     function burn(amount: uint256) public {
-        update(Change.Burn(sender()), amount);
+        update(Change.Burn(msgSender()), amount);
     }
 
     function balanceOf(who: address) public returns (uint256) {
