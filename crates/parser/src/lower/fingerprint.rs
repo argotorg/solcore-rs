@@ -230,6 +230,9 @@ fn canonical_ty_fingerprint(ty: &ParsedTy<'_>, type_vars: &[(&str, usize)]) -> O
         ParsedTyKind::Proxy { inner, .. } => {
             canonical_ty_fingerprint(inner, type_vars).map(|inner| format!("Proxy({inner})"))
         }
+        ParsedTyKind::Array { elem, .. } => {
+            canonical_ty_fingerprint(elem, type_vars).map(|elem| format!("{elem}[]"))
+        }
         ParsedTyKind::Fn {
             params,
             params_span: _,

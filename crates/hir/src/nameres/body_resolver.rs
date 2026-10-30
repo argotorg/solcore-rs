@@ -167,6 +167,7 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
                 };
                 self.map.record_expr(body, expr_id, resolution);
             }
+            ExprKind::NewArray { ty, .. } => self.ty(*ty),
             ExprKind::Proxy { ty, .. } => {
                 self.ty(*ty);
                 if let Some(resolution) = self.lookup_type("Proxy") {
@@ -200,6 +201,12 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
             ExprKind::Index { base, index } => {
                 self.expr(body, *base);
                 self.expr(body, *index);
+            }
+            ExprKind::Slice { base, start, end } => {
+                self.expr(body, *base);
+                for bound in start.iter().chain(end) {
+                    self.expr(body, *bound);
+                }
             }
             ExprKind::Call { callee, args } => {
                 self.call_callee(body, *callee);
@@ -407,7 +414,9 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
                 }
                 self.ty(*ret);
             }
-            TypeRefKind::Comptime { inner, .. } => self.ty(*inner),
+            TypeRefKind::Comptime { inner, .. } | TypeRefKind::Array { elem: inner, .. } => {
+                self.ty(*inner)
+            }
             TypeRefKind::Tuple { elems } => {
                 for elem in elems.atom() {
                     self.ty(*elem);
@@ -502,26 +511,28 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
             return;
         }
 
-        let base_resolution = match &body.exprs(self.db).get(base).kind {
+        // A named receiver must denote a value; any other receiver expression
+        // (`xs[i].push(v)`, `make().length()`) is a value already.
+        let base_is_value = match &body.exprs(self.db).get(base).kind {
             ExprKind::Ident(name) => {
                 let resolution = self.resolve_ident(name);
                 self.map.record_expr(body, base, resolution.clone());
-                Some(resolution)
+                matches!(
+                    resolution,
+                    Resolution::Field(_)
+                        | Resolution::Local(
+                            LocalBinding::Let { .. } | LocalBinding::Pattern { .. }
+                        )
+                        | Resolution::Param(_)
+                )
             }
             _ => {
                 self.expr(body, base);
-                None
+                true
             }
         };
 
-        if !matches!(
-            base_resolution,
-            Some(
-                Resolution::Field(_)
-                    | Resolution::Local(LocalBinding::Let { .. } | LocalBinding::Pattern { .. })
-                    | Resolution::Param(_)
-            )
-        ) {
+        if !base_is_value {
             return;
         }
 

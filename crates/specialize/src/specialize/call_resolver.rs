@@ -602,11 +602,11 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
     /// Returns the implicit receiver for value-receiver UFCS calls.
     ///
     /// Name resolution deliberately records the dotted callee as a class
-    /// method without rewriting the source HIR. Keep the recognition narrow:
-    /// only a bare contract field, value local, or parameter may supply an
-    /// implicit first argument. Type-variable bindings, qualified
-    /// class/module calls, and arbitrary dotted expressions retain their
-    /// existing argument lists.
+    /// method without rewriting the source HIR. A named receiver supplies the
+    /// implicit first argument only when it is a contract field, value local,
+    /// or parameter; type-variable bindings and qualified class/module calls
+    /// retain their existing argument lists. Any other receiver expression,
+    /// such as `xs[i]` or a call result, is a value.
     fn ufcs_receiver(
         &self,
         callee: Id<Expr<'db>>,
@@ -625,7 +625,7 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
             &self.body.exprs(self.driver.db).get(*base).kind,
             ExprKind::Ident(_)
         ) {
-            return None;
+            return Some(*base);
         }
         matches!(
             self.expr_resolution(*base),

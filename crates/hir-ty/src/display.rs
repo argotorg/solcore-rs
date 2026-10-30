@@ -153,6 +153,7 @@ pub(crate) fn display_type_ref_source<'db>(db: &'db dyn HirDb, ty: TypeRef<'db>)
             }
             out
         }
+        TypeRefKind::Array { elem, .. } => format!("{}[]", display_type_ref_source(db, *elem)),
         TypeRefKind::Fn { params, ret } => format!(
             "function({}) returns ({})",
             params

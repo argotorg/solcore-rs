@@ -624,13 +624,23 @@ fn memory_dyn_array_index_returns_element_and_requires_word_typedefs(fixture: Fi
         result.obligations
     );
 
-    for name in ["write", "compound", "annotatedWrite", "annotatedCompound"] {
+    // Memory arrays are writable, as in Solidity: the element is updated in
+    // place through the std LValueIdxAccess instance.
+    for name in ["write", "annotatedWrite"] {
         let (_, write) = infer_module_function_with_solver(&db, module, name);
         assert!(
-            write.diagnostics.iter().any(|diagnostic| matches!(
+            write.diagnostics.is_empty(),
+            "{name}: {:?}",
+            write.diagnostics
+        );
+    }
+    // Compound writes type-check too; this minimal std only lacks `Add`.
+    for name in ["compound", "annotatedCompound"] {
+        let (_, write) = infer_module_function_with_solver(&db, module, name);
+        assert!(
+            write.diagnostics.iter().all(|diagnostic| matches!(
                 diagnostic,
-                TypeckDiagnostic::Mismatch { expected, .. }
-                    if expected == "assignable storage-backed index"
+                TypeckDiagnostic::UnsatisfiedConstraint { pred, .. } if pred == "word: Add"
             )),
             "{name}: {:?}",
             write.diagnostics
@@ -710,30 +720,22 @@ fn calldata_array_index_rejects_plain_and_compound_writes(fixture: Fixture<&str>
 }
 
 #[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/inference/same_named_non_std_calldata_array_is_not_indexable", glob: "main.sol")]
-fn same_named_non_std_calldata_array_is_not_indexable(fixture: Fixture<&str>) {
+fn same_named_non_std_calldata_array_has_no_calldata_semantics(fixture: Fixture<&str>) {
     let (db, key) = db_with_array_std(fixture.content());
     let module = module_id_from_key(&db, &key);
     let (_, result) = infer_module_function_with_solver(&db, module, "read");
 
+    // Spelling alone gives no calldata semantics: the user type is indexed
+    // like any other collection, which needs an `RValueIdxAccess` instance it
+    // does not have.
     assert!(
-        result.diagnostics.iter().any(|diagnostic| matches!(
-            diagnostic,
-            TypeckDiagnostic::Mismatch { expected, .. }
-                if expected == "indexable collection"
-        )),
+        matches!(
+            result.diagnostics.as_slice(),
+            [TypeckDiagnostic::UnsatisfiedConstraint { pred, .. }]
+                if pred == "pair<calldata<array<word>>, word>: RValueIdxAccess<word>"
+        ),
         "{:?}",
         result.diagnostics
-    );
-    assert!(
-        !result.obligations.iter().any(|obligation| matches!(
-            obligation.pred.kind(&db),
-            PredKind::InClass {
-                class: ClassId::User(class),
-                ..
-            } if class.name(&db).as_deref() == Some("RValueIdxAccess")
-        )),
-        "{:?}",
-        result.obligations
     );
 }
 

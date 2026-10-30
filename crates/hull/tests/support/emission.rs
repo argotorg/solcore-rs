@@ -84,20 +84,22 @@ fn checked_typedef_array_operations(fixture: Fixture<&str>) {
             },
         ),
         (
-            "std_storageArrayElement".into(),
+            // Memory array indexing goes through the std LValueIdxAccess
+            // instance: one bounds check against the length word.
+            "$pairLmemory_".into(),
             TextChecks {
-                contains: vec!["std_hash1".into(), "std_storageArrayOffset".into()],
+                contains: vec![
+                    "opcodes_mload".into(),
+                    "std_out_of_bounds".into(),
+                    "Typedef_rep".into(),
+                ],
                 ..TextChecks::default()
             },
         ),
         (
-            "__solcore_memory_array_index".into(),
+            "std_storageArrayElement".into(),
             TextChecks {
-                contains: vec![
-                    "lt(index, mload(base))".into(),
-                    "0xb4120f14".into(),
-                    "mload(add(add(base, 32), mul(index, 32)))".into(),
-                ],
+                contains: vec!["std_hash1".into(), "std_storageArrayOffset".into()],
                 ..TextChecks::default()
             },
         ),

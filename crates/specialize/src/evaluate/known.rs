@@ -401,7 +401,6 @@ pub(super) fn lvalue_root_name(expr: &MonoExpr<'_>) -> Option<String> {
     match &expr.kind {
         MonoExprKind::Var(id) => Some(id.name.clone()),
         MonoExprKind::Index { base, .. }
-        | MonoExprKind::MemoryArrayIndex { base, .. }
         | MonoExprKind::StorageIndex { base, .. }
         | MonoExprKind::Field { base, .. }
         | MonoExprKind::TypeAnnot { expr: base, .. } => lvalue_root_name(base),

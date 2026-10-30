@@ -290,6 +290,10 @@ pub(super) fn lower_type_ref<'db>(
         ParsedTyKind::Tuple { elems } => {
             return lower_type_list_ref(db, anchor, base_start, ty_span, elems);
         }
+        ParsedTyKind::Array { elem, brackets } => ty::TypeRefKind::Array {
+            elem: lower_type_ref(db, anchor, base_start, *elem),
+            brackets: span_from_absolute(anchor, brackets, base_start),
+        },
         ParsedTyKind::Error => ty::TypeRefKind::Error {
             span: span_from_absolute(anchor, ty_span, base_start),
         },

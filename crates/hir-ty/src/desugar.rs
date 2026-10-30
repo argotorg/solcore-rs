@@ -813,7 +813,9 @@ impl<'db> ModuleCollector<'db> {
                 }
                 self.type_ref(*ret);
             }
-            TypeRefKind::Comptime { inner, .. } => self.type_ref(*inner),
+            TypeRefKind::Comptime { inner, .. } | TypeRefKind::Array { elem: inner, .. } => {
+                self.type_ref(*inner)
+            }
             TypeRefKind::Tuple { elems } => {
                 self.types.push(TypeProductDesugar {
                     ty,
@@ -962,6 +964,12 @@ impl<'db> BodyCollector<'db> {
                 self.expr(*base);
                 self.expr(*index);
             }
+            ExprKind::Slice { base, start, end } => {
+                self.expr(*base);
+                for bound in start.iter().chain(end) {
+                    self.expr(*bound);
+                }
+            }
             ExprKind::Call { callee, args } => {
                 self.expr(*callee);
                 for arg in args {
@@ -1005,6 +1013,10 @@ impl<'db> BodyCollector<'db> {
                 for elem in elems {
                     self.expr(*elem);
                 }
+            }
+            ExprKind::NewArray { ty, len, .. } => {
+                self.type_ref(*ty);
+                self.expr(*len);
             }
             ExprKind::Proxy { ty, .. } => self.type_ref(*ty),
             ExprKind::Lit(_) | ExprKind::Error => {}
@@ -1069,7 +1081,9 @@ impl<'db> BodyCollector<'db> {
                 }
                 self.type_ref(*ret);
             }
-            TypeRefKind::Comptime { inner, .. } => self.type_ref(*inner),
+            TypeRefKind::Comptime { inner, .. } | TypeRefKind::Array { elem: inner, .. } => {
+                self.type_ref(*inner)
+            }
             TypeRefKind::Tuple { elems } => {
                 self.types.push(TypeProductDesugar {
                     ty,
@@ -1126,6 +1140,12 @@ impl<'a, 'db> FieldInitCollector<'a, 'db> {
                 self.expr(*base);
                 self.expr(*index);
             }
+            ExprKind::Slice { base, start, end } => {
+                self.expr(*base);
+                for bound in start.iter().chain(end) {
+                    self.expr(*bound);
+                }
+            }
             ExprKind::Call { callee, args } => {
                 self.expr(*callee);
                 for arg in args {
@@ -1167,6 +1187,7 @@ impl<'a, 'db> FieldInitCollector<'a, 'db> {
                     self.expr(*elem);
                 }
             }
+            ExprKind::NewArray { len, .. } => self.expr(*len),
             ExprKind::Lambda { .. }
             | ExprKind::Lit(_)
             | ExprKind::Proxy { .. }

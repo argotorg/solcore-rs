@@ -386,6 +386,12 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
             {
                 MonoStmtKind::Expr(self.storage_array_field_assign(*lhs, *rhs, span)?)
             }
+            StmtKind::Assign { op, lhs, rhs }
+                if *op == hir::ast::function::AssignOp::Plain
+                    && self.memory_array_index_parts(*lhs).is_some() =>
+            {
+                MonoStmtKind::Expr(self.memory_array_index_store(*lhs, *rhs, span)?)
+            }
             StmtKind::Assign { op, lhs, rhs } => MonoStmtKind::Assign {
                 op: *op,
                 lhs: self.expr(*lhs)?,
@@ -567,6 +573,10 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
             ExprKind::Lit(lit) => MonoExprKind::Lit(lit.clone()),
             ExprKind::Ident(name) => self.ident_expr(expr_id, name, mono_ty, expr.span),
             ExprKind::Tuple(elems) => self.tuple_expr(expr_id, elems, ty, expr.span)?.kind,
+            ExprKind::NewArray { len, .. } => self.new_array_expr(*len, ty, expr.span)?.kind,
+            ExprKind::Slice { base, start, end } => {
+                self.slice_expr(*base, *start, *end, ty, expr.span)?.kind
+            }
             ExprKind::Array(elems) => self.array_lit_expr(elems, ty, expr.span)?.kind,
             ExprKind::Call { callee, args } => {
                 self.call_expr(expr_id, *callee, args, ty, expr.span)?
@@ -662,6 +672,8 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
                             field: ident_text(self.driver.db, field),
                         },
                     }
+                } else if ident_text(self.driver.db, field) == "length" {
+                    self.length_property(expr_id, *base, ty, expr.span)?.kind
                 } else {
                     MonoExprKind::Field {
                         base: Box::new(self.expr(*base)?),
@@ -691,6 +703,11 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
                     self.memory_array_index(*base, *index, ty, expr.span)?.kind
                 } else if self.is_calldata_array_expr(*base) {
                     self.calldata_array_index(expr_id, *base, *index, ty, expr.span)?
+                        .kind
+                } else if self.is_user_collection_expr(*base) {
+                    let base = self.expr(*base)?;
+                    let index = self.expr(*index)?;
+                    self.synthetic_std_call("ridx", vec![base, index], ty, expr.span)?
                         .kind
                 } else {
                     MonoExprKind::Index {
@@ -2397,22 +2414,86 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
         result_ty: Ty<'db>,
         span: Span<'db>,
     ) -> Option<MonoExpr<'db>> {
-        // The backend helper operates on raw words. Preserve arbitrary
-        // (including non-identity) Typedef representations at both edges.
+        // The std RValueIdxAccess instance owns the bounds check and preserves
+        // the element and index Typedef representations.
         let base = self.expr(base)?;
-        let base = self.typedef_rep(base, span)?;
         let index = self.expr(index)?;
-        let index = self.typedef_rep(index, span)?;
-        let word = Ty::word(self.driver.db);
-        let raw = MonoExpr {
-            span,
-            ty: self.driver.mono_ty(word, "memory array word", span)?,
-            kind: MonoExprKind::MemoryArrayIndex {
-                base: Box::new(base),
-                index: Box::new(index),
-            },
+        self.synthetic_std_call("ridx", vec![base, index], result_ty, span)
+    }
+
+    /// `new T[](len)` allocates a zeroed memory array; arrays of memory values
+    /// such as `new T[][](len)` start with every element the empty array.
+    fn new_array_expr(
+        &mut self,
+        len: Id<Expr<'db>>,
+        ty: Ty<'db>,
+        span: Span<'db>,
+    ) -> Option<MonoExpr<'db>> {
+        let len = self.expr(len)?;
+        let helper = if memory_dyn_array_elem_is_memory(self.driver.db, ty) {
+            "newNestedArray"
+        } else {
+            "newArray"
         };
-        self.typedef_abs(raw, result_ty, span)
+        self.synthetic_std_call(helper, vec![len], ty, span)
+    }
+
+    /// `a[s:e]`, `a[s:]`, `a[:e]` and `a[:]` call the matching std helper,
+    /// which fills the missing bounds so the base is evaluated once.
+    fn slice_expr(
+        &mut self,
+        base: Id<Expr<'db>>,
+        start: Option<Id<Expr<'db>>>,
+        end: Option<Id<Expr<'db>>>,
+        ty: Ty<'db>,
+        span: Span<'db>,
+    ) -> Option<MonoExpr<'db>> {
+        let helper = match (start, end) {
+            (Some(_), Some(_)) => "sliceRange",
+            (Some(_), None) => "sliceFrom",
+            (None, Some(_)) => "sliceTo",
+            (None, None) => "sliceAll",
+        };
+        let mut args = vec![self.expr(base)?];
+        for bound in start.into_iter().chain(end) {
+            args.push(self.expr(bound)?);
+        }
+        self.synthetic_std_call(helper, args, ty, span)
+    }
+
+    /// The base and index of `m[i]` when `m` is a memory array, after peeling
+    /// type annotations from an assignment target.
+    fn memory_array_index_parts(
+        &self,
+        expr: Id<Expr<'db>>,
+    ) -> Option<(Id<Expr<'db>>, Id<Expr<'db>>)> {
+        match &self.body.exprs(self.driver.db).get(expr).kind {
+            ExprKind::Index { base, index } if self.is_memory_array_expr(*base) => {
+                Some((*base, *index))
+            }
+            ExprKind::TypeAnnot { expr, .. } => self.memory_array_index_parts(*expr),
+            _ => None,
+        }
+    }
+
+    /// `m[i] = v` lowers to `assignRef(lidx(m, i), v)`: the std
+    /// LValueIdxAccess instance checks the bounds and yields the element cell.
+    fn memory_array_index_store(
+        &mut self,
+        lhs: Id<Expr<'db>>,
+        rhs: Id<Expr<'db>>,
+        span: Span<'db>,
+    ) -> Option<MonoExpr<'db>> {
+        let (base, index) = self.memory_array_index_parts(lhs)?;
+        let elem_ty = self.expr_ty(lhs)?;
+        let elem_ty = self.normalize_body_ty(self.subst.apply_ty(self.driver.db, elem_ty));
+        let cell_ty = self.canonical_std_adt_ty("memory", vec![elem_ty])?;
+        let base = self.expr(base)?;
+        let index = self.expr(index)?;
+        let cell = self.synthetic_std_call("lidx", vec![base, index], cell_ty, span)?;
+        let rhs = self.expr(rhs)?;
+        let unit = Ty::unit(self.driver.db);
+        self.synthetic_std_call("assignRef", vec![cell, rhs], unit, span)
     }
 
     fn calldata_array_index(
@@ -2431,26 +2512,65 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
             vec![base.ty.ty(), index.ty.ty()],
         );
         let pair = product_expr_from_elems(self.driver.db, &[base, index], pair_ty, span);
-        let callee_ty = Ty::function(self.driver.db, vec![pair_ty], result_ty);
-        let class =
-            self.driver.classes.keys().copied().find(|class| {
-                is_canonical_std_def_named(self.driver.db, *class, "RValueIdxAccess")
-            });
+        self.std_class_method_call(
+            expr,
+            "RValueIdxAccess",
+            "lookup",
+            vec![pair],
+            result_ty,
+            span,
+        )
+    }
+
+    /// `a.length` on a value without a `length` field: `Length.length(a)`.
+    fn length_property(
+        &mut self,
+        expr: Id<Expr<'db>>,
+        base: Id<Expr<'db>>,
+        result_ty: Ty<'db>,
+        span: Span<'db>,
+    ) -> Option<MonoExpr<'db>> {
+        let receiver = self.expr(base)?;
+        self.std_class_method_call(expr, "Length", "length", vec![receiver], result_ty, span)
+    }
+
+    /// Calls a method of a canonical std class with the evidence inference
+    /// recorded for `expr`, solving it again if none was recorded.
+    fn std_class_method_call(
+        &mut self,
+        expr: Id<Expr<'db>>,
+        class_name: &str,
+        method: &str,
+        args: Vec<MonoExpr<'db>>,
+        result_ty: Ty<'db>,
+        span: Span<'db>,
+    ) -> Option<MonoExpr<'db>> {
+        let callee_ty = Ty::function(
+            self.driver.db,
+            args.iter().map(|arg| arg.ty.ty()).collect(),
+            result_ty,
+        );
+        let class = self
+            .driver
+            .classes
+            .keys()
+            .copied()
+            .find(|class| is_canonical_std_def_named(self.driver.db, *class, class_name));
         let evidence = class.and_then(|class| {
             self.class_method_value_evidence(expr, class)
                 .map(|evidence| self.specialize_evidence(evidence))
                 .or_else(|| {
                     self.driver
-                        .solve_class_method_pred(class, "lookup", callee_ty, Some(span))
+                        .solve_class_method_pred(class, method, callee_ty, Some(span))
                 })
         });
         let Some(name) = evidence.and_then(|evidence| {
             self.driver
-                .resolve_class_method_call("lookup", evidence, callee_ty, span, self.depth)
+                .resolve_class_method_call(method, evidence, callee_ty, span, self.depth)
         }) else {
             self.driver.diagnostics.push(SpecializeDiagnostic {
                 kind: SpecializeDiagnosticKind::MissingEvidence {
-                    context: "RValueIdxAccess.lookup".to_owned(),
+                    context: format!("{class_name}.{method}"),
                 },
                 span: Some(span),
             });
@@ -2460,16 +2580,16 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
             span,
             ty: self
                 .driver
-                .mono_ty(result_ty, "calldata array index result", span)?,
+                .mono_ty(result_ty, "std class method result", span)?,
             kind: MonoExprKind::Call {
                 callee: MonoId {
                     name,
                     ty: self
                         .driver
-                        .mono_ty(callee_ty, "calldata array index callee", span)?,
+                        .mono_ty(callee_ty, "std class method callee", span)?,
                     span,
                 },
-                args: vec![pair],
+                args,
                 origin: MonoCallOrigin::ByName,
             },
         })
@@ -2488,18 +2608,6 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
             Ty::word(self.driver.db),
             span,
         )
-    }
-
-    fn typedef_abs(
-        &mut self,
-        value: MonoExpr<'db>,
-        result_ty: Ty<'db>,
-        span: Span<'db>,
-    ) -> Option<MonoExpr<'db>> {
-        if ty_is_builtin_word(self.driver.db, result_ty) {
-            return Some(value);
-        }
-        self.resolved_class_call("Typedef", "abs", vec![value], result_ty, span)
     }
 
     fn resolved_class_call(
@@ -2831,6 +2939,22 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
         ty_is_memory_dyn_array(self.driver.db, ty)
     }
 
+    /// A user-defined collection, such as an array slice, indexed through the
+    /// std `RValueIdxAccess` instance.
+    fn is_user_collection_expr(&self, expr: Id<Expr<'db>>) -> bool {
+        let Some(ty) = self.expr_ty(expr) else {
+            return false;
+        };
+        let ty = self.normalize_body_ty(self.subst.apply_ty(self.driver.db, ty));
+        matches!(
+            ty.kind(self.driver.db),
+            TyKind::Named {
+                ctor: TyCtor::User(_),
+                ..
+            }
+        )
+    }
+
     fn is_calldata_array_expr(&self, expr: Id<Expr<'db>>) -> bool {
         let Some(ty) = self.expr_ty(expr) else {
             return false;
@@ -2924,9 +3048,7 @@ fn replace_desugared_read_at_span<'db>(
         | MonoExprKind::TypeAnnot { expr, .. } => {
             replace_desugared_read_at_span(expr, target_span, target_ty, saved, matches_kind);
         }
-        MonoExprKind::Index { base, index }
-        | MonoExprKind::MemoryArrayIndex { base, index }
-        | MonoExprKind::StorageIndex { base, index, .. } => {
+        MonoExprKind::Index { base, index } | MonoExprKind::StorageIndex { base, index, .. } => {
             replace_desugared_read_at_span(base, target_span, target_ty, saved, matches_kind);
             replace_desugared_read_at_span(index, target_span, target_ty, saved, matches_kind);
         }
@@ -3073,6 +3195,29 @@ fn ty_is_memory_dyn_array<'db>(db: &'db dyn Db, ty: Ty<'db>) -> bool {
             ctor: TyCtor::User(array),
             args,
         } if args.len() == 1 && is_canonical_std_def_named(db, array.def, "DynArray")
+    )
+}
+
+/// Whether `memory<DynArray<memory<_>>>`: the elements are memory pointers.
+fn memory_dyn_array_elem_is_memory<'db>(db: &'db dyn Db, ty: Ty<'db>) -> bool {
+    let TyKind::Named { args, .. } = ty.kind(db) else {
+        return false;
+    };
+    let [dyn_array] = args.as_slice() else {
+        return false;
+    };
+    let TyKind::Named { args, .. } = dyn_array.kind(db) else {
+        return false;
+    };
+    let [elem] = args.as_slice() else {
+        return false;
+    };
+    matches!(
+        elem.kind(db),
+        TyKind::Named {
+            ctor: TyCtor::User(memory),
+            ..
+        } if is_canonical_std_def_named(db, memory.def, "memory")
     )
 }
 
