@@ -31,9 +31,8 @@ pub fn module_instances<'db>(db: &'db dyn Db, module: ModuleId<'db>) -> Vec<Orig
 pub fn instance_imports<'db>(db: &'db dyn Db, module: ModuleId<'db>) -> InstanceImports<'db> {
     let local = module_instances(db, module);
     let mut imported = Vec::new();
-    let mut seen = FxHashSet::default();
-    seen.insert(module);
-    collect_imported_instances(db, module, &mut seen, &mut imported);
+    let mut visited = VisitedModules::new(db, module);
+    collect_imported_instances(db, module, &mut visited, &mut imported);
     imported = unique_origins(imported);
     InstanceImports { local, imported }
 }
@@ -49,9 +48,8 @@ pub fn instance_imports<'db>(db: &'db dyn Db, module: ModuleId<'db>) -> Instance
 #[salsa::tracked(returns(clone))]
 pub fn instance_import_modules<'db>(db: &'db dyn Db, module: ModuleId<'db>) -> Vec<ModuleId<'db>> {
     let mut modules = vec![module];
-    let mut seen = FxHashSet::default();
-    seen.insert(module);
-    collect_imported_modules(db, module, &mut seen, &mut modules);
+    let mut visited = VisitedModules::new(db, module);
+    collect_imported_modules(db, module, &mut visited, &mut modules);
     modules
 }
 
@@ -66,9 +64,8 @@ pub fn instance_imports_for_file<'db>(
     file: SourceFile,
 ) -> InstanceImports<'db> {
     let mut imported = Vec::new();
-    let mut seen = FxHashSet::default();
-    seen.insert(module);
-    collect_imported_instances_from_file(db, module, file, &mut seen, &mut imported);
+    let mut visited = VisitedModules::new(db, module);
+    collect_imported_instances_from_file(db, module, file, &mut visited, &mut imported);
     InstanceImports {
         local: Vec::new(),
         imported: unique_origins(imported),
@@ -93,17 +90,16 @@ pub fn instance_imports_for_hir_module<'db>(
         })
         .collect();
     let mut imported = Vec::new();
-    let mut seen = FxHashSet::default();
-    seen.insert(module);
+    let mut visited = VisitedModules::new(db, module);
     for path in hir_module_instance_edges(db, hir_module) {
         let Ok(target) = resolve_module_path(db, module, path) else {
             continue;
         };
-        if !seen.insert(target) {
+        if !visited.visit(db, target) {
             continue;
         }
         imported.extend(module_instances(db, target));
-        collect_imported_instances(db, target, &mut seen, &mut imported);
+        collect_imported_instances(db, target, &mut visited, &mut imported);
     }
     InstanceImports {
         local,
@@ -123,17 +119,16 @@ pub fn instance_import_modules_for_hir_module<'db>(
     hir_module: Module<'db>,
 ) -> Vec<ModuleId<'db>> {
     let mut modules = vec![module];
-    let mut seen = FxHashSet::default();
-    seen.insert(module);
+    let mut visited = VisitedModules::new(db, module);
     for path in hir_module_instance_edges(db, hir_module) {
         let Ok(target) = resolve_module_path(db, module, path) else {
             continue;
         };
-        if !seen.insert(target) {
+        if !visited.visit(db, target) {
             continue;
         }
         modules.push(target);
-        collect_imported_modules(db, target, &mut seen, &mut modules);
+        collect_imported_modules(db, target, &mut visited, &mut modules);
     }
     modules
 }
@@ -161,22 +156,56 @@ fn hir_module_instance_edges<'db>(db: &'db dyn Db, module: Module<'db>) -> Vec<M
         .collect()
 }
 
+/// Modules already visited by one instance-visibility walk.
+///
+/// The walk's own source counts as visited under every logical identity. A
+/// test or an editor can load one file both as an entry module and as the
+/// library module it is (`std/std.sol` as a main module and as `std`); that
+/// file's impls must not become visible a second time through the other
+/// identity, where they would overlap with themselves.
+struct VisitedModules<'db> {
+    root_file: Option<SourceFile>,
+    seen: FxHashSet<ModuleId<'db>>,
+}
+
+impl<'db> VisitedModules<'db> {
+    fn new(db: &'db dyn Db, root: ModuleId<'db>) -> Self {
+        let mut seen = FxHashSet::default();
+        seen.insert(root);
+        Self {
+            root_file: db.module_file(root),
+            seen,
+        }
+    }
+
+    /// Marks `module` visited, returning whether the walk should enter it.
+    fn visit(&mut self, db: &'db dyn Db, module: ModuleId<'db>) -> bool {
+        if !self.seen.insert(module) {
+            return false;
+        }
+        match (self.root_file, db.module_file(module)) {
+            (Some(root), Some(file)) => file.url(db) != root.url(db),
+            _ => true,
+        }
+    }
+}
+
 fn collect_imported_instances<'db>(
     db: &'db dyn Db,
     module: ModuleId<'db>,
-    seen: &mut FxHashSet<ModuleId<'db>>,
+    visited: &mut VisitedModules<'db>,
     out: &mut Vec<Origin<'db>>,
 ) {
     let Some(file) = db.module_file(module) else {
         return;
     };
-    collect_imported_instances_from_file(db, module, file, seen, out);
+    collect_imported_instances_from_file(db, module, file, visited, out);
 }
 
 fn collect_imported_modules<'db>(
     db: &'db dyn Db,
     module: ModuleId<'db>,
-    seen: &mut FxHashSet<ModuleId<'db>>,
+    visited: &mut VisitedModules<'db>,
     out: &mut Vec<ModuleId<'db>>,
 ) {
     let Some(file) = db.module_file(module) else {
@@ -186,11 +215,11 @@ fn collect_imported_modules<'db>(
         let Ok(target) = resolve_module_path(db, module, path) else {
             continue;
         };
-        if !seen.insert(target) {
+        if !visited.visit(db, target) {
             continue;
         }
         out.push(target);
-        collect_imported_modules(db, target, seen, out);
+        collect_imported_modules(db, target, visited, out);
     }
 }
 
@@ -198,17 +227,17 @@ fn collect_imported_instances_from_file<'db>(
     db: &'db dyn Db,
     module: ModuleId<'db>,
     file: SourceFile,
-    seen: &mut FxHashSet<ModuleId<'db>>,
+    visited: &mut VisitedModules<'db>,
     out: &mut Vec<Origin<'db>>,
 ) {
     for path in file_instance_edges(db, file) {
         let Ok(target) = resolve_module_path(db, module, path) else {
             continue;
         };
-        if !seen.insert(target) {
+        if !visited.visit(db, target) {
             continue;
         }
         out.extend(module_instances(db, target));
-        collect_imported_instances(db, target, seen, out);
+        collect_imported_instances(db, target, visited, out);
     }
 }

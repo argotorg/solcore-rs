@@ -320,17 +320,22 @@ fn db_with_overlapping_std(src: &str, shared_sources: bool) -> (TestDb, ModuleKe
     insert_real_std_modules(&mut db);
     // Exercise both a canonical source reached only through Main and sources
     // shared by Main/Std identities (as in an editor with overlapping roots).
-    let aliases: &[&str] = if shared_sources {
-        &["std", "dispatch", "Generic", "ABIGeneric"]
+    // `std.ABIGeneric` always keeps its Std identity because `std` imports it.
+    let (main_only, shared): (&[&str], &[&str]) = if shared_sources {
+        (&[], &["std", "dispatch", "Generic", "ABIGeneric"])
     } else {
-        &["dispatch", "ABIGeneric"]
+        (&["dispatch"], &["ABIGeneric"])
     };
-    for name in aliases {
+    for (name, keep_std) in main_only
+        .iter()
+        .map(|name| (name, false))
+        .chain(shared.iter().map(|name| (name, true)))
+    {
         let key = ModuleKey {
             library: LibraryId::Std,
             logical_path: vec![(*name).to_owned()],
         };
-        let file = if shared_sources {
+        let file = if keep_std {
             db.module_files[&key]
         } else {
             db.module_files.remove(&key).expect("canonical source")

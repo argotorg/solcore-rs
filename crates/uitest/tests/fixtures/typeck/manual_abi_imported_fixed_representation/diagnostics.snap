@@ -3,6 +3,27 @@ source: crates/test-utils/src/lib.rs
 expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/manual_abi_imported_fixed_representation/main.sol
 ---
+error[SC0218]: Overlapping impls are not supported
+               impl:
+               bool: ABIAttribs
+               overlaps with:
+               bool: ABIAttribs
+    --> /main/lib.sol:17:6
+     |
+  16 |
+  17 | impl ABIAttribs<bool> {
+     |      ^^^^^^^^^^^^^^^^ overlapping impl
+  18 |     function headSize(p: Proxy<bool>) returns (word) {
+     |
+    ::: /std/std.sol:1691
+     |
+1691 |
+1692 | impl ABIAttribs<bool> {
+     |      ---------------- previous overlapping impl
+1693 |     function headSize(ty: Proxy<bool>) returns (word) {
+     |
+---
+
 error[SC0231]: constructor ABI for contract `C` cannot use visible manual `ABIDecode` evidence
  --> /main/main.sol:8:5
   |
@@ -13,15 +34,3 @@ error[SC0231]: constructor ABI for contract `C` cannot use visible manual `ABIDe
   |
   = note: impl `ABIDecode` can override canonical `ABIDecode` behavior
   = help: remove the visible manual ABI impl or keep this declaration out of the external ABI
----
-
-error[SC0231]: public function `inspect` ABI for contract `C` cannot use visible manual `ABIAttribs` evidence
-  --> /main/main.sol:10:5
-   |
- 9 |
-10 |     function inspect(value: Fixed) public returns (uint256) {
-   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ external ABI evidence must be compiler-owned and canonical
-11 |         return uint256(7);
-   |
-   = note: impl `ABIAttribs` can override canonical `ABIAttribs` behavior
-   = help: remove the visible manual ABI impl or keep this declaration out of the external ABI

@@ -2,7 +2,15 @@ pragma solcore;
 
 import { add, sub, mul, div, mod, sdiv, smod, addmod as addmod_, mulmod as mulmod_, and as and_, or as or_, xor as xor_, shl, shr, eq, not as not_, gt as gt_, slt, sgt, iszero, keccak256, mstore, mload, mcopy, sstore, sload, gas, caller as caller_, callvalue as callvalue_, calldatasize, calldataload, calldatacopy, returndatasize, returndatacopy, log1 as log1_, call, staticcall, revert_, invalid } from std.opcodes;
 
-pragma no-patterson-condition ABIEncode, Num, Array, ArrayPush, Eq, Ord;
+// std is one unit for impl visibility: std.ABIGeneric and std.StorageGeneric
+// implement traits from this module for the builtin structural types and
+// bridge Generic types to them. Importing them here makes those impls visible
+// wherever std is, so resolution never depends on which std modules a module
+// happens to import.
+import std.ABIGeneric;
+import std.StorageGeneric;
+
+pragma no-patterson-condition ABIAttribs, ABIEncode, Num, Array, ArrayPush, Eq, Ord;
 pragma no-coverage-condition ABIDecode, MemoryType, Array, ArrayPush, RValueIdxAccess, Shl, Shr;
 
 export {
@@ -1669,11 +1677,23 @@ trait ABIAttribs<self> {
     function isStatic(ty: Proxy<self>) returns (bool);
 }
 
-default impl<t> ABIAttribs<t> {
+// The single-word fallback covers word-represented types. Generic types get
+// their layout from their representation (std.ABIGeneric), so this fallback
+// must not also apply to them.
+default impl<t> ABIAttribs<t> where t: Typedef<word> {
     function headSize(ty: Proxy<t>) returns (word) {
         return 32;
     }
     function isStatic(ty: Proxy<t>) returns (bool) {
+        return true;
+    }
+}
+
+impl ABIAttribs<bool> {
+    function headSize(ty: Proxy<bool>) returns (word) {
+        return 32;
+    }
+    function isStatic(ty: Proxy<bool>) returns (bool) {
         return true;
     }
 }

@@ -3,25 +3,22 @@ source: crates/test-utils/src/lib.rs
 expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/manual_abi_attribs_fixed_representation/main.sol
 ---
-error[SC0231]: public function `inspect` ABI for contract `FixedField` cannot use visible manual `ABIAttribs` evidence
-  --> /main/main.sol:28:5
-   |
-27 | contract FixedField {
-28 |     function inspect(value: Fixed) public returns (uint256) {
-   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ external ABI evidence must be compiler-owned and canonical
-29 |         return uint256(7);
-   |
-   = note: impl `ABIAttribs` can override canonical `ABIAttribs` behavior
-   = help: remove the visible manual ABI impl or keep this declaration out of the external ABI
----
-
-error[SC0231]: public function `inspect` ABI for contract `NestedParameter` cannot use visible manual `ABIAttribs` evidence
-  --> /main/main.sol:34:5
-   |
-33 | contract NestedParameter {
-34 |     function inspect(value: Box<Wrap<bool>>) public returns (uint256) {
-   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ external ABI evidence must be compiler-owned and canonical
-35 |         return uint256(7);
-   |
-   = note: impl `ABIAttribs` can override canonical `ABIAttribs` behavior
-   = help: remove the visible manual ABI impl or keep this declaration out of the external ABI
+error[SC0218]: Overlapping impls are not supported
+               impl:
+               bool: ABIAttribs
+               overlaps with:
+               bool: ABIAttribs
+    --> /main/main.sol:18:6
+     |
+  17 |
+  18 | impl ABIAttribs<bool> {
+     |      ^^^^^^^^^^^^^^^^ overlapping impl
+  19 |     function headSize(p: Proxy<bool>) returns (word) {
+     |
+    ::: /std/std.sol:1691
+     |
+1691 |
+1692 | impl ABIAttribs<bool> {
+     |      ---------------- previous overlapping impl
+1693 |     function headSize(ty: Proxy<bool>) returns (word) {
+     |
