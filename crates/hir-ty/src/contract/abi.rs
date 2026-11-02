@@ -723,7 +723,7 @@ fn compiler_owned_generic_sig_string<'db>(
     }
     if !abi_evidence.has_derived_abi(user.def) {
         return Err(format!(
-            "{name} (compiler-owned ABIAttribs and ABIDecode evidence is not visible from the contract module; import the module containing its defining impl along the re-export path)"
+            "{name} (compiler-owned ABIAttribs and ABIDecode evidence is not visible from the contract module; import the module that defines it)"
         ));
     }
     let rep = substitute_bound_tys(db, plan.rep, args);

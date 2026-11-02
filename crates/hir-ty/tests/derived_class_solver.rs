@@ -181,7 +181,7 @@ fn multi_parameter_class_derive_is_rejected_at_the_declaration(fixture: dir_test
 }
 
 #[dir_test::dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/solver/derived_reexport_visibility", glob: "main.sol")]
-fn reexport_edges_do_not_leak_derived_instances(fixture: dir_test::Fixture<&str>) {
+fn reexport_edges_expose_derived_instances(fixture: dir_test::Fixture<&str>) {
     let fixture = std::path::Path::new(fixture.path()).parent().unwrap();
     let repo_root = repo_root_from_manifest(env!("CARGO_MANIFEST_DIR"));
     let mut db = TestDb::default();
@@ -222,7 +222,7 @@ fn reexport_edges_do_not_leak_derived_instances(fixture: dir_test::Fixture<&str>
             solcore_hir_ty::trait_env_for_module(&db, main),
             canonical_goal(&db, goal),
         ),
-        Solution::NoSolution
+        Solution::Unique { .. }
     ));
 }
 use std::collections::BTreeMap;

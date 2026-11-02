@@ -23,7 +23,10 @@ pub fn module_instances<'db>(db: &'db dyn Db, module: ModuleId<'db>) -> Vec<Orig
         .collect()
 }
 
-/// Collects local and import-chain instance origins for `module`.
+/// Collects local and visible instance origins for `module`.
+///
+/// Instances are visible through the transitive closure of import edges and
+/// re-export references; see [`instance_import_modules`].
 #[salsa::tracked(returns(clone))]
 pub fn instance_imports<'db>(db: &'db dyn Db, module: ModuleId<'db>) -> InstanceImports<'db> {
     let local = module_instances(db, module);
@@ -37,9 +40,12 @@ pub fn instance_imports<'db>(db: &'db dyn Db, module: ModuleId<'db>) -> Instance
 
 /// Returns the modules whose instances are visible from `module`.
 ///
-/// Unlike the general module graph, this follows import edges only. Re-export
-/// references do not bring an explicit instance into scope and therefore must
-/// not make compiler-synthesized instances visible either.
+/// This follows import edges and re-export references transitively. A module
+/// that re-exports a type or trait lets its importers name it, so the impls
+/// defined next to that type or trait must be visible wherever the name is:
+/// otherwise a facade module would hide a type's own impl, and resolution
+/// would silently fall back to a default impl in some modules but not others.
+/// Compiler-synthesized instances follow the same edges.
 #[salsa::tracked(returns(clone))]
 pub fn instance_import_modules<'db>(db: &'db dyn Db, module: ModuleId<'db>) -> Vec<ModuleId<'db>> {
     let mut modules = vec![module];
@@ -49,7 +55,8 @@ pub fn instance_import_modules<'db>(db: &'db dyn Db, module: ModuleId<'db>) -> V
     modules
 }
 
-/// Collects import-chain instance origins using imports parsed from `file`.
+/// Collects visible instance origins using the imports and re-exports parsed
+/// from `file`.
 ///
 /// This is useful for synthetic HIR modules that share a logical `ModuleId`
 /// with a file-backed module but use a different effective import list.
@@ -68,8 +75,7 @@ pub fn instance_imports_for_file<'db>(
     }
 }
 
-/// Collects local and import-chain instance origins from an effective HIR
-/// module.
+/// Collects local and visible instance origins from an effective HIR module.
 pub fn instance_imports_for_hir_module<'db>(
     db: &'db dyn Db,
     module: ModuleId<'db>,
@@ -89,11 +95,7 @@ pub fn instance_imports_for_hir_module<'db>(
     let mut imported = Vec::new();
     let mut seen = FxHashSet::default();
     seen.insert(module);
-    for import in hir_module.items(db).iter().filter_map(|item| match item {
-        Item::Import(import) => Some(*import),
-        _ => None,
-    }) {
-        let path = path_ref_from_import(db, import);
+    for path in hir_module_instance_edges(db, hir_module) {
         let Ok(target) = resolve_module_path(db, module, path) else {
             continue;
         };
@@ -111,10 +113,10 @@ pub fn instance_imports_for_hir_module<'db>(
 
 /// Returns instance-visible modules from an effective HIR module.
 ///
-/// The first element is always the owning module. Direct imports come from the
-/// supplied HIR, while transitive imports continue through their file-backed
-/// modules. This keeps synthesized import overlays aligned with explicit
-/// instance visibility.
+/// The first element is always the owning module. Direct imports and
+/// re-exports come from the supplied HIR, while transitive edges continue
+/// through their file-backed modules. This keeps synthesized import overlays
+/// aligned with explicit instance visibility.
 pub fn instance_import_modules_for_hir_module<'db>(
     db: &'db dyn Db,
     module: ModuleId<'db>,
@@ -123,11 +125,7 @@ pub fn instance_import_modules_for_hir_module<'db>(
     let mut modules = vec![module];
     let mut seen = FxHashSet::default();
     seen.insert(module);
-    for import in hir_module.items(db).iter().filter_map(|item| match item {
-        Item::Import(import) => Some(*import),
-        _ => None,
-    }) {
-        let path = path_ref_from_import(db, import);
+    for path in hir_module_instance_edges(db, hir_module) {
         let Ok(target) = resolve_module_path(db, module, path) else {
             continue;
         };
@@ -138,6 +136,29 @@ pub fn instance_import_modules_for_hir_module<'db>(
         collect_imported_modules(db, target, &mut seen, &mut modules);
     }
     modules
+}
+
+/// Module paths whose instances a file-backed module sees directly: its
+/// imports (including compiler-owned helper imports) and its re-exports.
+fn file_instance_edges<'db>(db: &'db dyn Db, file: SourceFile) -> Vec<ModulePathRef<'db>> {
+    let refs = module_imports(db, file);
+    refs.import_refs
+        .into_iter()
+        .chain(refs.export_refs)
+        .collect()
+}
+
+/// Module paths whose instances an effective HIR module sees directly.
+fn hir_module_instance_edges<'db>(db: &'db dyn Db, module: Module<'db>) -> Vec<ModulePathRef<'db>> {
+    module
+        .items(db)
+        .iter()
+        .flat_map(|item| match item {
+            Item::Import(import) => vec![path_ref_from_import(db, *import)],
+            Item::Export(export) => path_refs_from_export(db, *export),
+            _ => Vec::new(),
+        })
+        .collect()
 }
 
 fn collect_imported_instances<'db>(
@@ -161,8 +182,7 @@ fn collect_imported_modules<'db>(
     let Some(file) = db.module_file(module) else {
         return;
     };
-    let refs = module_imports(db, file);
-    for path in refs.import_refs {
+    for path in file_instance_edges(db, file) {
         let Ok(target) = resolve_module_path(db, module, path) else {
             continue;
         };
@@ -181,8 +201,7 @@ fn collect_imported_instances_from_file<'db>(
     seen: &mut FxHashSet<ModuleId<'db>>,
     out: &mut Vec<Origin<'db>>,
 ) {
-    let refs = module_imports(db, file);
-    for path in refs.import_refs {
+    for path in file_instance_edges(db, file) {
         let Ok(target) = resolve_module_path(db, module, path) else {
             continue;
         };
