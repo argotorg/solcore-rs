@@ -1,0 +1,51 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/typeck/array_slice_readonly/main.sol
+---
+error[SC0201]: type mismatch: expected assignable index (array slices are read-only), found arraySlice<memory<DynArray<uint256>>>
+  --> /main/main.sol:9:5
+   |
+ 8 |     let s = a[1:3];
+ 9 |     s[0] = uint256(7);
+   |     ^^^^ expression has mismatched type
+10 |     s[1] += uint256(1);
+   |
+   = note: expected type: assignable index (array slices are read-only)
+   = note: found type: arraySlice<memory<DynArray<uint256>>>
+---
+
+error[SC0201]: type mismatch: expected assignable index (array slices are read-only), found arraySlice<memory<DynArray<uint256>>>
+  --> /main/main.sol:10:5
+   |
+ 9 |     s[0] = uint256(7);
+10 |     s[1] += uint256(1);
+   |     ^^^^ expression has mismatched type
+11 |     return s[0];
+   |
+   = note: expected type: assignable index (array slices are read-only)
+   = note: found type: arraySlice<memory<DynArray<uint256>>>
+---
+
+error[SC0207]: cannot satisfy trait constraint: word: Length
+  --> /main/main.sol:16:12
+   |
+15 | function notACollection(x: word) returns (uint256) {
+16 |     return x[1:2].length;
+   |            ^^^^^^ constraint originates here
+17 | }
+   |
+   = note: no visible impl matches `word: Length`
+   = help: add a matching impl or strengthen the surrounding type context
+---
+
+error[SC0201]: type mismatch: expected uint256, found bool
+  --> /main/main.sol:21:14
+   |
+20 | function badBound(a: uint256[], b: bool) returns (uint256) {
+21 |     return a[b:].length;
+   |              ^ expression has mismatched type
+22 | }
+   |
+   = note: expected type: uint256
+   = note: found type: bool

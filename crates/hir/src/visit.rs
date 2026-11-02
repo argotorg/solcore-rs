@@ -168,7 +168,9 @@ impl<'db> ErrorCollector<'db> {
                 }
                 self.ty(*ret);
             }
-            TypeRefKind::Comptime { inner, .. } => self.ty(*inner),
+            TypeRefKind::Comptime { inner, .. } | TypeRefKind::Array { elem: inner, .. } => {
+                self.ty(*inner)
+            }
             TypeRefKind::Error { span } => self.push("TypeRefKind::Error", *span),
         }
     }
@@ -207,7 +209,9 @@ impl<'db> ErrorCollector<'db> {
     fn expr(&mut self, expr: &Expr<'db>) {
         match &expr.kind {
             ExprKind::Lit(LitKind::Error) => self.push("LitKind::Error", expr.span),
-            ExprKind::Proxy { ty, .. } | ExprKind::TypeAnnot { ty, .. } => self.ty(*ty),
+            ExprKind::Proxy { ty, .. }
+            | ExprKind::TypeAnnot { ty, .. }
+            | ExprKind::NewArray { ty, .. } => self.ty(*ty),
             ExprKind::Lambda { params, ret, body } => {
                 for param in params.atom() {
                     self.param(param);

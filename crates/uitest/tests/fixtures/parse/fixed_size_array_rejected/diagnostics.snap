@@ -1,0 +1,14 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/parse/fixed_size_array_rejected/main.sol
+---
+error[SC0001]: fixed-size arrays `T[k]` are not supported; use `T[]`
+ --> /main/main.sol:6:23
+  |
+5 | // Fixed-size arrays are not supported yet; use `T[]`.
+6 | function f(xs: uint256[3]) returns (uint256) {
+  |                       ^^^
+7 |     return 0;
+  |
+  = note: while parsing type

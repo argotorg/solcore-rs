@@ -84,6 +84,11 @@ pub enum TypeRefShapeKind<'db> {
         /// Tuple element shapes.
         elems: Vec<TypeRefShape<'db>>,
     },
+    /// Dynamic array type `T[]`.
+    Array {
+        /// Element type shape.
+        elem: TypeRefShape<'db>,
+    },
     /// Parser recovery placeholder.
     Error,
 }
@@ -130,6 +135,14 @@ pub enum TypeRefKind<'db> {
         /// Tuple elements and span of the tuple syntax.
         elems: SpannedElem<'db, Vec<TypeRef<'db>>>,
     },
+    /// Dynamic array type `T[]`. Its location depends on the context: a
+    /// storage array for a contract field, a memory array elsewhere.
+    Array {
+        /// Element type.
+        elem: TypeRef<'db>,
+        /// Span of the `[]` brackets.
+        brackets: Span<'db>,
+    },
     /// Parser recovery placeholder.
     Error {
         /// Span covering the unparseable type syntax.
@@ -154,6 +167,7 @@ impl<'db> Spanned<'db> for TypeRefKind<'db> {
             Self::Fn { params, ret } => params.span(db) + ret.span(db),
             Self::Comptime { kw, inner } => *kw + inner.span(db),
             Self::Tuple { elems } => elems.span(db),
+            Self::Array { elem, brackets } => elem.span(db) + *brackets,
             Self::Error { span } => *span,
         }
     }
@@ -187,6 +201,9 @@ fn type_shape_from_occurrence<'db>(kind: &TypeRefKind<'db>) -> TypeRefShapeKind<
                 .iter()
                 .map(|elem| elem.semantic_shape())
                 .collect(),
+        },
+        TypeRefKind::Array { elem, .. } => TypeRefShapeKind::Array {
+            elem: elem.semantic_shape(),
         },
         TypeRefKind::Error { .. } => TypeRefShapeKind::Error,
     }

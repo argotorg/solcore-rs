@@ -1,0 +1,22 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/solver/memref_not_word_sized/main.sol
+---
+error[SC0207]: cannot satisfy trait constraint: memref<uint256>: Typedef<word>
+  --> /main/main.sol:1:1
+   |
+ 1 | / pragma solcore;
+ 2 | |
+ 3 | | import * from std;
+ 4 | |
+ 5 | | // `memref` has no `Typedef<word>` instance, so a reference cannot be stored as
+ 6 | | // an array element.
+ 7 | | function refArray() returns (uint256) {
+ 8 | |     let refs: memref<uint256>[] = new memref<uint256>[](1);
+ 9 | |     return refs.length;
+10 | | }
+   | |__^ constraint originates here
+   |
+   = note: no visible impl matches `memref<uint256>: Typedef<word>`
+   = help: add a matching impl or strengthen the surrounding type context

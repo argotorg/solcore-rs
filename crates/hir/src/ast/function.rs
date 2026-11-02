@@ -242,6 +242,15 @@ pub enum ExprKind<'db> {
         /// Constructor arguments.
         args: Vec<Id<Expr<'db>>>,
     },
+    /// Memory array allocation `new T[](len)`, zero-initialised.
+    NewArray {
+        /// Span of the contextual `new` keyword.
+        kw: Span<'db>,
+        /// Allocated array type, always `T[]`.
+        ty: TypeRef<'db>,
+        /// Number of elements.
+        len: Id<Expr<'db>>,
+    },
     /// Type proxy expression introduced by `@`.
     Proxy {
         /// Span of the `@` token.
@@ -273,6 +282,15 @@ pub enum ExprKind<'db> {
         base: Id<Expr<'db>>,
         /// Index expression.
         index: Id<Expr<'db>>,
+    },
+    /// Read-only array slice `base[start:end]`; either bound may be omitted.
+    Slice {
+        /// Sliced expression.
+        base: Id<Expr<'db>>,
+        /// Inclusive start bound.
+        start: Option<Id<Expr<'db>>>,
+        /// Exclusive end bound.
+        end: Option<Id<Expr<'db>>>,
     },
     /// Function or constructor call.
     Call {

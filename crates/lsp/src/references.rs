@@ -2319,12 +2319,14 @@ fn expr_reference_span<'db>(db: &'db dyn hir_ty::Db, expr: &Expr<'db>) -> Option
         | ExprKind::Lambda { .. }
         | ExprKind::BinOp { .. }
         | ExprKind::Index { .. }
+        | ExprKind::Slice { .. }
         | ExprKind::Call { .. }
         | ExprKind::TypeAnnot { .. }
         | ExprKind::UnaryOp { .. }
         | ExprKind::If { .. }
         | ExprKind::Tuple(_)
-        | ExprKind::Array(_) => None,
+        | ExprKind::Array(_)
+        | ExprKind::NewArray { .. } => None,
     }
 }
 
@@ -2376,6 +2378,7 @@ where
         | TypeRefKind::Fn { .. }
         | TypeRefKind::Comptime { .. }
         | TypeRefKind::Tuple { .. }
+        | TypeRefKind::Array { .. }
         | TypeRefKind::Error { .. } => None,
     }
 }
@@ -2461,7 +2464,10 @@ fn type_ref_name_span<'db>(db: &'db dyn hir_ty::Db, ty: TypeRef<'db>) -> Option<
     match ty.kind(db) {
         TypeRefKind::Named { name, .. } => Some(name.span(db)),
         TypeRefKind::Error { span } => Some(*span),
-        TypeRefKind::Fn { .. } | TypeRefKind::Comptime { .. } | TypeRefKind::Tuple { .. } => None,
+        TypeRefKind::Fn { .. }
+        | TypeRefKind::Comptime { .. }
+        | TypeRefKind::Tuple { .. }
+        | TypeRefKind::Array { .. } => None,
     }
 }
 

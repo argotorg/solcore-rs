@@ -60,6 +60,7 @@ function solcoreMonarchFallback(): Monaco.languages.IMonarchLanguage {
       "for",
       "while",
       "unchecked",
+      "new",
       "switch",
       "type",
       "case",

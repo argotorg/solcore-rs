@@ -109,6 +109,7 @@ contextual_keyword_parser!(impl_kw_parser, "impl");
 contextual_keyword_parser!(mapping_kw_parser, "mapping");
 contextual_keyword_parser!(while_kw_parser, "while");
 contextual_keyword_parser!(unchecked_kw_parser, "unchecked");
+contextual_keyword_parser!(new_kw_parser, "new");
 
 /// Two tokens with nothing between them, as in the shift operators `<<`/`>>`
 /// and their compound forms. The lexer keeps `<` and `>` single so nested

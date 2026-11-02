@@ -1,0 +1,39 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/solver/memory_array_not_resizable/main.sol
+---
+error[SC0207]: cannot satisfy trait constraint: memory<DynArray<uint256>>: ArrayPush<uint256>
+ --> /main/main.sol:8:5
+  |
+7 | function grow(xs: uint256[], v: uint256) {
+8 |     xs.push(v);
+  |     ^^^^^^^^^^ constraint originates here
+9 | }
+  |
+  = note: no visible impl matches `memory<DynArray<uint256>>: ArrayPush<uint256>`
+  = help: memory arrays have a fixed length; allocate one with `new T[](length)` or use a storage array
+---
+
+error[SC0207]: cannot satisfy trait constraint: memory<DynArray<uint256>>: Array
+  --> /main/main.sol:12:5
+   |
+11 | function shrink(xs: uint256[]) {
+12 |     xs.pop();
+   |     ^^^^^^^^ constraint originates here
+13 | }
+   |
+   = note: no visible impl matches `memory<DynArray<uint256>>: Array`
+   = help: memory arrays have a fixed length; allocate one with `new T[](length)` or use a storage array
+---
+
+error[SC0201]: type mismatch: expected word, found uint256
+  --> /main/main.sol:25:12
+   |
+24 | function arrayLength(xs: uint256[]) returns (word) {
+25 |     return xs.length;
+   |            ^^^^^^^^^ expression has mismatched type
+26 | }
+   |
+   = note: expected type: word
+   = note: found type: uint256

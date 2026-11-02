@@ -327,7 +327,8 @@ fn regressions_closures_function_typed_parameters(fixture: Fixture<&str>) {
 #[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/regressions/dispatch/array-public-return", glob: "main.sol")]
 fn regressions_dispatch_array_public_return(fixture: Fixture<&str>) {
     with_emission(fixture, FixtureOptions::default(), |db, emitted| {
-        assert_emission_diagnostics(&emitted, true);
+        // `T[]` returns are dispatchable, so no entry may be skipped.
+        assert_emission_diagnostics(&emitted, false);
         assert_check_diagnostics(db, &emitted.program, false);
         let hull = pretty_program(db, &emitted.program);
         assert!(hull.contains("ABIEncode"), "{hull}");

@@ -15,7 +15,7 @@ error[SC0207]: cannot satisfy trait constraint: Contract<Method<DispatchNameTy_C
    = help: add a matching impl or strengthen the surrounding type context
 ---
 
-error[SC0231]: ABI parameter cannot be represented in the ABI: adt:Point (only memory<string> and memory<bytes> have canonical ABI evidence)
+error[SC0231]: ABI parameter cannot be represented in the ABI: adt:Point (only memory<string>, memory<bytes> and memory arrays `T[]` have canonical ABI evidence)
   --> /main/main.sol:11:5
    |
 10 | contract C {
@@ -25,7 +25,7 @@ error[SC0231]: ABI parameter cannot be represented in the ABI: adt:Point (only m
    |
 ---
 
-error[SC0231]: roundtrip cannot be represented in the ABI: adt:Point (only memory<string> and memory<bytes> have canonical ABI evidence)
+error[SC0231]: roundtrip cannot be represented in the ABI: adt:Point (only memory<string>, memory<bytes> and memory arrays `T[]` have canonical ABI evidence)
   --> /main/main.sol:11:5
    |
 10 | contract C {

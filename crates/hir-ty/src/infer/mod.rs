@@ -121,8 +121,12 @@ fn ufcs_receiver<'db>(
     if !matches!(
         expr_resolutions.get(&(body, callee)),
         Some(hir_nameres::Resolution::ClassMethod { .. })
-    ) || !matches!(body.exprs(db).get(*base).kind, ExprKind::Ident(_))
-        || !matches!(
+    ) {
+        return None;
+    }
+    // A named receiver must denote a value; any other expression is one.
+    if matches!(body.exprs(db).get(*base).kind, ExprKind::Ident(_))
+        && !matches!(
             expr_resolutions.get(&(body, *base)),
             Some(
                 hir_nameres::Resolution::Field(_)

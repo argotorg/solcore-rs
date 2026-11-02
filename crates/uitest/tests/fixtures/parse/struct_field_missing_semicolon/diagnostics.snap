@@ -11,5 +11,5 @@ error[SC0001]: parse error: unexpected `}`
 3 | struct Point { x: word }
   |                        ^ unexpected token
   |
-  = note: expecting `.`, `;`, or `<`
+  = note: expecting `.`, `;`, `<`, or `[`
   = note: while parsing type

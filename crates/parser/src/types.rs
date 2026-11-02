@@ -359,6 +359,13 @@ pub(crate) enum ParsedTyKind<'src> {
         /// Tuple elements.
         elems: Vec<ParsedTy<'src>>,
     },
+    /// Dynamic array type `T[]`.
+    Array {
+        /// Element type.
+        elem: Box<ParsedTy<'src>>,
+        /// Span of the `[]` brackets.
+        brackets: LexSpan,
+    },
     /// Parser recovery placeholder.
     Error,
 }
@@ -567,6 +574,15 @@ pub(crate) enum ParsedExprKind<'src> {
         /// Argument expressions.
         args: Vec<ParsedExpr<'src>>,
     },
+    /// Memory array allocation `new T[](len)`.
+    NewArray {
+        /// Span of the contextual `new` keyword.
+        kw: LexSpan,
+        /// Allocated array type, always `T[]`.
+        ty: ParsedTy<'src>,
+        /// Number of elements.
+        len: Box<ParsedExpr<'src>>,
+    },
     /// Type proxy expression.
     Proxy {
         /// Span of the `@`.
@@ -600,6 +616,17 @@ pub(crate) enum ParsedExprKind<'src> {
         base: Box<ParsedExpr<'src>>,
         /// Index expression.
         index: Box<ParsedExpr<'src>>,
+    },
+    /// Array slice `base[start:end]`; either bound may be omitted.
+    Slice {
+        /// Sliced expression.
+        base: Box<ParsedExpr<'src>>,
+        /// Inclusive start bound.
+        start: Option<Box<ParsedExpr<'src>>>,
+        /// Span of the `:` separator.
+        colon: LexSpan,
+        /// Exclusive end bound.
+        end: Option<Box<ParsedExpr<'src>>>,
     },
     /// Call expression.
     Call {

@@ -659,6 +659,11 @@ impl TypeckDiagnostic {
                 } else if pred.contains(": Shl<") || pred.contains(": Shr<") {
                     // As in Solidity, only unsigned types are shift amounts.
                     "the shift amount must be an unsigned type (`word`, `uint8` .. `uint256`); signed amounts are not allowed"
+                } else if pred.starts_with("memory<DynArray<")
+                    && (pred.contains(": ArrayPush") || pred.contains(": Array"))
+                {
+                    // As in Solidity, only storage arrays grow or shrink.
+                    "memory arrays have a fixed length; allocate one with `new T[](length)` or use a storage array"
                 } else {
                     "add a matching impl or strengthen the surrounding type context"
                 };
@@ -1405,6 +1410,12 @@ pub(super) fn lowering_diagnostic_to_typeck(
         TypeLoweringDiagnostic::ClassAsType { span, class } => {
             TypeckDiagnostic::ClassAsType { span, class }
         }
+        TypeLoweringDiagnostic::MissingStdArrayType { span, name } => {
+            TypeckDiagnostic::UndefinedTypeConstructor {
+                span,
+                name: format!("{name} (`T[]` array types require `import * from std;`)"),
+            }
+        }
     }
 }
 
@@ -1565,6 +1576,9 @@ fn collect_uninitialized_let_type_refs_from_expr<'db>(
                 collect_uninitialized_let_type_refs_from_expr(db, body, *expr, out);
             }
         }
+        ExprKind::NewArray { len, .. } => {
+            collect_uninitialized_let_type_refs_from_expr(db, body, *len, out);
+        }
         ExprKind::BinOp { lhs, rhs, .. } => {
             collect_uninitialized_let_type_refs_from_expr(db, body, *lhs, out);
             collect_uninitialized_let_type_refs_from_expr(db, body, *rhs, out);
@@ -1584,6 +1598,11 @@ fn collect_uninitialized_let_type_refs_from_expr<'db>(
         ExprKind::Index { base, index } => {
             collect_uninitialized_let_type_refs_from_expr(db, body, *base, out);
             collect_uninitialized_let_type_refs_from_expr(db, body, *index, out);
+        }
+        ExprKind::Slice { base, start, end } => {
+            for expr in std::iter::once(base).chain(start).chain(end) {
+                collect_uninitialized_let_type_refs_from_expr(db, body, *expr, out);
+            }
         }
         ExprKind::If {
             cond,
@@ -1618,7 +1637,9 @@ fn collect_type_ref_tree<'db>(
             }
             collect_type_ref_tree(db, *ret, out);
         }
-        TypeRefKind::Comptime { inner, .. } => collect_type_ref_tree(db, *inner, out),
+        TypeRefKind::Comptime { inner, .. } | TypeRefKind::Array { elem: inner, .. } => {
+            collect_type_ref_tree(db, *inner, out)
+        }
         TypeRefKind::Tuple { elems } => {
             for elem in elems.atom() {
                 collect_type_ref_tree(db, *elem, out);
@@ -2024,7 +2045,7 @@ fn collect_data_cycle_edges<'db>(
             }
             collect_data_cycle_edges(db, from, *ret, resolutions, local_defs, names, edges);
         }
-        TypeRefKind::Comptime { inner, .. } => {
+        TypeRefKind::Comptime { inner, .. } | TypeRefKind::Array { elem: inner, .. } => {
             collect_data_cycle_edges(db, from, *inner, resolutions, local_defs, names, edges);
         }
         TypeRefKind::Tuple { elems } => {

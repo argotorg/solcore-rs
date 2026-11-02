@@ -5,9 +5,11 @@ pragma solcore;
 // #[raw(0x, label = "suite `array_implicit` test #2") -> success(0x000000000000000000000000000000000000000000000000000000000000521c)]
 contract ArrayImplicitRuntime {
     function main() returns (word) {
-        // An explicit runtime main owns memory setup and raw EVM output.
+        // An explicit runtime main owns memory setup and raw EVM output. Like
+        // the generated dispatcher, reserve the initial region with
+        // memoryguard: Sonatina keeps its frame arena outside that region.
         assembly {
-            mstore(0x40, 0x80)
+            mstore(0x40, memoryguard(0x80))
         }
         let first: word = 10;
         let second: word = 20;

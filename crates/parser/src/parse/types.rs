@@ -173,14 +173,55 @@ where
             })
             .boxed();
 
-        let kind = choice((
+        let base = choice((
             function_type,
             comptime_type,
             mapping_type,
             proxy_type,
             tuple_type,
             named_type,
-        ));
+        ))
+        .boxed();
+
+        // `T[]` is a dynamic array of `T`; suffixes nest left to right, so
+        // `T[][]` is an array of `T[]`. A size inside the brackets would be a
+        // fixed-size array, which is not supported.
+        let array_suffix = just(Token::LBracket)
+            .ignore_then(none_of([Token::RBracket]).repeated().collect::<Vec<_>>())
+            .then_ignore(just(Token::RBracket))
+            .validate(|size, e, emitter| {
+                if !size.is_empty() {
+                    emitter.emit(Rich::custom(
+                        e.span(),
+                        "fixed-size arrays `T[k]` are not supported; use `T[]`",
+                    ));
+                }
+                e.span()
+            })
+            .boxed();
+
+        // The suffixes fold iteratively, so they count against the nesting
+        // limit here rather than through the recursion depth.
+        let kind = base
+            .then(array_suffix.repeated().collect::<Vec<LexSpan>>())
+            .validate(|(elem, mut suffixes), e, emitter| {
+                let room = MAX_SYNTAX_NESTING.saturating_sub(*e.ctx());
+                if suffixes.len() > room {
+                    emitter.emit(Rich::custom(
+                        e.span(),
+                        format!("type nesting exceeds the compiler limit of {MAX_SYNTAX_NESTING}"),
+                    ));
+                    suffixes.truncate(room);
+                }
+                let start = elem.span.start;
+                suffixes.into_iter().fold(elem, |elem, brackets| ParsedTy {
+                    span: (start..brackets.end).into(),
+                    kind: ParsedTyKind::Array {
+                        elem: Box::new(elem),
+                        brackets,
+                    },
+                })
+            });
         empty::<I, TypeParserErr<'src>>()
             .try_map_with(|(), e| {
                 if *e.ctx() >= MAX_SYNTAX_NESTING {

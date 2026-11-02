@@ -154,6 +154,11 @@ impl<'db, 'a> LoweringCtx<'db, 'a> {
                 let args = self.lower_exprs(anchor, base_start, args, arenas);
                 function::ExprKind::DotCtor { dot, name, args }
             }
+            ParsedExprKind::NewArray { kw, ty, len } => function::ExprKind::NewArray {
+                kw: span_from_absolute(anchor, kw, base_start),
+                ty: lower_type_ref(self.db, anchor, base_start, ty),
+                len: self.lower_expr(anchor, base_start, *len, arenas),
+            },
             ParsedExprKind::Proxy { at, ty } => function::ExprKind::Proxy {
                 at: span_from_absolute(anchor, at, base_start),
                 ty: lower_type_ref(self.db, anchor, base_start, ty),
@@ -170,6 +175,13 @@ impl<'db, 'a> LoweringCtx<'db, 'a> {
             ParsedExprKind::Index { base, index } => {
                 self.lower_index_expr(anchor, base_start, *base, *index, arenas)
             }
+            ParsedExprKind::Slice {
+                base, start, end, ..
+            } => function::ExprKind::Slice {
+                base: self.lower_expr(anchor, base_start, *base, arenas),
+                start: start.map(|start| self.lower_expr(anchor, base_start, *start, arenas)),
+                end: end.map(|end| self.lower_expr(anchor, base_start, *end, arenas)),
+            },
             ParsedExprKind::Call { callee, args } => {
                 self.lower_call_expr(anchor, base_start, *callee, args, arenas)
             }
@@ -655,9 +667,17 @@ fn drop_parsed_expr_iteratively(root: ParsedExpr<'_>) {
                 pending.push(*lhs);
                 pending.push(*rhs);
             }
+            ParsedExprKind::NewArray { len, .. } => pending.push(*len),
             ParsedExprKind::Index { base, index } => {
                 pending.push(*base);
                 pending.push(*index);
+            }
+            ParsedExprKind::Slice {
+                base, start, end, ..
+            } => {
+                pending.push(*base);
+                pending.extend(start.map(|start| *start));
+                pending.extend(end.map(|end| *end));
             }
             ParsedExprKind::Call { callee, args } => {
                 pending.push(*callee);

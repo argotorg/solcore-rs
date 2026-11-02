@@ -157,6 +157,14 @@ impl<t> SigString<calldata<array<t>>> where t: ABITypeString {
     }
 }
 
+// A memory array `T[]` parameter is decoded eagerly into memory, and a memory
+// array return is encoded from it; both sign as `<element>[]`.
+impl<t> SigString<memory<DynArray<t>>> where t: ABITypeString {
+    function sigStr(x: Proxy<memory<DynArray<t>>>) returns (string) {
+        return ABITypeString.typeStr(@t) + "[]";
+    }
+}
+
 // Any data type inherits its ABI signature from its Generic representation, the
 // same way ABIAttribs / ABIEncode bridge through Generic in std.ABIGeneric. This
 // lets the dispatch take ADT-typed parameters (e.g. a Signature) without a

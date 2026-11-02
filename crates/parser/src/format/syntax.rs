@@ -20,6 +20,8 @@ pub(super) struct Layout {
     pub generic_angles: BTreeSet<usize>,
     /// Conditional-expression colons, as distinct from type annotations.
     pub ternary_colons: BTreeSet<usize>,
+    /// Offsets of `:` separators in array slices, which take no spaces.
+    pub slice_colons: BTreeSet<usize>,
     /// Leading constructor dots, as distinct from field/path separators.
     pub leading_dots: BTreeSet<usize>,
     /// Both braces of blocks; import and export selectors are excluded.
@@ -334,7 +336,9 @@ impl<'src> Collector<'src> {
             ParsedTyKind::Named { args, .. } => {
                 self.pending.extend(args.into_iter().map(Node::Ty));
             }
-            ParsedTyKind::Proxy { inner, .. } | ParsedTyKind::Comptime { inner, .. } => {
+            ParsedTyKind::Proxy { inner, .. }
+            | ParsedTyKind::Comptime { inner, .. }
+            | ParsedTyKind::Array { elem: inner, .. } => {
                 self.pending.push(Node::Ty(*inner));
             }
             ParsedTyKind::Fn { params, ret, .. } => {
@@ -444,6 +448,10 @@ impl<'src> Collector<'src> {
                 self.pending.extend(args.into_iter().map(Node::Expr));
             }
             ParsedExprKind::Proxy { ty, .. } => self.pending.push(Node::Ty(ty)),
+            ParsedExprKind::NewArray { ty, len, .. } => {
+                self.pending.push(Node::Ty(ty));
+                self.pending.push(Node::Expr(*len));
+            }
             ParsedExprKind::Lambda {
                 params,
                 ret,
@@ -461,6 +469,17 @@ impl<'src> Collector<'src> {
             ParsedExprKind::Index { base, index } => {
                 self.pending.push(Node::Expr(*base));
                 self.pending.push(Node::Expr(*index));
+            }
+            ParsedExprKind::Slice {
+                base,
+                start,
+                colon,
+                end,
+            } => {
+                self.layout.slice_colons.insert(colon.start);
+                self.pending.push(Node::Expr(*base));
+                self.pending.extend(start.map(|start| Node::Expr(*start)));
+                self.pending.extend(end.map(|end| Node::Expr(*end)));
             }
             ParsedExprKind::Call { callee, args } => {
                 self.pending.push(Node::Expr(*callee));

@@ -115,6 +115,36 @@ fn keeps_shift_operator_tokens_together() {
 }
 
 #[test]
+fn formats_array_types_without_spaces_inside_brackets() {
+    let source = "pragma solcore;\ncontract C{xs:uint256[];grid:mapping(address=>Pair<word,uint256>[][]);}\nfunction f(xs:uint256 [ ],ys:calldata<word[]>)returns(memory<DynArray<word>>[]){return [];}";
+    assert_eq!(
+        format(source),
+        "pragma solcore;\ncontract C {\n    xs: uint256[];\n    grid: mapping(address => Pair<word, uint256>[][]);\n}\nfunction f(xs: uint256[], ys: calldata<word[]>) returns (memory<DynArray<word>>[]) {\n    return [];\n}\n"
+    );
+    assert_stable(source);
+}
+
+#[test]
+fn formats_new_array_allocations_and_keeps_new_as_an_identifier() {
+    let source = "pragma solcore;\nfunction new(x:word)returns(word){return x;}\nfunction f(n:uint256)returns(word){let m=new uint256[ ]( n );let r=new uint256[][](n+1);return new(1);}";
+    assert_eq!(
+        format(source),
+        "pragma solcore;\nfunction new(x: word) returns (word) {\n    return x;\n}\nfunction f(n: uint256) returns (word) {\n    let m = new uint256[](n);\n    let r = new uint256[][](n + 1);\n    return new(1);\n}\n"
+    );
+    assert_stable(source);
+}
+
+#[test]
+fn formats_slices_without_spaces_around_the_colon() {
+    let source = "pragma solcore;\nfunction f(a:uint256[],c:bool)returns(uint256){return a[1 : 3][ : 2].length+a[c?1:2 :][i+1: ].length;}";
+    assert_eq!(
+        format(source),
+        "pragma solcore;\nfunction f(a: uint256[], c: bool) returns (uint256) {\n    return a[1:3][:2].length + a[c ? 1 : 2:][i + 1:].length;\n}\n"
+    );
+    assert_stable(source);
+}
+
+#[test]
 fn rejects_invalid_input_without_returning_partial_output() {
     for source in [
         "pragma solcore; function f(){let x=;}",

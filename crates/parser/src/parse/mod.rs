@@ -1589,6 +1589,73 @@ match (left, right) {
     }
 
     #[test]
+    fn new_allocates_arrays_and_otherwise_stays_an_identifier() {
+        let source = "{ let m = new uint256[][](n); return new(m); }";
+        let parsed = parse_body_statements(source, (0..source.len()).into());
+        assert!(parsed.errors.is_empty(), "errors: {:#?}", parsed.errors);
+        let [first, second] = parsed.output.as_slice() else {
+            panic!("expected two statements: {:#?}", parsed.output);
+        };
+        let ParsedStmtKind::Let {
+            init: Some(init), ..
+        } = &first.kind
+        else {
+            panic!("expected a let: {first:#?}");
+        };
+        let ParsedExprKind::NewArray { ty, .. } = &init.kind else {
+            panic!("expected an allocation: {init:#?}");
+        };
+        let ParsedTyKind::Array { elem, .. } = &ty.kind else {
+            panic!("expected an array type: {ty:#?}");
+        };
+        assert!(matches!(elem.kind, ParsedTyKind::Array { .. }));
+        assert!(matches!(
+            &second.kind,
+            ParsedStmtKind::Return(Some(ParsedExpr {
+                kind: ParsedExprKind::Call { .. },
+                ..
+            }))
+        ));
+    }
+
+    #[test]
+    fn brackets_with_a_colon_parse_as_slices_with_optional_bounds() {
+        fn bounds(source: &str) -> (Option<&str>, Option<&str>) {
+            let parsed = parse_body_statements(source, (0..source.len()).into());
+            assert!(parsed.errors.is_empty(), "{source}: {:#?}", parsed.errors);
+            let [
+                ParsedStmt {
+                    kind: ParsedStmtKind::Return(Some(expr)),
+                    ..
+                },
+            ] = parsed.output.as_slice()
+            else {
+                panic!("expected a return: {:#?}", parsed.output);
+            };
+            let ParsedExprKind::Slice { start, end, .. } = &expr.kind else {
+                panic!("expected a slice: {expr:#?}");
+            };
+            (
+                start.as_ref().map(|start| &source[start.span.into_range()]),
+                end.as_ref().map(|end| &source[end.span.into_range()]),
+            )
+        }
+        assert_eq!(bounds("{ return a[i:j]; }"), (Some("i"), Some("j")));
+        assert_eq!(bounds("{ return a[i + 1:]; }"), (Some("i + 1"), None));
+        assert_eq!(bounds("{ return a[:j]; }"), (None, Some("j")));
+        assert_eq!(bounds("{ return a[:]; }"), (None, None));
+        // A ternary bound keeps its own colon.
+        assert_eq!(
+            bounds("{ return a[c ? x : y:z]; }"),
+            (Some("c ? x : y"), Some("z"))
+        );
+
+        let source = "{ return a[]; }";
+        let parsed = parse_body_statements(source, (0..source.len()).into());
+        assert!(!parsed.errors.is_empty());
+    }
+
+    #[test]
     fn if_statement_requires_a_parenthesized_condition() {
         let source = "{ if (condition) { return 1; } else { return 0; } }";
         let parsed = parse_body_statements(source, (0..source.len()).into());
@@ -1781,6 +1848,23 @@ match (left, right) {
             errors
         );
         assert!(errors.iter().all(|error| error.span.start >= 17));
+    }
+
+    #[test]
+    fn array_type_suffixes_count_against_the_nesting_limit() {
+        let parse = |suffixes: usize| {
+            let source = format!("{{ let x: word{}; }}", "[]".repeat(suffixes));
+            parse_body_statements(&source, (0..source.len()).into()).errors
+        };
+
+        assert!(parse(MAX_SYNTAX_NESTING - 1).is_empty());
+        let errors = parse(MAX_SYNTAX_NESTING + 1);
+        assert!(
+            errors.iter().any(|error| error
+                .message
+                .contains("type nesting exceeds the compiler limit")),
+            "missing array nesting diagnostic: {errors:#?}"
+        );
     }
 
     #[test]

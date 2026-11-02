@@ -670,7 +670,7 @@ fn ufcs_reports_undefined_name_when_visible_methods_conflict() {
 }
 
 #[test]
-fn value_ufcs_resolves_parameters_and_locals_while_preserving_qualified_calls() {
+fn value_ufcs_resolves_any_value_receiver_while_preserving_qualified_calls() {
     let db = TestDb::default();
     let module = parse_module(
         &db,
@@ -806,10 +806,13 @@ fn value_ufcs_resolves_parameters_and_locals_while_preserving_qualified_calls() 
         .iter()
         .find(|map| map.exprs.iter().any(|entry| entry.body == arbitrary_body))
         .expect("arbitrary body map");
+    // As in Solidity, any value receiver works, so `xs[i].push(v)` and
+    // `f().length` need no temporary.
     assert!(
-        !field_resolutions(&db, arbitrary_body, arbitrary_map)
+        field_resolutions(&db, arbitrary_body, arbitrary_map)
             .into_iter()
-            .any(|(_, resolution)| matches!(resolution, Resolution::ClassMethod { .. }))
+            .any(|(name, resolution)| name == "combine"
+                && matches!(resolution, Resolution::ClassMethod { .. }))
     );
 }
 
