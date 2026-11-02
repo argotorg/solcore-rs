@@ -1,0 +1,27 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/solver/memory_pointer_not_writable/main.sol
+---
+error[SC0207]: cannot satisfy trait constraint: memory<uint256>: CanStore<uint256>
+  --> /main/main.sol:10:5
+   |
+ 9 |     let p: memory<uint256> = memory(0x40);
+10 |     CanStore.store(p, uint256(0));
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ constraint originates here
+11 | }
+   |
+   = note: no visible impl matches `memory<uint256>: CanStore<uint256>`
+   = help: add a matching impl or strengthen the surrounding type context
+---
+
+error[SC0207]: cannot satisfy trait constraint: memory<uint256>: CanStore<uint256>
+  --> /main/main.sol:15:5
+   |
+14 |     let cells: memory<uint256>[] = new memory<uint256>[](1);
+15 |     CanStore.store(cells[0], uint256(5));
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ constraint originates here
+16 | }
+   |
+   = note: no visible impl matches `memory<uint256>: CanStore<uint256>`
+   = help: add a matching impl or strengthen the surrounding type context

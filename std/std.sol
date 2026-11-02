@@ -3070,16 +3070,6 @@ impl<t, t_decoded, i> RValueIdxAccess<(calldata<array<t>>, i), t_decoded> where 
     }
 }
 
-// A memory cell holding a word-sized value, such as a memory array element.
-impl<t> CanStore<memory<t>, t> where t: Typedef<word> {
-    function store(r: memory<t>, v: t) returns (()) {
-        mstore(Typedef.rep(r), Typedef.rep(v));
-    }
-    function load(r: memory<t>) returns (t) {
-        return Typedef.abs(mload(Typedef.rep(r)));
-    }
-}
-
 // A checked reference to one word-sized element of a memory array. Only the
 // LValueIdxAccess instance below builds one: the constructor is not exported
 // and there is no Typedef<word> instance, so user code cannot forge, offset or
