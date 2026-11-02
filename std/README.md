@@ -98,6 +98,12 @@ Element access:
 
 - `a[i]` and `a[i] = v` on memory arrays go through the `RValueIdxAccess`,
   `LValueIdxAccess` and `CanStore` instances.
+- `lidx(a, i)` checks the bounds and returns a `memref<T>`, a reference to one
+  element. `CanStore` reads and writes through it, and it can be passed to a
+  function.
+- `memref` is sealed: its constructor is not exported and it has no
+  `Typedef<word>` instance, so a reference cannot be built from an address,
+  offset, or stored in an array. A `memory<T>` pointer is not a writable cell.
 - Any other collection with an `RValueIdxAccess` instance can also be indexed.
 - `a.length` reads `Length.length(a)` unless the value has a `length` field.
 - `push` and `pop` exist only for storage arrays; memory arrays have a fixed
