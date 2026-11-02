@@ -38,8 +38,12 @@ pub fn instance_soundness_diagnostics<'db>(
             .collect::<Vec<_>>();
     let mut prior_heads = imported_non_default_heads(db, module, facts.module, &facts.imports);
     add_builtin_str_heads(db, &mut prior_heads);
+    let mut prior_defaults = imported_default_heads(db, module, &facts.imports);
     for fact in &facts.instances {
         check_instance_locality(db, module, fact, &mut diagnostics);
+        if fact.default {
+            check_overlapping_default(db, fact, &mut prior_defaults, &mut diagnostics);
+        }
         let class = fact.class(db);
         let same_class_prior = class
             .and_then(|class| prior_heads.get(&class))
@@ -83,6 +87,88 @@ pub fn instance_soundness_diagnostics<'db>(
 struct InstanceHead<'db> {
     pred: Pred<'db>,
     span: Option<LabelSpan>,
+}
+
+/// A visible default impl head, for the definition-time default overlap check.
+struct DefaultHead<'db> {
+    pred: Pred<'db>,
+    span: LabelSpan,
+    unconditional: bool,
+    standard: bool,
+}
+
+/// Default impl heads visible from `module` through its imports.
+fn imported_default_heads<'db>(
+    db: &'db dyn Db,
+    module: ModuleId<'db>,
+    env: &nameres::ModuleImportSurface<'db>,
+) -> FxHashMap<ClassId<'db>, Vec<DefaultHead<'db>>> {
+    let mut heads = FxHashMap::<ClassId<'db>, Vec<DefaultHead<'db>>>::default();
+    for origin in &env.instances {
+        if origin.module == module {
+            continue;
+        }
+        let Some(facts) = module_instance_facts(db, origin.module).as_ref() else {
+            continue;
+        };
+        let Some(fact) = facts
+            .instances
+            .iter()
+            .find(|fact| fact.def == origin.def_id && fact.default)
+        else {
+            continue;
+        };
+        if let Some(class) = fact.class(db) {
+            heads.entry(class).or_default().push(default_head(db, fact));
+        }
+    }
+    heads
+}
+
+fn default_head<'db>(db: &'db dyn Db, fact: &InstanceFact<'db>) -> DefaultHead<'db> {
+    DefaultHead {
+        pred: fact.head,
+        span: fact.head_span.clone(),
+        unconditional: fact.conditions.is_empty(),
+        standard: crate::support::is_std_definition(db, fact.def),
+    }
+}
+
+/// Reports a default impl that overlaps another default impl of the same
+/// priority when one of them has no conditions: wherever both apply the goal
+/// is ambiguous, and an unconditional default always applies.
+fn check_overlapping_default<'db>(
+    db: &'db dyn Db,
+    fact: &InstanceFact<'db>,
+    prior_defaults: &mut FxHashMap<ClassId<'db>, Vec<DefaultHead<'db>>>,
+    diagnostics: &mut Vec<TypeckDiagnostic>,
+) {
+    if matches!(fact.head.kind(db), PredKind::Error) {
+        return;
+    }
+    let Some(class) = fact.class(db) else {
+        return;
+    };
+    let head = default_head(db, fact);
+    let priors = prior_defaults.entry(class).or_default();
+    if let Some(prior) = priors.iter().find(|prior| {
+        prior.standard == head.standard
+            && (prior.unconditional || head.unconditional)
+            && instance_heads_overlap(db, head.pred, prior.pred)
+    }) {
+        let type_vars = type_var_bindings(
+            fact.instance.def_id_value(db),
+            fact.instance.type_var_elems(db),
+        );
+        let type_var_names = type_var_names(db, &type_vars);
+        diagnostics.push(TypeckDiagnostic::OverlappingDefaultInstance {
+            instance_span: head.span.clone(),
+            overlaps_span: Some(prior.span.clone()),
+            instance: display_pred_source(db, head.pred, &type_var_names),
+            overlaps: display_pred_source(db, prior.pred, &[]),
+        });
+    }
+    priors.push(head);
 }
 
 fn add_builtin_str_heads<'db>(

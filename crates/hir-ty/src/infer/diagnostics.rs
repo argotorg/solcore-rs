@@ -311,6 +311,19 @@ pub enum TypeckDiagnostic {
         /// How to place the impl instead.
         help: String,
     },
+    /// `SC0247`: a default impl without conditions overlaps another default
+    /// impl of the same priority, so neither can ever be chosen where both
+    /// apply.
+    OverlappingDefaultInstance {
+        /// Source span for the later default impl head.
+        instance_span: LabelSpan,
+        /// Source span for the earlier default impl head, when available.
+        overlaps_span: Option<LabelSpan>,
+        /// New default impl predicate.
+        instance: String,
+        /// Earlier default impl predicate.
+        overlaps: String,
+    },
     /// `SC0219`: a default instance main argument contained no type variable.
     InvalidDefaultInstance {
         /// Source span for the instance head.
@@ -832,6 +845,28 @@ impl TypeckDiagnostic {
                     |diagnostic, owner| diagnostic.with_note(owner.clone()),
                 )
                 .with_help(help.clone()),
+            TypeckDiagnostic::OverlappingDefaultInstance {
+                instance_span,
+                overlaps_span,
+                instance,
+                overlaps,
+            } => {
+                let diagnostic = Diagnostic::error(format!(
+                    "default impl `{instance}` overlaps default impl `{overlaps}`, and one of them has no condition to tell them apart"
+                ))
+                .with_code(DiagnosticCode::TYPECK_OVERLAPPING_DEFAULT_INSTANCE)
+                .with_primary_label_span(instance_span.clone(), Some("overlapping default impl"))
+                .with_note("where both apply, neither is chosen and the constraint is ambiguous")
+                .with_help("add a `where` condition that tells them apart, or remove one of them");
+                if let Some(overlaps_span) = overlaps_span {
+                    diagnostic.with_secondary_label_span(
+                        overlaps_span.clone(),
+                        Some("previous default impl"),
+                    )
+                } else {
+                    diagnostic
+                }
+            }
             TypeckDiagnostic::InvalidDefaultInstance { span, head } => Diagnostic::error(format!(
                 "Cannot have a default impl whose main argument contains no type variable: {head}"
             ))
