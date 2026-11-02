@@ -2,57 +2,63 @@ pragma solcore;
 
 import * from base;
 export { a, bothA, valueA };
-impl C<word> {
-    function f(x: word) returns (word) {
+enum AWord {
+    AWord(word)
+}
+impl C<AWord> {
+    function f(x: AWord) returns (word) {
         return 1;
     }
 }
-impl D<word> {
-    function g(x: word) returns (word) {
+impl D<AWord> {
+    function g(x: AWord) returns (word) {
         return 10;
     }
 }
 function a() returns (word) {
-    let x: word = 0;
+    let x: AWord = AWord(0);
     return run(x);
 }
 function bothA() returns (word) {
-    let x: word = 0;
+    let x: AWord = AWord(0);
     return relay(x);
 }
 function valueA() returns (word) {
-    let x: word = 0;
+    let x: AWord = AWord(0);
     let g = run;
     return g(x);
 }
 
 export { phantomA };
-impl Phantom<word, word> {
-    function pick(x: word) returns (word) {
+impl Phantom<AWord, word> {
+    function pick(x: AWord) returns (word) {
         return 3;
     }
 }
 function phantomA() returns (word) {
-    let x: word = 0;
+    let x: AWord = AWord(0);
     return runPhantom(x);
 }
 
 export { orderedA };
-impl Choose<word, word> {
-    function pick(x: word, hint: Witness<word>) returns (word) {
+enum ABool {
+    ABool(bool)
+}
+impl Choose<AWord, word> {
+    function pick(x: word, hint: Witness<AWord>) returns (word) {
         return 1;
     }
 }
-impl Choose<bool, word> {
-    function pick(x: word, hint: Witness<bool>) returns (word) {
+impl Choose<ABool, word> {
+    function pick(x: word, hint: Witness<ABool>) returns (word) {
         return 2;
     }
 }
-impl First<word> {}
-impl Second<bool> {}
+impl First<AWord> {}
+impl Second<ABool> {}
 function orderedA() returns (word) {
     let x: word = 0;
-    let first: Witness<word> = Witness;
-    let second: Witness<bool> = Witness;
+    let first: Witness<AWord> = Witness;
+    let second: Witness<ABool> = Witness;
     return runOrdered(x, first, second);
 }

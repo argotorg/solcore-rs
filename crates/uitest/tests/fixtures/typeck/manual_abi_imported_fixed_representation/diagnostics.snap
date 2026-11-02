@@ -3,25 +3,31 @@ source: crates/test-utils/src/lib.rs
 expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/manual_abi_imported_fixed_representation/main.sol
 ---
-error[SC0218]: Overlapping impls are not supported
-               impl:
-               bool: ABIAttribs
-               overlaps with:
-               bool: ABIAttribs
-    --> /main/lib.sol:17:6
-     |
-  16 |
-  17 | impl ABIAttribs<bool> {
-     |      ^^^^^^^^^^^^^^^^ overlapping impl
-  18 |     function headSize(p: Proxy<bool>) returns (word) {
-     |
-    ::: /std/std.sol:1695
-     |
-1695 |
-1696 | impl ABIAttribs<bool> {
-     |      ---------------- previous overlapping impl
-1697 |     function headSize(ty: Proxy<bool>) returns (word) {
-     |
+error[SC0246]: impl `bytes32: ABIAttribs` must be defined next to its trait or its type
+  --> /main/lib.sol:21:6
+   |
+20 | // the derived ABI of the types this module exports.
+21 | impl ABIAttribs<bytes32> {
+   |      ^^^^^^^^^^^^^^^^^^^ impl defined elsewhere
+22 |     function headSize(p: Proxy<bytes32>) returns (word) {
+   |
+   = note: trait `ABIAttribs` is defined in module `std`
+   = note: type `bytes32` is defined in module `std`
+   = help: move this impl into one of those modules, or into a module that imports one of them and is imported by it, so every module that can use the impl also sees it; for different behaviour here, wrap the type in a new type or give the trait a policy type parameter
+---
+
+error[SC0246]: impl `ABIDecoder<word, MemoryWordReader>: ABIDecode<word>` must be defined next to its trait or its type
+  --> /main/lib.sol:30:6
+   |
+29 |
+30 | impl ABIDecode<ABIDecoder<word, MemoryWordReader>, word> {
+   |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ impl defined elsewhere
+31 |     function decode(d: ABIDecoder<word, MemoryWordReader>, offset: word) returns (word) {
+   |
+   = note: trait `ABIDecode` is defined in module `std`
+   = note: type `ABIDecoder` is defined in module `std`
+   = note: `word` is a builtin type, so only the module of trait `ABIDecode` can define this impl
+   = help: move this impl into one of those modules, or into a module that imports one of them and is imported by it, so every module that can use the impl also sees it; for different behaviour here, wrap the type in a new type or give the trait a policy type parameter
 ---
 
 error[SC0231]: constructor ABI for contract `C` cannot use visible manual `ABIDecode` evidence
@@ -34,3 +40,15 @@ error[SC0231]: constructor ABI for contract `C` cannot use visible manual `ABIDe
   |
   = note: impl `ABIDecode` can override canonical `ABIDecode` behavior
   = help: remove the visible manual ABI impl or keep this declaration out of the external ABI
+---
+
+error[SC0231]: public function `inspect` ABI for contract `C` cannot use visible manual `ABIAttribs` evidence
+  --> /main/main.sol:10:5
+   |
+ 9 |
+10 |     function inspect(value: Fixed) public returns (uint256) {
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ external ABI evidence must be compiler-owned and canonical
+11 |         return uint256(7);
+   |
+   = note: impl `ABIAttribs` can override canonical `ABIAttribs` behavior
+   = help: remove the visible manual ABI impl or keep this declaration out of the external ABI

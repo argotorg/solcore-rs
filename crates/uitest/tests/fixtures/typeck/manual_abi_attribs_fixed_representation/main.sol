@@ -6,7 +6,7 @@ import * from std.Generic;
 import * from std.ABIGeneric;
 
 enum Fixed {
-    Fixed(bool)
+    Fixed(bytes32)
 }
 enum Box<a> {
     Box(a)
@@ -15,11 +15,14 @@ enum Wrap<a> {
     Wrap(Box<a>)
 }
 
-impl ABIAttribs<bool> {
-    function headSize(p: Proxy<bool>) returns (word) {
+// User code cannot implement std's traits for std types (SC0246). std gives
+// `bytes32` its layout through a default impl, so this impl would still be
+// selected and the external ABI check must find it through the derived ABI.
+impl ABIAttribs<bytes32> {
+    function headSize(p: Proxy<bytes32>) returns (word) {
         return 64;
     }
-    function isStatic(p: Proxy<bool>) returns (bool) {
+    function isStatic(p: Proxy<bytes32>) returns (bool) {
         return false;
     }
 }
@@ -31,7 +34,7 @@ contract FixedField {
 }
 
 contract NestedParameter {
-    function inspect(value: Box<Wrap<bool>>) public returns (uint256) {
+    function inspect(value: Box<Wrap<bytes32>>) public returns (uint256) {
         return uint256(7);
     }
 }

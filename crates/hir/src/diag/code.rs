@@ -117,6 +117,7 @@ impl DiagnosticCode {
     pub const TYPECK_TYPE_ALIAS_EXPANSION_LIMIT: &'static str = "SC0243";
     pub const TYPECK_INCOMPLETE_INSTANCE: &'static str = "SC0244";
     pub const TYPECK_RESERVED_YUL_FUNCTION: &'static str = "SC0245";
+    pub const TYPECK_ORPHAN_INSTANCE: &'static str = "SC0246";
     pub const TYPECK_AMBIGUOUS_INFERENCE_OR_TYPE_CONSTRUCTOR_ARITY: &'static str = "SC0299";
     pub const TYPECK_NON_EXHAUSTIVE_MATCH: &'static str = "SC0302";
     pub const EMIT_NON_EXHAUSTIVE_MATCH: &'static str = "SC0302";
@@ -269,6 +270,7 @@ impl DiagnosticCode {
             "TYPECK_RESERVED_YUL_FUNCTION",
             Self::TYPECK_RESERVED_YUL_FUNCTION,
         ),
+        DiagnosticCodeEntry::new("TYPECK_ORPHAN_INSTANCE", Self::TYPECK_ORPHAN_INSTANCE),
         DiagnosticCodeEntry::new("TYPECK_COVERAGE_CONDITION", Self::TYPECK_COVERAGE_CONDITION),
         DiagnosticCodeEntry::new(
             "TYPECK_PATTERSON_CONDITION",

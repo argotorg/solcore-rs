@@ -2,10 +2,11 @@ use std::{collections::BTreeMap, path::Path};
 
 use dir_test::{Fixture, dir_test};
 use hir::ast::item::Item;
-use nameres::{Db as _, LibraryId, ModuleKey, module_id_from_key, module_key_for_path};
+use nameres::{Db as _, LibraryId, module_id_from_key, module_key_for_path};
 use parser::parse_file_to_hir;
 use solcore_hir_ty::{
-    ClassId, Evidence, Pred, Solution, Ty, canonical_goal, solve, trait_env_for_module,
+    ClassId, Evidence, Pred, Solution, Ty, TyCtor, UserTyCtor, UserTyCtorKind, canonical_goal,
+    solve, trait_env_for_module,
 };
 use solcore_test_utils::{
     define_frontend_test_db, load_fixture_case, load_fixture_case_with_file_urls,
@@ -27,10 +28,15 @@ fn default_precedence(fixture: Fixture<&str>) {
         .filter_map(|line| line.strip_prefix("//~ "))
         .collect::<Vec<_>>();
     assert_eq!(directives.len(), 2, "expected a goal and solution");
-    let goal_name = directives
+    // `goal: Class [Adt]` asks for `word: Class`, or for `Adt<word>: Class`
+    // when the fixture's own type constructor carries its defaults.
+    let mut goal = directives
         .iter()
         .find_map(|line| line.strip_prefix("goal: "))
-        .expect("class goal");
+        .expect("class goal")
+        .split_whitespace();
+    let goal_name = goal.next().expect("goal class");
+    let goal_adt = goal.next();
     let expected = directives
         .iter()
         .find_map(|line| line.strip_prefix("solution: "))
@@ -61,17 +67,7 @@ fn default_precedence(fixture: Fixture<&str>) {
         let entry = module_id_from_key(&db, &entry);
         let diagnostics = solcore_hir_ty::collect_frontend_diagnostics(&db, entry);
         assert!(diagnostics.is_empty(), "{diagnostics:?}");
-        let std_module = module_id_from_key(
-            &db,
-            &ModuleKey {
-                library: LibraryId::Std,
-                logical_path: vec!["std".to_owned()],
-            },
-        );
-        let module = parse_file_to_hir(&db, db.module_file(std_module).unwrap()).module(&db);
-        let class = module
-            .items(&db)
-            .iter()
+        let class = loaded_items(&db)
             .find_map(|item| match item {
                 Item::ClassDef(class)
                     if class.def_id_value(&db).name(&db).as_deref() == Some(goal_name) =>
@@ -80,8 +76,31 @@ fn default_precedence(fixture: Fixture<&str>) {
                 }
                 _ => None,
             })
-            .unwrap();
-        let goal = canonical_goal(&db, Pred::in_class(&db, class, Ty::word(&db), vec![]));
+            .expect("goal class");
+        let main_ty = match goal_adt {
+            None => Ty::word(&db),
+            Some(adt_name) => {
+                let def = loaded_items(&db)
+                    .find_map(|item| match item {
+                        Item::AdtDef(adt)
+                            if adt.def_id_value(&db).name(&db).as_deref() == Some(adt_name) =>
+                        {
+                            Some(adt.def_id_value(&db))
+                        }
+                        _ => None,
+                    })
+                    .expect("goal type");
+                Ty::named(
+                    &db,
+                    TyCtor::User(UserTyCtor {
+                        def,
+                        kind: UserTyCtorKind::Adt,
+                    }),
+                    vec![Ty::word(&db)],
+                )
+            }
+        };
+        let goal = canonical_goal(&db, Pred::in_class(&db, class, main_ty, vec![]));
         let actual = solve(&db, trait_env_for_module(&db, entry), goal);
         match (expected.as_slice(), &actual) {
             (["unique", owners @ ..], Solution::Unique { evidence, .. }) => {
@@ -99,6 +118,29 @@ fn default_precedence(fixture: Fixture<&str>) {
             _ => panic!("{file_urls}/{overlapping}: expected {expected:?}, got {actual:?}"),
         }
     }
+}
+
+/// Items of every loaded module: the standard library, then external
+/// libraries, then main modules, so a source loaded under several identities
+/// (overlapping roots) is found under its library identity first.
+fn loaded_items(db: &TestDb) -> impl Iterator<Item = Item<'_>> + '_ {
+    let mut keys = db
+        .module_file_snapshot
+        .expect("module file snapshot")
+        .files(db)
+        .keys()
+        .cloned()
+        .collect::<Vec<_>>();
+    keys.sort_by_key(|key| match key.library {
+        LibraryId::Std => 0,
+        LibraryId::External(_) => 1,
+        LibraryId::Main => 2,
+    });
+    keys.into_iter().flat_map(move |key| {
+        let module = module_id_from_key(db, &key);
+        let file = db.module_file(module).expect("loaded module source");
+        parse_file_to_hir(db, file).module(db).items(db).clone()
+    })
 }
 
 fn evidence_owners(db: &TestDb, evidence: &Evidence<'_>, owners: &mut Vec<String>) {

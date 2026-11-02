@@ -4,8 +4,8 @@
 //! Two rules make that checkable one module at a time:
 //!
 //! * an impl lives in the import cycle of the module that defines its trait or
-//!   the head type of its main argument. Every module
-//!   that can state a goal then sees every impl that could match it, and two
+//!   the head type of its main argument ([`is_local_to`]). Every module that
+//!   can state a goal then sees every impl that could match it, and two
 //!   overlapping impls always meet where one of them is defined;
 //! * a default impl never decides a goal whose main argument is still a type
 //!   parameter ([`main_arg_is_type_parameter`]): the module that instantiates
@@ -15,6 +15,8 @@
 //! module is transparent to both rules: an impl for `W<t, ...>` counts as an
 //! impl for `t`. std declares its decoder and storage wrappers this way, so
 //! `impl ABIDecode<ABIDecoder<T, r>, T>` belongs next to `T`.
+
+use hir::input::SourceFile;
 
 use super::*;
 
@@ -93,5 +95,78 @@ pub(crate) fn default_skipped_for_type_parameter<'db>(
     main_arg_is_type_parameter(db, goal, |_| true)
         && env.clauses_for_pred(db, goal).iter().any(|clause| {
             clause.origin.is_default() && head_can_unify(db, clause, goal, &FxHashSet::default())
+        })
+}
+
+/// Who may define an impl: the definitions it can be placed next to.
+pub(super) struct InstanceOwners<'db> {
+    /// The trait, unless it is built into the compiler.
+    pub(super) class: Option<DefId<'db>>,
+    /// Coherence wrappers around the main argument, outermost first, and the
+    /// head type inside them when it is a user-defined type.
+    pub(super) types: Vec<DefId<'db>>,
+    /// The coherence head of the main argument.
+    pub(super) head: Ty<'db>,
+}
+
+/// The definitions whose module (or import cycle) may contain an impl with
+/// `head`.
+pub(super) fn instance_owners<'db>(
+    db: &'db dyn Db,
+    head: Pred<'db>,
+) -> Option<InstanceOwners<'db>> {
+    let PredKind::InClass { class, main, .. } = head.kind(db) else {
+        return None;
+    };
+    let class = match class {
+        ClassId::User(def) => Some(*def),
+        ClassId::Builtin(_) => None,
+    };
+    let mut types = Vec::new();
+    let mut ty = *main;
+    while let TyKind::Named {
+        ctor: TyCtor::User(ctor),
+        args,
+    } = ty.kind(db)
+    {
+        types.push(ctor.def);
+        if args.is_empty() || !is_coherence_wrapper(db, ctor.def) {
+            break;
+        }
+        ty = args[0];
+    }
+    Some(InstanceOwners {
+        class,
+        types,
+        head: ty,
+    })
+}
+
+/// Whether an impl declared in `module` (from `impl_file`) may be placed next
+/// to `owner`: in the same module, or in an import cycle with the module that
+/// defines it.
+pub(super) fn is_local_to<'db>(
+    db: &'db dyn Db,
+    module: ModuleId<'db>,
+    impl_file: SourceFile,
+    owner: DefId<'db>,
+) -> bool {
+    let owner_file = owner.file(db);
+    if owner_file == impl_file || owner_file.url(db) == impl_file.url(db) {
+        return true;
+    }
+    let Some(owner_module) = nameres::module_id_for_source_file(db, owner_file) else {
+        return false;
+    };
+    sees(db, module, owner_file) && sees(db, owner_module, impl_file)
+}
+
+/// Whether `file`'s module is in the instance-visibility closure of `from`.
+fn sees<'db>(db: &'db dyn Db, from: ModuleId<'db>, file: SourceFile) -> bool {
+    nameres::instance_import_modules(db, from)
+        .iter()
+        .any(|module| {
+            db.module_file(*module)
+                .is_some_and(|visible| visible.url(db) == file.url(db))
         })
 }

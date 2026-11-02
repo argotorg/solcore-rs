@@ -298,6 +298,19 @@ pub enum TypeckDiagnostic {
         /// Prior overlapping instance predicate.
         overlaps: String,
     },
+    /// `SC0246`: an impl is defined outside the modules of its trait and of the
+    /// head type of its main argument.
+    OrphanInstance {
+        /// Source span for the instance head.
+        span: LabelSpan,
+        /// Instance predicate snapshot.
+        instance: String,
+        /// Where the trait and the types the impl could live next to are
+        /// defined.
+        owners: Vec<String>,
+        /// How to place the impl instead.
+        help: String,
+    },
     /// `SC0219`: a default instance main argument contained no type variable.
     InvalidDefaultInstance {
         /// Source span for the instance head.
@@ -803,6 +816,22 @@ impl TypeckDiagnostic {
                     diagnostic
                 }
             }
+            TypeckDiagnostic::OrphanInstance {
+                span,
+                instance,
+                owners,
+                help,
+            } => owners
+                .iter()
+                .fold(
+                    Diagnostic::error(format!(
+                        "impl `{instance}` must be defined next to its trait or its type"
+                    ))
+                    .with_code(DiagnosticCode::TYPECK_ORPHAN_INSTANCE)
+                    .with_primary_label_span(span.clone(), Some("impl defined elsewhere")),
+                    |diagnostic, owner| diagnostic.with_note(owner.clone()),
+                )
+                .with_help(help.clone()),
             TypeckDiagnostic::InvalidDefaultInstance { span, head } => Diagnostic::error(format!(
                 "Cannot have a default impl whose main argument contains no type variable: {head}"
             ))

@@ -123,62 +123,63 @@ fn canonical_dispatch_under_main_root_preserves_manual_abi_diagnostics() {
         let diagnostics = nameres::reachable_diagnostics(&db, module_id);
         assert!(diagnostics.is_empty(), "{roots:?}: {diagnostics:#?}");
         let diagnostics = diagnostics_for_module(&db, &key);
-        assert_eq!(diagnostics.len(), 4, "{roots:?}: {diagnostics:#?}");
-        for class in ["ABIAttribs", "ABIEncode", "ABIDecode", "SigString"] {
+        // User code cannot define these impls for the builtin `word` (SC0246),
+        // and the external ABI check must still recognize the canonical classes
+        // when std is reached through the main root.
+        assert_eq!(diagnostics.len(), 8, "{roots:?}: {diagnostics:#?}");
+        for (class, impl_head) in [
+            ("ABIAttribs", "word: ABIAttribs"),
+            ("ABIEncode", "word: ABIEncode"),
+            (
+                "ABIDecode",
+                "ABIDecoder<word, CalldataWordReader>: ABIDecode<word>",
+            ),
+            ("SigString", "word: SigString"),
+        ] {
             assert_diagnostics_contain(&diagnostics, "SC0231", &format!("manual `{class}`"));
+            assert_diagnostics_contain(&diagnostics, "SC0246", &format!("impl `{impl_head}`"));
         }
     }
 }
 
-#[test]
-fn external_array_abi_rejects_selected_manual_element_layout_nested() {
-    let roots = RootLayout::Separate;
-    let (db, key) = contract_fixture(
-        "external_array_abi_rejects_selected_manual_element_layout_nested",
-        roots,
-    );
+/// Only std can implement `ABIElementAttribs` (its main argument is std's
+/// `ABIElement`), so the manual impl is an orphan (SC0246); a public array
+/// whose ABI selects it must still be rejected (SC0231).
+fn assert_rejects_selected_manual_element_layout(name: &str, impl_head: &str) {
+    let (db, key) = contract_fixture(name, RootLayout::Separate);
     let diagnostics = diagnostics_for_module(&db, &key);
     assert!(
         diagnostics
             .iter()
-            .all(|d| d.code.as_deref() == Some("SC0231")),
+            .all(|d| matches!(d.code.as_deref(), Some("SC0231" | "SC0246"))),
         "{diagnostics:#?}"
     );
     assert_diagnostics_contain(&diagnostics, "SC0231", "manual `ABIElementAttribs`");
+    assert_diagnostics_contain(&diagnostics, "SC0246", &format!("impl `{impl_head}`"));
+}
+
+#[test]
+fn external_array_abi_rejects_selected_manual_element_layout_nested() {
+    assert_rejects_selected_manual_element_layout(
+        "external_array_abi_rejects_selected_manual_element_layout_nested",
+        "ABIElement<calldata<array<uint256>>>: ABIElementAttribs",
+    );
 }
 
 #[test]
 fn external_array_abi_rejects_selected_manual_element_layout_unit() {
-    let roots = RootLayout::Separate;
-    let (db, key) = contract_fixture(
+    assert_rejects_selected_manual_element_layout(
         "external_array_abi_rejects_selected_manual_element_layout_unit",
-        roots,
+        "ABIElement<()>: ABIElementAttribs",
     );
-    let diagnostics = diagnostics_for_module(&db, &key);
-    assert!(
-        diagnostics
-            .iter()
-            .all(|d| d.code.as_deref() == Some("SC0231")),
-        "{diagnostics:#?}"
-    );
-    assert_diagnostics_contain(&diagnostics, "SC0231", "manual `ABIElementAttribs`");
 }
 
 #[test]
 fn external_array_abi_rejects_selected_manual_element_layout_word() {
-    let roots = RootLayout::Separate;
-    let (db, key) = contract_fixture(
+    assert_rejects_selected_manual_element_layout(
         "external_array_abi_rejects_selected_manual_element_layout_word",
-        roots,
+        "ABIElement<uint256>: ABIElementAttribs",
     );
-    let diagnostics = diagnostics_for_module(&db, &key);
-    assert!(
-        diagnostics
-            .iter()
-            .all(|d| d.code.as_deref() == Some("SC0231")),
-        "{diagnostics:#?}"
-    );
-    assert_diagnostics_contain(&diagnostics, "SC0231", "manual `ABIElementAttribs`");
 }
 
 #[test]

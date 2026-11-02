@@ -1,0 +1,29 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/solver/orphan_impl_in_sibling_module/main.sol
+---
+error[SC0246]: impl `A: Fee` must be defined next to its trait or its type
+ --> /main/one.sol:8:6
+  |
+7 | // Only fees.sol, which defines both `Fee` and `A`, may implement `Fee<A>`.
+8 | impl Fee<A> {
+  |      ^^^^^^ impl defined elsewhere
+9 |     function fee(x: A) returns (word) {
+  |
+  = note: trait `Fee` is defined in module `fees`
+  = note: type `A` is defined in module `fees`
+  = help: move this impl into one of those modules, or into a module that imports one of them and is imported by it, so every module that can use the impl also sees it; for different behaviour here, wrap the type in a new type or give the trait a policy type parameter
+---
+
+error[SC0246]: impl `A: Fee` must be defined next to its trait or its type
+ --> /main/two.sol:7:6
+  |
+6 |
+7 | impl Fee<A> {
+  |      ^^^^^^ impl defined elsewhere
+8 |     function fee(x: A) returns (word) {
+  |
+  = note: trait `Fee` is defined in module `fees`
+  = note: type `A` is defined in module `fees`
+  = help: move this impl into one of those modules, or into a module that imports one of them and is imported by it, so every module that can use the impl also sees it; for different behaviour here, wrap the type in a new type or give the trait a policy type parameter

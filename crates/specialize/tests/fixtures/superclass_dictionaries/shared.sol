@@ -1,14 +1,11 @@
 pragma solcore;
 
-pragma no-patterson-condition;
+import { Generic } from std.Generic;
 import * from base;
-impl Child<word> {
-    function f(x: word) returns (word) {
-        return 99;
-    }
+export { Wrapped(*), Derived(*), ImplicitWrapped(*), decrement };
+enum Wrapped<t> {
+    Wrapped(t)
 }
-impl Silent<word> {}
-impl Grandchild<word> {}
 impl<t> UsesChild<Wrapped<t>> where t: Child {
     function run(w: Wrapped<t>) returns (word) {
         match (w) {
@@ -19,9 +16,17 @@ impl<t> UsesChild<Wrapped<t>> where t: Child {
     }
 }
 
-impl Direct<word> where word: Parent {
-    function call(x: word) returns (word) {
-        return Parent.f(x);
+#[derive(Child)]
+enum Derived<t> {
+    Derived(t)
+}
+impl<t> Parent<Derived<t>> where t: Parent {
+    function f(x: Derived<t>) returns (word) {
+        match (x) {
+            case (Derived(y)) {
+                return Parent.f(y);
+            }
+        }
     }
 }
 
@@ -32,26 +37,15 @@ function decrement(n: word) returns (word) {
     }
     return result;
 }
-impl ImplicitChild<word> {
-    function f(x: word) returns (word) {
-        return ImplicitParent.f(x);
-    }
-    function g(x: word) returns (word) {
-        match (x) {
-            case (0) {
-                return ImplicitParent.f(x);
-            }
-            case (_) {
-                return ImplicitChild.g(decrement(x));
-            }
-        }
-    }
+#[derive(ImplicitParent)]
+enum ImplicitWrapped<t> {
+    ImplicitWrapped(t)
 }
-impl ImplicitChild<ImplicitWrapped<word>> {
-    function f(x: ImplicitWrapped<word>) returns (word) {
+impl<t> ImplicitChild<ImplicitWrapped<t>> {
+    function f(x: ImplicitWrapped<t>) returns (word) {
         return ImplicitParent.f(x);
     }
-    function g(x: ImplicitWrapped<word>) returns (word) {
+    function g(x: ImplicitWrapped<t>) returns (word) {
         return ImplicitParent.f(x);
     }
 }

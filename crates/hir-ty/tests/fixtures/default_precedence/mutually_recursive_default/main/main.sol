@@ -2,8 +2,11 @@ pragma solcore;
 
 pragma no-patterson-condition Choice, Helper, Outer;
 import * from std;
-default impl<a> Choice<a> where a: Helper {}
-impl<a> Helper<a> where a: Choice {}
+enum Box<a> {
+    Box(a)
+}
+default impl<a> Choice<Box<a>> where Box<a>: Helper {}
+impl<a> Helper<Box<a>> where Box<a>: Choice {}
 
-//~ goal: Choice
+//~ goal: Choice Box
 //~ solution: unique main main std

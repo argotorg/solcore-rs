@@ -3,6 +3,20 @@ source: crates/test-utils/src/lib.rs
 expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/manual_abi_evidence_budget/main.sol
 ---
+error[SC0246]: impl `ABIDecoder<word, MemoryWordReader>: ABIDecode<word>` must be defined next to its trait or its type
+  --> /main/main.sol:72:6
+   |
+71 |
+72 | impl ABIDecode<ABIDecoder<word, MemoryWordReader>, word> {
+   |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ impl defined elsewhere
+73 |     function decode(d: ABIDecoder<word, MemoryWordReader>, offset: word) returns (word) {
+   |
+   = note: trait `ABIDecode` is defined in module `std`
+   = note: type `ABIDecoder` is defined in module `std`
+   = note: `word` is a builtin type, so only the module of trait `ABIDecode` can define this impl
+   = help: move this impl into one of those modules, or into a module that imports one of them and is imported by it, so every module that can use the impl also sees it; for different behaviour here, wrap the type in a new type or give the trait a policy type parameter
+---
+
 error[SC0209]: cannot solve trait constraint `Level2<Wrap<Wrap<Wrap<Wrap<Box<uint256>>>>>>: ABIAttribs`: solver exceeded its iteration bound
   --> /main/main.sol:79:5
    |
