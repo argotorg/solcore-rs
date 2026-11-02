@@ -180,6 +180,17 @@ pub enum TypeckDiagnostic {
         /// Predicate snapshot.
         pred: String,
     },
+    /// `SC0207`: a constraint on a type parameter matched only a default impl.
+    ///
+    /// Defaults are not used for type parameters: the module that instantiates
+    /// the parameter may provide a more specific impl, so the constraint must
+    /// come from a where clause.
+    DefaultNotUsedForTypeParameter {
+        /// Source span for the obligation that could not be solved.
+        span: LabelSpan,
+        /// Predicate snapshot.
+        pred: String,
+    },
     /// `SC0208`: more than one non-default impl solved a trait constraint.
     AmbiguousConstraint {
         /// Source span for the ambiguous obligation.
@@ -667,6 +678,18 @@ impl TypeckDiagnostic {
                     .with_primary_label_span(span.clone(), Some("constraint originates here"))
                     .with_note(format!("no visible impl matches `{pred}`"))
                     .with_help(help)
+            }
+            TypeckDiagnostic::DefaultNotUsedForTypeParameter { span, pred } => {
+                Diagnostic::error(format!("cannot satisfy trait constraint: {pred}"))
+                    .with_code(DiagnosticCode::TYPECK_UNSATISFIED_CONSTRAINT)
+                    .with_primary_label_span(span.clone(), Some("constraint originates here"))
+                    .with_note(
+                        "a default impl matches, but defaults are not used for type parameters: \
+                         the module that instantiates the parameter may provide a more specific impl",
+                    )
+                    .with_help(format!(
+                        "add `where {pred}` to the enclosing function or impl"
+                    ))
             }
             TypeckDiagnostic::AmbiguousConstraint {
                 span,

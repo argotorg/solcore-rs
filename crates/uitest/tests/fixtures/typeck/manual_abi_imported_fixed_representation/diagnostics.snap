@@ -15,12 +15,12 @@ error[SC0218]: Overlapping impls are not supported
      |      ^^^^^^^^^^^^^^^^ overlapping impl
   18 |     function headSize(p: Proxy<bool>) returns (word) {
      |
-    ::: /std/std.sol:1691
+    ::: /std/std.sol:1695
      |
-1691 |
-1692 | impl ABIAttribs<bool> {
+1695 |
+1696 | impl ABIAttribs<bool> {
      |      ---------------- previous overlapping impl
-1693 |     function headSize(ty: Proxy<bool>) returns (word) {
+1697 |     function headSize(ty: Proxy<bool>) returns (word) {
      |
 ---
 

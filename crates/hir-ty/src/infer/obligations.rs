@@ -561,10 +561,19 @@ impl<'db> InferCtx<'db> {
                 }
                 let span = self.unsatisfied_constraint_label_span(&pending.source, pred.pred);
                 let pred_text = self.display_pred(pred.pred);
-                let diagnostic = self.classify_no_solution(pending).unwrap_or({
-                    TypeckDiagnostic::UnsatisfiedConstraint {
-                        span,
-                        pred: pred_text,
+                let diagnostic = self.classify_no_solution(pending).unwrap_or_else(|| {
+                    if crate::solver::default_skipped_for_type_parameter(
+                        self.db, trait_env, pred.pred,
+                    ) {
+                        TypeckDiagnostic::DefaultNotUsedForTypeParameter {
+                            span,
+                            pred: pred_text,
+                        }
+                    } else {
+                        TypeckDiagnostic::UnsatisfiedConstraint {
+                            span,
+                            pred: pred_text,
+                        }
                     }
                 });
                 diagnostics.push((index, diagnostic));

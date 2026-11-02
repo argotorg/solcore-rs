@@ -69,6 +69,7 @@ use crate::{
 const DEFAULT_SOLVER_FUEL: usize = 16_384;
 
 mod canonical;
+mod coherence;
 mod derived_abi;
 mod derived_class;
 mod derived_generic;
@@ -85,6 +86,7 @@ mod soundness;
 use canonical::{
     GoalRenaming, RigidVar, TableKey, actualize_answer, canonicalize_goal, canonicalize_local_given,
 };
+pub(crate) use coherence::default_skipped_for_type_parameter;
 pub(crate) use derived_abi::{
     AbiEvidenceRole, definition_supports_derived_abi, derived_abi_delegated_evidence,
     ty_mentions_adt as derived_abi_rep_mentions_adt,

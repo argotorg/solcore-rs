@@ -12,6 +12,10 @@ import std.StorageGeneric;
 
 pragma no-patterson-condition ABIAttribs, ABIEncode, Num, Array, ArrayPush, Eq, Ord;
 pragma no-coverage-condition ABIDecode, MemoryType, Array, ArrayPush, RValueIdxAccess, Shl, Shr;
+// An impl for `ABIDecoder<t, reader>` or `storage<t>` counts as an impl for
+// `t`: it may be defined next to `t`, and defaults never decide it while `t`
+// is a type parameter.
+pragma coherence-wrapper ABIDecoder, storage;
 
 export {
     ABIAttribs,
