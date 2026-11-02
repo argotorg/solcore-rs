@@ -7,6 +7,13 @@ pragma solcore;
 import * from std;
 import * from std.dispatch;
 
+// `lidx` checks the bounds and returns a `memref` to one element, which a
+// function can update in place.
+function bump(r: memref<uint256>) {
+    let v: uint256 = CanStore.load(r);
+    CanStore.store(r, v + uint256(1));
+}
+
 contract MemArray {
     // #[(5) -> 5]
     function newLen(n: uint256) public returns (uint256) {
@@ -80,6 +87,14 @@ contract MemArray {
         let m: uint256[] = [uint256(1), uint256(2)];
         let n: uint256[] = m;
         n[1] = v;
+        return m[1];
+    }
+
+    // #[(7) -> 8]
+    function bumpElement(v: uint256) public returns (uint256) {
+        let m: uint256[] = new uint256[](2);
+        m[1] = v;
+        bump(lidx(m, uint256(1)));
         return m[1];
     }
 }

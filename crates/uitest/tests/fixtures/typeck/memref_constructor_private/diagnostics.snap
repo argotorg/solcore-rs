@@ -1,0 +1,14 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/typeck/memref_constructor_private/main.sol
+---
+error[SC0228]: type name used as callee: `memref`
+ --> /main/main.sol:8:12
+  |
+7 | function forge() returns (memref<uint256>) {
+8 |     return memref(0x40);
+  |            ^^^^^^ not a value
+9 | }
+  |
+  = help: use a constructor or value binding here, not a namespace name

@@ -112,6 +112,7 @@ export {
     memberAccessBase,
     memory(*),
     memory_ref,
+    memref,
     minWord,
     msgSender,
     msgValue,
@@ -1371,11 +1372,11 @@ enum DynArray<t> {}
 // An index is in bounds when i < length.
 impl<t> IndexAccess<memory<DynArray<t>>, t> where t: Typedef<word> {
     function get(ptr: memory<DynArray<t>>, i: uint256) returns (t) {
-        let cell: memory<t> = lidx(ptr, i);
+        let cell: memref<t> = lidx(ptr, i);
         return CanStore.load(cell);
     }
     function set(arr: memory<DynArray<t>>, i: uint256, val: t) returns (()) {
-        let cell: memory<t> = lidx(arr, i);
+        let cell: memref<t> = lidx(arr, i);
         CanStore.store(cell, val);
     }
 }
@@ -3079,10 +3080,35 @@ impl<t> CanStore<memory<t>, t> where t: Typedef<word> {
     }
 }
 
-// `m[i]` on a memory array designates the cell at `loc + 32 + i*32`, after
+// A checked reference to one word-sized element of a memory array. Only the
+// LValueIdxAccess instance below builds one: the constructor is not exported
+// and there is no Typedef<word> instance, so user code cannot forge, offset or
+// store it.
+enum memref<t> {
+    memref(word)
+}
+
+impl<t> CanStore<memref<t>, t> where t: Typedef<word> {
+    function store(r: memref<t>, v: t) returns (()) {
+        match (r) {
+            case memref(a) {
+                mstore(a, Typedef.rep(v));
+            }
+        }
+    }
+    function load(r: memref<t>) returns (t) {
+        match (r) {
+            case memref(a) {
+                return Typedef.abs(mload(a));
+            }
+        }
+    }
+}
+
+// `m[i]` on a memory array designates the element at `loc + 32 + i*32`, after
 // checking that i < length. Reads and writes go through this one check.
-impl<t, i> LValueIdxAccess<(memory<DynArray<t>>, i), memory<t>> where i: Typedef<word> {
-    function lookup(xi: (memory<DynArray<t>>, i)) returns (memory<t>) {
+impl<t, i> LValueIdxAccess<(memory<DynArray<t>>, i), memref<t>> where i: Typedef<word> {
+    function lookup(xi: (memory<DynArray<t>>, i)) returns (memref<t>) {
         match (xi) {
             case (x, j) {
                 let loc: word = Typedef.rep(x);
@@ -3090,7 +3116,7 @@ impl<t, i> LValueIdxAccess<(memory<DynArray<t>>, i), memory<t>> where i: Typedef
                 if (idx >= mload(loc)) {
                     out_of_bounds();
                 }
-                return memory(loc + 32 + idx * 32);
+                return memref(loc + 32 + idx * 32);
             }
         }
     }

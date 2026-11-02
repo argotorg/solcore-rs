@@ -2477,7 +2477,8 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
     }
 
     /// `m[i] = v` lowers to `assignRef(lidx(m, i), v)`: the std
-    /// LValueIdxAccess instance checks the bounds and yields the element cell.
+    /// LValueIdxAccess instance checks the bounds and yields a `memref` to the
+    /// element.
     fn memory_array_index_store(
         &mut self,
         lhs: Id<Expr<'db>>,
@@ -2487,7 +2488,7 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
         let (base, index) = self.memory_array_index_parts(lhs)?;
         let elem_ty = self.expr_ty(lhs)?;
         let elem_ty = self.normalize_body_ty(self.subst.apply_ty(self.driver.db, elem_ty));
-        let cell_ty = self.canonical_std_adt_ty("memory", vec![elem_ty])?;
+        let cell_ty = self.canonical_std_adt_ty("memref", vec![elem_ty])?;
         let base = self.expr(base)?;
         let index = self.expr(index)?;
         let cell = self.synthetic_std_call("lidx", vec![base, index], cell_ty, span)?;

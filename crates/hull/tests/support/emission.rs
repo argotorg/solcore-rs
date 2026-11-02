@@ -70,7 +70,10 @@ fn checked_typedef_array_operations(fixture: Fixture<&str>) {
     let hull = render_fixture(Path::new(fixture.path()), false, None);
     let functions: BTreeMap<String, TextChecks> = BTreeMap::from([
         (
-            "LValueIdxAccess_lookup".into(),
+            // Storage array indexing goes through the std LValueIdxAccess
+            // instance: a bounds check against the stored length, then the
+            // element slot.
+            "$pairLstorage_".into(),
             TextChecks {
                 contains: vec![
                     "opcodes_sload".into(),
