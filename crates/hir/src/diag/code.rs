@@ -140,6 +140,7 @@ impl DiagnosticCode {
     pub const SPECIALIZE_PUBLIC_COMPTIME_PARAM: &'static str = "SC0413";
     pub const SPECIALIZE_REDUCTION_RECURSION: &'static str = "SC0414";
     pub const SPECIALIZE_REDUCTION_FUEL_EXHAUSTED: &'static str = "SC0415";
+    pub const SPECIALIZE_INCOHERENT_INSTANCE: &'static str = "SC0416";
 
     pub const EMIT_UNSUPPORTED_TYPE: &'static str = "SC0420";
     pub const EMIT_UNSUPPORTED_LITERAL: &'static str = "SC0421";
@@ -426,6 +427,10 @@ impl DiagnosticCode {
         DiagnosticCodeEntry::new(
             "SPECIALIZE_REDUCTION_FUEL_EXHAUSTED",
             Self::SPECIALIZE_REDUCTION_FUEL_EXHAUSTED,
+        ),
+        DiagnosticCodeEntry::new(
+            "SPECIALIZE_INCOHERENT_INSTANCE",
+            Self::SPECIALIZE_INCOHERENT_INSTANCE,
         ),
         DiagnosticCodeEntry::new("EMIT_UNSUPPORTED_TYPE", Self::EMIT_UNSUPPORTED_TYPE),
         DiagnosticCodeEntry::new("EMIT_UNSUPPORTED_LITERAL", Self::EMIT_UNSUPPORTED_LITERAL),

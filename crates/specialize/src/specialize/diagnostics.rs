@@ -64,6 +64,14 @@ pub enum SpecializeDiagnosticKind<'db> {
         function: String,
         param: String,
     },
+    /// One ground constraint was resolved to two different impls in a single
+    /// program. Coherence checks before specialization make this unreachable;
+    /// this guards the generated code against a gap in them.
+    IncoherentInstance {
+        goal: String,
+        first: String,
+        second: String,
+    },
 }
 
 impl<'db> SpecializeDiagnostic<'db> {
@@ -110,6 +118,7 @@ impl SpecializeDiagnosticKind<'_> {
             }
             Self::IntegerErasure { .. } => DiagnosticCode::SPECIALIZE_INTEGER_ERASURE,
             Self::PublicComptimeParam { .. } => DiagnosticCode::SPECIALIZE_PUBLIC_COMPTIME_PARAM,
+            Self::IncoherentInstance { .. } => DiagnosticCode::SPECIALIZE_INCOHERENT_INSTANCE,
         }
     }
 
@@ -133,6 +142,7 @@ impl SpecializeDiagnosticKind<'_> {
             }
             Self::IntegerErasure { .. } => "not representable at runtime",
             Self::PublicComptimeParam { .. } => "public entry parameter is runtime",
+            Self::IncoherentInstance { .. } => "resolved to a second impl here",
         }
     }
 
@@ -203,6 +213,11 @@ impl SpecializeDiagnosticKind<'_> {
                 "help: remove `comptime` from the public parameter or call a private comptime helper with a compile-time value"
                     .to_owned(),
             ],
+            Self::IncoherentInstance { .. } => vec![
+                "a constraint must resolve to the same impl everywhere in a program".to_owned(),
+                "this is a compiler bug: impl placement checks should have rejected the program"
+                    .to_owned(),
+            ],
             _ => Vec::new(),
         }
     }
@@ -265,6 +280,14 @@ impl fmt::Display for SpecializeDiagnosticKind<'_> {
             Self::PublicComptimeParam { function, param } => write!(
                 f,
                 "public function `{function}` cannot take comptime parameter `{param}`"
+            ),
+            Self::IncoherentInstance {
+                goal,
+                first,
+                second,
+            } => write!(
+                f,
+                "constraint `{goal}` resolves to two different impls: one in {first} and one in {second}"
             ),
         }
     }
