@@ -22,7 +22,7 @@ import type { Backend } from "../compiler/types";
 import { formatCompileDuration } from "../compiler/timing";
 import { copyText } from "../share/copyText";
 import { workspaceLink, workspaceView } from "../share/exampleView";
-import { examples } from "../store/workspace";
+import { listedExamples } from "../examples";
 import { useWorkspaceStore } from "../store/workspace";
 import { embedded, projectSource } from "../store/session";
 import { useCompileElapsed } from "./useCompileElapsed";
@@ -135,7 +135,7 @@ export function TopBar({
           <span>Example</span>
           <span className="select-control__shell">
             <select autoFocus={!embedded} aria-label="Example" value={selectedExample} onChange={(event) => loadExample(event.target.value)}>
-              {examples.map((example) => (
+              {listedExamples(selectedExample).map((example) => (
                 <option key={example.id} value={example.id}>
                   {example.name}
                 </option>
