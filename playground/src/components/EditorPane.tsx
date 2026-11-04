@@ -152,6 +152,8 @@ export function EditorPane({ onCursorChange }: EditorPaneProps): JSX.Element {
         '"SFMono-Regular", Consolas, "Liberation Mono", Menlo, ui-monospace, monospace',
       fontLigatures: false,
       fontSize: 14,
+      // Tooltips can extend over adjacent panes without being clipped by them.
+      fixedOverflowWidgets: true,
       lineHeight: 22,
       lineNumbers: "on",
       minimap: { enabled: false },
