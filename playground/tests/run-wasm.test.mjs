@@ -6,6 +6,15 @@ import { backends, initializeBrowserWasm } from '../../scripts/test-support/brow
 // Exercise the actual browser WASM package and the examples shipped by the UI.
 const { compile, run, watch } = await initializeBrowserWasm();
 
+// Uncomments the commented-out function `name` in a workshop example.
+function uncomment(source, name) {
+  const lines = source.split('\n');
+  const start = lines.findIndex(line => line.startsWith(`    // function ${name}(`));
+  const end = lines.findIndex((line, i) => i > start && line === '    // }');
+  assert.ok(start !== -1 && end !== -1, `no commented-out ${name}()`);
+  return lines.map((line, i) => (i >= start && i <= end ? line.replace('// ', '') : line)).join('\n');
+}
+
 test('browser WASM rejects excessive parser recursion and remains usable', () => {
   for (const [content, expected] of [
     [`pragma solcore; function main() returns (word) { return ${'true ? '.repeat(512)}0${' : 0'.repeat(512)}; }`, /expression nesting/],
@@ -201,6 +210,12 @@ for (const [directory, entry, helpers, count] of [
   ['pattern-matching', 'Escrow.sol', [], 6],
   ['invariants', 'Amm.sol', ['pool.sol'], 5],
   ['comptime', 'Answer.sol', [], 1],
+  ['workshop-1-done', 'Token.sol', [], 5],
+  ['workshop-2-done', 'Token.sol', [], 8],
+  ['workshop-3-done', 'Token.sol', ['ownable.sol'], 11],
+  ['workshop-solution', 'Token.sol', ['events.sol', 'ownable.sol'], 12],
+  ['workshop-demo-hooks', 'Token.sol', ['change.sol', 'hooks.sol', 'events.sol', 'ownable.sol'], 14],
+  ['workshop-bonus-done', 'Token.sol', ['change.sol', 'hooks.sol', 'events.sol', 'ownable.sol'], 14],
 ]) {
   test(`${backend}: ${directory} example tests pass together and replay setup for the final check`, async () => {
     const files = await Promise.all([entry, ...helpers].map(async path => ({
@@ -215,6 +230,69 @@ for (const [directory, entry, helpers, count] of [
     const replayed = run({ ...input, testId: selected.id });
     assert.equal(replayed.tests.find(t => t.id === selected.id).status, 'passed', JSON.stringify(replayed.tests));
     assert.equal(replayed.tests.find(t => t.id === selected.id).actual, selected.actual);
+  });
+}
+
+// These starters do not compile until a TODO is done.
+for (const [directory, helpers, matches] of [
+  ['workshop-2', [], d => d.message === 'non-exhaustive pattern match'
+    && d.notes.includes('missing case: Change.Transfer(_, _)')],
+  ['workshop-3', ['ownable.sol'], d => d.message === 'undefined type constructor: Ownable'],
+]) {
+  test(`${backend}: ${directory} starter reports the error its TODO fixes`, async () => {
+    const files = await Promise.all(['Token.sol', ...helpers].map(async path => ({
+      path, content: await readFile(new URL(`../src/examples/${directory}/${path}`, import.meta.url), 'utf8'),
+    })));
+    const result = compile({ files, entry: 'Token.sol', options });
+    assert.equal(result.success, false);
+    assert.ok(result.diagnostics.some(matches), JSON.stringify(result.diagnostics));
+  });
+}
+
+// Each starter fails exactly the tests that its remaining TODOs fix.
+// The step 3 starter gets its import first.
+for (const [directory, helpers, count, failing, prepare = source => source] of [
+  ['workshop-1', [], 5, [
+    '#[(0x70997970C51812dc3A010C7d01b50e0d17dc79C8, 5000) -> revert]',
+    '#[(0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266) -> 900]',
+    '#[(0x70997970C51812dc3A010C7d01b50e0d17dc79C8) -> 100]',
+  ]],
+  ['workshop-3', ['ownable.sol'], 11, [
+    '#[(0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266) -> revert]',
+    '#[(0x70997970C51812dc3A010C7d01b50e0d17dc79C8, 50) -> revert]',
+  ], source => source.replace('import * from std.dispatch;\n', 'import * from std.dispatch;\nimport * from ownable;\n')],
+  ['workshop-4', ['events.sol', 'ownable.sol'], 12, [
+    '#[() -> 0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef]',
+  ]],
+  ['workshop-bonus', ['change.sol', 'hooks.sol', 'events.sol', 'ownable.sol'], 14, [
+    '#[(200) -> revert]',
+  ]],
+]) {
+  test(`${backend}: ${directory} starter fails only the tests of its TODO`, async () => {
+    const files = await Promise.all(['Token.sol', ...helpers].map(async path => ({
+      path, content: await readFile(new URL(`../src/examples/${directory}/${path}`, import.meta.url), 'utf8'),
+    })));
+    files[0].content = prepare(files[0].content);
+    const result = run({ files, entry: 'Token.sol', options });
+    assert.equal(result.success, true, JSON.stringify(result.diagnostics));
+    assert.equal(result.tests.length, count);
+    assert.deepEqual(result.tests.filter(t => t.status !== 'passed').map(t => t.label), failing);
+  });
+}
+
+for (const [directory, helpers, name, message] of [
+  ['workshop-3-done', ['ownable.sol'], 'steal', 'type name used as callee: `Ownable`'],
+  ['workshop-solution', ['events.sol', 'ownable.sol'], 'anyTopic',
+    "comptime evaluation failed: runtime value passed to comptime parameter 'signature' of 'topic'"],
+]) {
+  test(`${backend}: ${directory} rejects the uncommented ${name}()`, async () => {
+    const files = await Promise.all(['Token.sol', ...helpers].map(async path => ({
+      path, content: await readFile(new URL(`../src/examples/${directory}/${path}`, import.meta.url), 'utf8'),
+    })));
+    files[0].content = uncomment(files[0].content, name);
+    const result = compile({ files, entry: 'Token.sol', options });
+    assert.equal(result.success, false);
+    assert.ok(result.diagnostics.some(d => d.message === message), JSON.stringify(result.diagnostics));
   });
 }
 
