@@ -22,3 +22,16 @@ error[SC0218]: Overlapping impls are not supported
    |      ------------------ previous overlapping impl
 64 |     function sigStr(x: Proxy<uint256>) returns (string) {
    |
+---
+
+error[SC0246]: impl `a: SigString` must be defined next to its trait or its type
+ --> /main/main.sol:6:9
+  |
+5 |
+6 | impl<a> SigString<a> {
+  |         ^^^^^^^^^^^^ impl defined elsewhere
+7 |     function sigStr(p: Proxy<a>) returns (string) {
+  |
+  = note: trait `SigString` is defined in module `std.dispatch`
+  = note: `a` is a type parameter, so only the module of trait `SigString` can define this impl
+  = help: move this impl into one of those modules, or into a module that imports one of them and is imported by it, so every module that can use the impl also sees it; for different behaviour here, wrap the type in a new type or give the trait a policy type parameter

@@ -3,6 +3,59 @@ source: crates/test-utils/src/lib.rs
 expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/visible_manual_std_abi_instances/main.sol
 ---
+error[SC0246]: impl `word: ABIAttribs` must be defined next to its trait or its type
+ --> /main/main.sol:6:6
+  |
+5 |
+6 | impl ABIAttribs<word> {
+  |      ^^^^^^^^^^^^^^^^ impl defined elsewhere
+7 |     function headSize(p: Proxy<word>) returns (word) {
+  |
+  = note: trait `ABIAttribs` is defined in module `std`
+  = note: `word` is a builtin type, so only the module of trait `ABIAttribs` can define this impl
+  = help: move this impl into one of those modules, or into a module that imports one of them and is imported by it, so every module that can use the impl also sees it; for different behaviour here, wrap the type in a new type or give the trait a policy type parameter
+---
+
+error[SC0246]: impl `word: ABIEncode` must be defined next to its trait or its type
+  --> /main/main.sol:15:6
+   |
+14 |
+15 | impl ABIEncode<word> {
+   |      ^^^^^^^^^^^^^^^ impl defined elsewhere
+16 |     function encodeInto(x: word, base: word, offset: word, tail: word) returns (word) {
+   |
+   = note: trait `ABIEncode` is defined in module `std`
+   = note: `word` is a builtin type, so only the module of trait `ABIEncode` can define this impl
+   = help: move this impl into one of those modules, or into a module that imports one of them and is imported by it, so every module that can use the impl also sees it; for different behaviour here, wrap the type in a new type or give the trait a policy type parameter
+---
+
+error[SC0246]: impl `ABIDecoder<word, CalldataWordReader>: ABIDecode<word>` must be defined next to its trait or its type
+  --> /main/main.sol:21:6
+   |
+20 |
+21 | impl ABIDecode<ABIDecoder<word, CalldataWordReader>, word> {
+   |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ impl defined elsewhere
+22 |     function decode(d: ABIDecoder<word, CalldataWordReader>, offset: word) returns (word) {
+   |
+   = note: trait `ABIDecode` is defined in module `std`
+   = note: type `ABIDecoder` is defined in module `std`
+   = note: `word` is a builtin type, so only the module of trait `ABIDecode` can define this impl
+   = help: move this impl into one of those modules, or into a module that imports one of them and is imported by it, so every module that can use the impl also sees it; for different behaviour here, wrap the type in a new type or give the trait a policy type parameter
+---
+
+error[SC0246]: impl `word: SigString` must be defined next to its trait or its type
+  --> /main/main.sol:27:6
+   |
+26 |
+27 | impl SigString<word> {
+   |      ^^^^^^^^^^^^^^^ impl defined elsewhere
+28 |     function sigStr(p: Proxy<word>) returns (string) {
+   |
+   = note: trait `SigString` is defined in module `std.dispatch`
+   = note: `word` is a builtin type, so only the module of trait `SigString` can define this impl
+   = help: move this impl into one of those modules, or into a module that imports one of them and is imported by it, so every module that can use the impl also sees it; for different behaviour here, wrap the type in a new type or give the trait a policy type parameter
+---
+
 error[SC0231]: public function `echo` ABI for contract `C` cannot use visible manual `ABIAttribs` evidence
   --> /main/main.sol:34:5
    |

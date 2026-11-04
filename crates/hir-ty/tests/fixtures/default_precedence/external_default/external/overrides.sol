@@ -1,4 +1,8 @@
 pragma solcore;
 
 import * from std;
-default impl<a> Choice<a> {}
+export { Ext(*) };
+enum Ext<a> {
+    Ext(a)
+}
+default impl<a> Choice<Ext<a>> {}

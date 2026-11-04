@@ -74,3 +74,12 @@ The argument's type determines the implementation: `Switch` selects `impl Toggle
 The trait declares the operation both implementations must provide.
 
 </details>
+
+## Where an implementation lives
+
+Every module that calls `Toggle.toggle` on a `Switch` must run the same implementation.
+Solcore guarantees this by accepting `impl Toggle<Switch>` only in the module that defines `Toggle` or in the module that defines `Switch`.
+Any module that can use both names also sees those modules, so it sees the implementation too.
+An `impl` written anywhere else is rejected with error SC0246, rather than letting different modules run different code for the same call.
+
+When one type needs two behaviors for the same operation, make the choice part of a type: implement the trait for a new type that wraps it, or give the trait a type parameter that selects the behavior.

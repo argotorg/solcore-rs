@@ -1,6 +1,7 @@
 pragma solcore;
 
-// A skipped default must not force its non-terminating prerequisite.
+// A default impl for the builtin `invokable` class with a type-variable head
+// has no module it could belong to, so it is rejected as an orphan impl.
 pragma no-patterson-condition;
 pragma no-coverage-condition;
 pragma no-bounded-variable-condition;

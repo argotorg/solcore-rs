@@ -1,0 +1,15 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/solver/default_not_used_for_type_parameter/main.sol
+---
+error[SC0207]: cannot satisfy trait constraint: t: Fee
+  --> /main/fees.sol:17:17
+   |
+16 | // `charge` with its own type may define a more specific impl for it.
+17 | function charge<t>(x: t) returns (word) {
+   |                 ^ constraint originates here
+18 |     return Fee.fee(x);
+   |
+   = note: a default impl matches, but defaults are not used for type parameters: the module that instantiates the parameter may provide a more specific impl
+   = help: add `where t: Fee` to the enclosing function or impl

@@ -1,0 +1,20 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/solver/overlapping_unconditional_default/main.sol
+---
+error[SC0247]: default impl `Box<a>: Size` overlaps default impl `_: Size`, and one of them has no condition to tell them apart
+  --> /main/main.sol:19:17
+   |
+12 | // could tell them apart, so a goal like `Box<word>: Size` would be ambiguous.
+13 | default impl<a> Size<a> {
+   |                 ------- previous default impl
+14 |     function size(x: a) returns (word) {
+...
+18 |
+19 | default impl<a> Size<Box<a>> {
+   |                 ^^^^^^^^^^^^ overlapping default impl
+20 |     function size(x: Box<a>) returns (word) {
+   |
+   = note: where both apply, neither is chosen and the constraint is ambiguous
+   = help: add a `where` condition that tells them apart, or remove one of them

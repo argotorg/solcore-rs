@@ -1,6 +1,38 @@
 use super::*;
 
 impl<'db> Driver<'db> {
+    /// Records that the ground goal `head` resolved to `instance`, and reports
+    /// (once per goal) a different impl selected earlier for the same class
+    /// and main argument. Specialization continues with the impl at hand, so
+    /// the report is not followed by unrelated evidence errors.
+    fn record_selected_instance(&mut self, head: Pred<'db>, instance: DefId<'db>, span: Span<'db>) {
+        let PredKind::InClass { class, main, .. } = head.kind(self.db) else {
+            return;
+        };
+        if ty_has_bound_var(self.db, *main) {
+            return;
+        }
+        let key = (*class, *main);
+        let first = *self.selected_instances.entry(key).or_insert(instance);
+        if first == instance || !self.reported_incoherent_goals.insert(key) {
+            return;
+        }
+        let location = |def: DefId<'db>| {
+            nameres::module_id_for_source_file(self.db, def.file(self.db)).map_or_else(
+                || "another file".to_owned(),
+                |module| format!("module `{}`", nameres::module_id_display(self.db, module)),
+            )
+        };
+        self.diagnostics.push(SpecializeDiagnostic {
+            kind: SpecializeDiagnosticKind::IncoherentInstance {
+                goal: head.display(self.db).to_string(),
+                first: location(first),
+                second: location(instance),
+            },
+            span: Some(span),
+        });
+    }
+
     pub(super) fn resolve_class_method_call(
         &mut self,
         method: &str,
@@ -52,6 +84,7 @@ impl<'db> Driver<'db> {
                 let method_preds = lowered.scheme.body(self.db).preds(self.db);
                 subst.refine_from_evidence(self.db, method_preds, &method_bindings);
                 let head = subst.apply_pred(self.db, info.head);
+                self.record_selected_instance(head, instance, call_span);
                 let mut evidence_bindings = info
                     .preds
                     .iter()
@@ -877,5 +910,19 @@ impl<'db> Driver<'db> {
         if recovered.match_ty(self.db, extras[0], concrete_rep) {
             subst.extend_consistent(recovered);
         }
+    }
+}
+
+fn ty_has_bound_var<'db>(db: &'db dyn Db, ty: Ty<'db>) -> bool {
+    match ty.kind(db) {
+        TyKind::BoundVar(_) => true,
+        TyKind::Named { args, .. } | TyKind::Tuple(args) => {
+            args.iter().any(|arg| ty_has_bound_var(db, *arg))
+        }
+        TyKind::Function { params, ret } => {
+            params.iter().any(|param| ty_has_bound_var(db, *param)) || ty_has_bound_var(db, *ret)
+        }
+        TyKind::Comptime(inner) => ty_has_bound_var(db, *inner),
+        TyKind::Error | TyKind::Unknown => false,
     }
 }

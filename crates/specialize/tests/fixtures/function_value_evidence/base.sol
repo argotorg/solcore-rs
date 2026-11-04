@@ -7,10 +7,10 @@ trait Phantom<t, r> {
 function run<t, r>(x: t) returns (word) where t: Phantom<r> {
     return Phantom.pick(x);
 }
-function apply(f: function (word) returns (word), x: word) returns (word) {
+function apply<t>(f: function (t) returns (word), x: t) returns (word) {
     return f(x);
 }
-function relay(f: function (word) returns (word), x: word) returns (word) {
+function relay<t>(f: function (t) returns (word), x: t) returns (word) {
     return apply(f, x);
 }
 function genericValue<t, r>(x: t) returns (word) where t: Phantom<r> {

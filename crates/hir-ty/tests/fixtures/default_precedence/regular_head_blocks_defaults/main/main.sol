@@ -2,8 +2,11 @@ pragma solcore;
 
 pragma no-patterson-condition Choice, Helper, Outer;
 import * from std;
-impl Choice<word> where word: Helper {}
-default impl<a> Choice<a> {}
+enum Box<a> {
+    Box(a)
+}
+impl Choice<Box<word>> where Box<word>: Helper {}
+default impl<a> Choice<Box<a>> {}
 
-//~ goal: Choice
+//~ goal: Choice Box
 //~ solution: no-solution

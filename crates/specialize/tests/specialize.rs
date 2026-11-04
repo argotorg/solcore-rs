@@ -2663,7 +2663,10 @@ contract C {
 }
 
 #[test]
-fn derived_class_and_instance_specializations_are_proof_aware_across_modules() {
+fn specializer_rejects_one_goal_resolved_to_two_impls() {
+    // left.sol and right.sol both implement `Pick<word>`. Frontend coherence
+    // rejects that (SC0246); specializing the program directly must still
+    // refuse to resolve the one goal `word: Pick` to two impls.
     let db = Box::leak(Box::new(TestDb::default()));
     let main_root = PathBuf::from("/main");
     db.module_tree = Some(ModuleTree::new(
@@ -2777,104 +2780,20 @@ contract C {
     }
 
     let main_file = files["main.sol"];
-    let lib_file = files["lib.sol"];
-    let left_file = files["left.sol"];
-    let right_file = files["right.sol"];
     let module = parse_file_to_hir(db, main_file).module(db);
     let output = specialize_module(db, module, SpecializeOptions::default());
 
-    assert_eq!(output.diagnostics, Vec::new());
-    let functions = output
-        .module
-        .items
+    let incoherent = output
+        .diagnostics
         .iter()
-        .filter_map(|item| match item {
-            MonoItem::Function(function) => Some(function),
-            _ => None,
-        })
-        .collect::<Vec<_>>();
-    let wrappers = functions
-        .iter()
-        .copied()
-        .filter(|function| {
+        .filter(|diagnostic| {
             matches!(
-                &function.origin,
-                MonoFunctionOrigin::DerivedClass { method, .. } if method == "pick"
+                &diagnostic.kind,
+                SpecializeDiagnosticKind::IncoherentInstance { goal, .. } if goal == "word: Pick"
             )
         })
-        .collect::<Vec<_>>();
-    assert_eq!(wrappers.len(), 2, "{wrappers:#?}");
-    assert_ne!(wrappers[0].name, wrappers[1].name);
-    assert!(wrappers.iter().all(|function| function.name.contains("_p")));
-
-    let pair_methods = functions
-        .iter()
-        .copied()
-        .filter(|function| {
-            matches!(
-                &function.origin,
-                MonoFunctionOrigin::InstanceMethod { instance, method, .. }
-                    if instance.file(db) == lib_file && method == "pick"
-            )
-        })
-        .collect::<Vec<_>>();
-    assert_eq!(pair_methods.len(), 2, "{pair_methods:#?}");
-    assert_ne!(pair_methods[0].name, pair_methods[1].name);
-    assert!(
-        pair_methods
-            .iter()
-            .all(|function| function.name.contains("_p"))
-    );
-
-    let word_method_name = |file| {
-        functions
-            .iter()
-            .copied()
-            .find(|function| {
-                matches!(
-                    &function.origin,
-                    MonoFunctionOrigin::InstanceMethod { instance, method, .. }
-                        if instance.file(db) == file && method == "pick"
-                )
-            })
-            .map(|function| function.name.clone())
-            .unwrap_or_else(|| panic!("word Pick.pick specialization for {file:?}"))
-    };
-    let left_word = word_method_name(left_file);
-    let right_word = word_method_name(right_file);
-
-    let source_function = |file, name: &str| {
-        functions
-            .iter()
-            .copied()
-            .find(|function| {
-                matches!(function.origin, MonoFunctionOrigin::Source)
-                    && function.source.is_some_and(|def| {
-                        def.file(db) == file && def.name(db).as_deref() == Some(name)
-                    })
-            })
-            .unwrap_or_else(|| panic!("source specialization for {name}"))
-    };
-    let assert_proof_chain =
-        |source_file, source_name: &str, expected_word: &str, other_word: &str| {
-            let source_calls = function_call_names(source_function(source_file, source_name));
-            let wrapper = wrappers
-                .iter()
-                .copied()
-                .find(|function| source_calls.contains(&function.name))
-                .unwrap_or_else(|| panic!("{source_name} does not call a derived wrapper"));
-            let wrapper_calls = function_call_names(wrapper);
-            let pair = pair_methods
-                .iter()
-                .copied()
-                .find(|function| wrapper_calls.contains(&function.name))
-                .unwrap_or_else(|| panic!("{} does not call a pair instance", wrapper.name));
-            let pair_calls = function_call_names(pair);
-            assert!(pair_calls.contains(expected_word), "{pair:#?}");
-            assert!(!pair_calls.contains(other_word), "{pair:#?}");
-        };
-    assert_proof_chain(left_file, "left", &left_word, &right_word);
-    assert_proof_chain(right_file, "right", &right_word, &left_word);
+        .count();
+    assert_eq!(incoherent, 1, "{:#?}", output.diagnostics);
 }
 
 #[test]

@@ -180,6 +180,17 @@ pub enum TypeckDiagnostic {
         /// Predicate snapshot.
         pred: String,
     },
+    /// `SC0207`: a constraint on a type parameter matched only a default impl.
+    ///
+    /// Defaults are not used for type parameters: the module that instantiates
+    /// the parameter may provide a more specific impl, so the constraint must
+    /// come from a where clause.
+    DefaultNotUsedForTypeParameter {
+        /// Source span for the obligation that could not be solved.
+        span: LabelSpan,
+        /// Predicate snapshot.
+        pred: String,
+    },
     /// `SC0208`: more than one non-default impl solved a trait constraint.
     AmbiguousConstraint {
         /// Source span for the ambiguous obligation.
@@ -285,6 +296,32 @@ pub enum TypeckDiagnostic {
         /// New instance predicate.
         instance: String,
         /// Prior overlapping instance predicate.
+        overlaps: String,
+    },
+    /// `SC0246`: an impl is defined outside the modules of its trait and of the
+    /// head type of its main argument.
+    OrphanInstance {
+        /// Source span for the instance head.
+        span: LabelSpan,
+        /// Instance predicate snapshot.
+        instance: String,
+        /// Where the trait and the types the impl could live next to are
+        /// defined.
+        owners: Vec<String>,
+        /// How to place the impl instead.
+        help: String,
+    },
+    /// `SC0247`: a default impl without conditions overlaps another default
+    /// impl of the same priority, so neither can ever be chosen where both
+    /// apply.
+    OverlappingDefaultInstance {
+        /// Source span for the later default impl head.
+        instance_span: LabelSpan,
+        /// Source span for the earlier default impl head, when available.
+        overlaps_span: Option<LabelSpan>,
+        /// New default impl predicate.
+        instance: String,
+        /// Earlier default impl predicate.
         overlaps: String,
     },
     /// `SC0219`: a default instance main argument contained no type variable.
@@ -673,6 +710,18 @@ impl TypeckDiagnostic {
                     .with_note(format!("no visible impl matches `{pred}`"))
                     .with_help(help)
             }
+            TypeckDiagnostic::DefaultNotUsedForTypeParameter { span, pred } => {
+                Diagnostic::error(format!("cannot satisfy trait constraint: {pred}"))
+                    .with_code(DiagnosticCode::TYPECK_UNSATISFIED_CONSTRAINT)
+                    .with_primary_label_span(span.clone(), Some("constraint originates here"))
+                    .with_note(
+                        "a default impl matches, but defaults are not used for type parameters: \
+                         the module that instantiates the parameter may provide a more specific impl",
+                    )
+                    .with_help(format!(
+                        "add `where {pred}` to the enclosing function or impl"
+                    ))
+            }
             TypeckDiagnostic::AmbiguousConstraint {
                 span,
                 pred,
@@ -780,6 +829,44 @@ impl TypeckDiagnostic {
                     diagnostic.with_secondary_label_span(
                         overlaps_span.clone(),
                         Some("previous overlapping impl"),
+                    )
+                } else {
+                    diagnostic
+                }
+            }
+            TypeckDiagnostic::OrphanInstance {
+                span,
+                instance,
+                owners,
+                help,
+            } => owners
+                .iter()
+                .fold(
+                    Diagnostic::error(format!(
+                        "impl `{instance}` must be defined next to its trait or its type"
+                    ))
+                    .with_code(DiagnosticCode::TYPECK_ORPHAN_INSTANCE)
+                    .with_primary_label_span(span.clone(), Some("impl defined elsewhere")),
+                    |diagnostic, owner| diagnostic.with_note(owner.clone()),
+                )
+                .with_help(help.clone()),
+            TypeckDiagnostic::OverlappingDefaultInstance {
+                instance_span,
+                overlaps_span,
+                instance,
+                overlaps,
+            } => {
+                let diagnostic = Diagnostic::error(format!(
+                    "default impl `{instance}` overlaps default impl `{overlaps}`, and one of them has no condition to tell them apart"
+                ))
+                .with_code(DiagnosticCode::TYPECK_OVERLAPPING_DEFAULT_INSTANCE)
+                .with_primary_label_span(instance_span.clone(), Some("overlapping default impl"))
+                .with_note("where both apply, neither is chosen and the constraint is ambiguous")
+                .with_help("add a `where` condition that tells them apart, or remove one of them");
+                if let Some(overlaps_span) = overlaps_span {
+                    diagnostic.with_secondary_label_span(
+                        overlaps_span.clone(),
+                        Some("previous default impl"),
                     )
                 } else {
                     diagnostic

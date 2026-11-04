@@ -1,7 +1,6 @@
 pragma solcore;
 
-import { Generic } from std.Generic;
-export { Parent, Child, Silent, Grandchild, Wrapped(*), UsesChild, run, runSilent, runGrandchild, relay, value, methodValue, runNested, Derived(*), Direct, runDirect, ImplicitParent, ImplicitChild, ImplicitWrapped(*) };
+export { Parent, Child, Silent, Grandchild, UsesChild, run, runSilent, runGrandchild, relay, value, methodValue, runNested, Direct, runDirect, ImplicitParent, ImplicitChild };
 trait Parent<t> {
     function f(x: t) returns (word);
 }
@@ -10,9 +9,6 @@ trait Child<t> where t: Parent {
 }
 trait Silent<t> where t: Parent {}
 trait Grandchild<t> where t: Silent {}
-enum Wrapped<t> {
-    Wrapped(t)
-}
 trait UsesChild<t> {
     function run(x: t) returns (word);
 }
@@ -40,10 +36,6 @@ function runNested<t>(x: t) returns (word) where t: UsesChild {
     return UsesChild.run(x);
 }
 
-#[derive(Child)]
-enum Derived<t> {
-    Derived(t)
-}
 trait Direct<t> where t: Parent {
     function call(x: t) returns (word);
 }
@@ -57,8 +49,4 @@ trait ImplicitParent<t> {
 trait ImplicitChild<t> where t: ImplicitParent {
     function f(x: t) returns (word);
     function g(x: t) returns (word);
-}
-#[derive(ImplicitParent)]
-enum ImplicitWrapped<t> {
-    ImplicitWrapped(t)
 }

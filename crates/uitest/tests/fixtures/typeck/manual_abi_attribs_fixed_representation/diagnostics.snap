@@ -3,25 +3,38 @@ source: crates/test-utils/src/lib.rs
 expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/manual_abi_attribs_fixed_representation/main.sol
 ---
-error[SC0231]: public function `inspect` ABI for contract `FixedField` cannot use visible manual `ABIAttribs` evidence
-  --> /main/main.sol:28:5
+error[SC0246]: impl `bytes32: ABIAttribs` must be defined next to its trait or its type
+  --> /main/main.sol:21:6
    |
-27 | contract FixedField {
-28 |     function inspect(value: Fixed) public returns (uint256) {
+20 | // selected and the external ABI check must find it through the derived ABI.
+21 | impl ABIAttribs<bytes32> {
+   |      ^^^^^^^^^^^^^^^^^^^ impl defined elsewhere
+22 |     function headSize(p: Proxy<bytes32>) returns (word) {
+   |
+   = note: trait `ABIAttribs` is defined in module `std`
+   = note: type `bytes32` is defined in module `std`
+   = help: move this impl into one of those modules, or into a module that imports one of them and is imported by it, so every module that can use the impl also sees it; for different behaviour here, wrap the type in a new type or give the trait a policy type parameter
+---
+
+error[SC0231]: public function `inspect` ABI for contract `FixedField` cannot use visible manual `ABIAttribs` evidence
+  --> /main/main.sol:31:5
+   |
+30 | contract FixedField {
+31 |     function inspect(value: Fixed) public returns (uint256) {
    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ external ABI evidence must be compiler-owned and canonical
-29 |         return uint256(7);
+32 |         return uint256(7);
    |
    = note: impl `ABIAttribs` can override canonical `ABIAttribs` behavior
    = help: remove the visible manual ABI impl or keep this declaration out of the external ABI
 ---
 
 error[SC0231]: public function `inspect` ABI for contract `NestedParameter` cannot use visible manual `ABIAttribs` evidence
-  --> /main/main.sol:34:5
+  --> /main/main.sol:37:5
    |
-33 | contract NestedParameter {
-34 |     function inspect(value: Box<Wrap<bool>>) public returns (uint256) {
-   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ external ABI evidence must be compiler-owned and canonical
-35 |         return uint256(7);
+36 | contract NestedParameter {
+37 |     function inspect(value: Box<Wrap<bytes32>>) public returns (uint256) {
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ external ABI evidence must be compiler-owned and canonical
+38 |         return uint256(7);
    |
    = note: impl `ABIAttribs` can override canonical `ABIAttribs` behavior
    = help: remove the visible manual ABI impl or keep this declaration out of the external ABI

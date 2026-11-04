@@ -3,6 +3,33 @@ source: crates/test-utils/src/lib.rs
 expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/manual_abi_imported_fixed_representation/main.sol
 ---
+error[SC0246]: impl `bytes32: ABIAttribs` must be defined next to its trait or its type
+  --> /main/lib.sol:21:6
+   |
+20 | // the derived ABI of the types this module exports.
+21 | impl ABIAttribs<bytes32> {
+   |      ^^^^^^^^^^^^^^^^^^^ impl defined elsewhere
+22 |     function headSize(p: Proxy<bytes32>) returns (word) {
+   |
+   = note: trait `ABIAttribs` is defined in module `std`
+   = note: type `bytes32` is defined in module `std`
+   = help: move this impl into one of those modules, or into a module that imports one of them and is imported by it, so every module that can use the impl also sees it; for different behaviour here, wrap the type in a new type or give the trait a policy type parameter
+---
+
+error[SC0246]: impl `ABIDecoder<word, MemoryWordReader>: ABIDecode<word>` must be defined next to its trait or its type
+  --> /main/lib.sol:30:6
+   |
+29 |
+30 | impl ABIDecode<ABIDecoder<word, MemoryWordReader>, word> {
+   |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ impl defined elsewhere
+31 |     function decode(d: ABIDecoder<word, MemoryWordReader>, offset: word) returns (word) {
+   |
+   = note: trait `ABIDecode` is defined in module `std`
+   = note: type `ABIDecoder` is defined in module `std`
+   = note: `word` is a builtin type, so only the module of trait `ABIDecode` can define this impl
+   = help: move this impl into one of those modules, or into a module that imports one of them and is imported by it, so every module that can use the impl also sees it; for different behaviour here, wrap the type in a new type or give the trait a policy type parameter
+---
+
 error[SC0231]: constructor ABI for contract `C` cannot use visible manual `ABIDecode` evidence
  --> /main/main.sol:8:5
   |

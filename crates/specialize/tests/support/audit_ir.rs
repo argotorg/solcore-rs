@@ -373,7 +373,7 @@ fn trait_method_instantiations_preserve_parameter_types_in_either_order() {
             repo_root()
                 .join("crates/specialize/tests/fixtures/trait_method_instantiations")
                 .join(source),
-            |_, output| {
+            |db, output| {
                 let all = functions(output);
                 for expected in ["choose", "local"] {
                     let methods = all.iter().filter(|function| matches!(
@@ -381,12 +381,26 @@ fn trait_method_instantiations_preserve_parameter_types_in_either_order() {
                 )).collect::<Vec<_>>();
                     assert_eq!(methods.len(), 2, "{expected}");
                     if expected == "local" {
-                        for pair in methods.windows(2) {
-                            assert_eq!(
-                                pair[0].params.iter().map(|p| p.ty).collect::<Vec<_>>(),
-                                pair[1].params.iter().map(|p| p.ty).collect::<Vec<_>>()
-                            );
-                        }
+                        // Each module calls the method with its own type, so
+                        // the two instantiations differ in the method-local
+                        // parameter and share the receiver parameter.
+                        let params = methods
+                            .iter()
+                            .map(|function| {
+                                function
+                                    .params
+                                    .iter()
+                                    .map(|param| param.ty.ty().display(db))
+                                    .collect::<Vec<_>>()
+                            })
+                            .collect::<BTreeSet<_>>();
+                        assert_eq!(
+                            params,
+                            BTreeSet::from([
+                                vec!["word".to_owned(), "adt:AWord".to_owned()],
+                                vec!["word".to_owned(), "adt:BWord".to_owned()],
+                            ])
+                        );
                     }
                 }
                 assert_eq!(
