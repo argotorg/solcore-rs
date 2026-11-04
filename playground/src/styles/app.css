@@ -761,9 +761,9 @@
 }
 .monaco-editor .line-numbers.selected-line-number { color: var(--vscode-editorLineNumber-activeForeground); }
 
-.monaco-editor .test-result--passed { color: var(--success); }
-.monaco-editor .test-result--failed { color: var(--error); }
-.monaco-editor .test-result--outdated { color: var(--text-muted); font-style: italic; }
+.monaco-editor .codelens-decoration > span:has(.codicon-pass) { color: var(--success); }
+.monaco-editor .codelens-decoration > span:has(.codicon-error) { color: var(--error); }
+.monaco-editor .codelens-decoration > span:has(.codicon-history) { color: var(--text-muted); font-style: italic; }
 
 .run-pane {
   height: 100%;

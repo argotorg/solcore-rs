@@ -41,7 +41,7 @@ function add(a: uint256, b: uint256) public returns (uint256) {
 ```
 
 Click **Run test** above a comment or **Run all tests from start** under **Run tests** in the Run tab. Tests are
-discovered in the entry file. Results appear beside their comments and in the
+discovered in the entry file. Results appear beside **Run test** above their comments and in the
 Run tab under **Run tests**. Each run starts from the beginning in separate
 contracts, without changing your manual session. Expand a test to inspect its expected and actual values, gas, or source
 location. Edits retain results, marked outdated until the next run.
