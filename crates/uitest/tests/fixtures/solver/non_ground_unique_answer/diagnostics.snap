@@ -3,13 +3,25 @@ source: crates/test-utils/src/lib.rs
 expression: rendered
 input_file: crates/uitest/tests/fixtures/solver/non_ground_unique_answer/main.sol
 ---
-error[SC0208]: ambiguous trait constraint: word: Parent
+error[SC0248]: impl `word: Child<b>` needs its superclass `word: Parent`, but no impl provides it
+ --> /main/main.sol:7:9
+  |
+6 | trait Child<a, b> where a: Parent {}
+7 | impl<b> Child<word, b> {}
+  |         ^^^^^^^^^^^^^^ impl without a superclass impl
+8 |
+  |
+  = note: an impl can be used as each of its trait's superclasses, so those superclasses need impls for the same type
+  = help: add an impl that provides `word: Parent`
+---
+
+error[SC0207]: cannot satisfy trait constraint: word: Parent
   --> /main/main.sol:14:12
    |
 13 | function trigger<unused>() returns (word) {
 14 |     return use(0);
-   |            ^^^^^^ ambiguous constraint here
+   |            ^^^^^^ constraint originates here
 15 | }
    |
-   = note: the matching proof leaves existential type variables unresolved
-   = help: make the type more specific or remove overlapping impls
+   = note: no visible impl matches `word: Parent`
+   = help: add a matching impl or strengthen the surrounding type context

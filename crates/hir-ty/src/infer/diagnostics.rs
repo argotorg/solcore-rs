@@ -324,6 +324,36 @@ pub enum TypeckDiagnostic {
         /// Earlier default impl predicate.
         overlaps: String,
     },
+    /// `SC0248`: an impl, or a derived impl, does not provide one of its
+    /// trait's superclasses for the same type. A dictionary carries its
+    /// superclass dictionaries, so each superclass must hold under the impl's
+    /// conditions.
+    MissingSuperclassInstance {
+        /// Source span for the impl head or derive target.
+        span: LabelSpan,
+        /// Impl predicate snapshot.
+        instance: String,
+        /// Superclass predicate snapshot.
+        superclass: String,
+        /// Why the superclass does not hold.
+        reason: String,
+        /// Whether `#[derive]` synthesized the impl.
+        derived: bool,
+        /// How to provide the superclass.
+        help: String,
+    },
+    /// `SC0249`: an impl method requires a constraint that neither its trait
+    /// method nor the impl provides, so no caller can supply its evidence.
+    UndeclaredInstanceMethodConstraint {
+        /// Source span for the constraint, or the method signature.
+        span: LabelSpan,
+        /// Impl method name.
+        method: String,
+        /// Constraint snapshot.
+        constraint: String,
+        /// Whether the constraint already follows from what is provided.
+        entailed: bool,
+    },
     /// `SC0219`: a default instance main argument contained no type variable.
     InvalidDefaultInstance {
         /// Source span for the instance head.
@@ -871,6 +901,42 @@ impl TypeckDiagnostic {
                 } else {
                     diagnostic
                 }
+            }
+            TypeckDiagnostic::MissingSuperclassInstance {
+                span,
+                instance,
+                superclass,
+                reason,
+                derived,
+                help,
+            } => {
+                let kind = if *derived { "derived impl" } else { "impl" };
+                Diagnostic::error(format!(
+                    "{kind} `{instance}` needs its superclass `{superclass}`, but {reason}"
+                ))
+                .with_code(DiagnosticCode::TYPECK_MISSING_SUPERCLASS_INSTANCE)
+                .with_primary_label_span(span.clone(), Some(format!("{kind} without a superclass impl")))
+                .with_note("an impl can be used as each of its trait's superclasses, so those superclasses need impls for the same type")
+                .with_help(help.clone())
+            }
+            TypeckDiagnostic::UndeclaredInstanceMethodConstraint {
+                span,
+                method,
+                constraint,
+                entailed,
+            } => {
+                let help = if *entailed {
+                    "remove it: it already follows from the trait method and the impl's conditions"
+                } else {
+                    "require it in the impl's `where` clause, or declare it on the trait method"
+                };
+                Diagnostic::error(format!(
+                    "impl method `{method}` requires `{constraint}`, which its trait method does not declare"
+                ))
+                .with_code(DiagnosticCode::TYPECK_UNDECLARED_INSTANCE_METHOD_CONSTRAINT)
+                .with_primary_label_span(span.clone(), Some("constraint the trait method does not declare"))
+                .with_note("callers prove only the trait method's constraints, and the impl adds only its own conditions and superclasses")
+                .with_help(help)
             }
             TypeckDiagnostic::InvalidDefaultInstance { span, head } => Diagnostic::error(format!(
                 "Cannot have a default impl whose main argument contains no type variable: {head}"

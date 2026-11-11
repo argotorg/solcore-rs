@@ -1,10 +1,11 @@
 pragma solcore;
 
 // ambiguous-leaf: false
-trait C<a> where a: Sub {}
-trait Sub<a> where a: C {}
-impl<a> C<a> {}
-impl<a> Sub<a> {}
+// std: mutual.sol
+import * from std;
+
+default impl<a> C<a> {}
+default impl<a> Sub<a> {}
 trait D<a> {}
 enum Box<a> {
     Box(a)

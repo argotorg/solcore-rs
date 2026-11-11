@@ -1,0 +1,17 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/solver/orphan_tuple_impl_follows_first_element/main.sol
+---
+error[SC0246]: impl `pair<word, Key>: Get<word>` must be defined next to its trait or its type
+  --> /main/main.sol:23:6
+   |
+22 | // tuple, even though `Key` is defined here.
+23 | impl Get<(word, Key), word> {
+   |      ^^^^^^^^^^^^^^^^^^^^^^ impl defined elsewhere
+24 |     function get(ci: (word, Key)) returns (word) {
+   |
+   = note: trait `Get` is defined in module `table`
+   = note: an impl for a tuple belongs with the tuple's first element
+   = note: `word` is a builtin type, so only the module of trait `Get` can define this impl
+   = help: move this impl into one of those modules, or into a module that imports one of them and is imported by it, so every module that can use the impl also sees it; for different behaviour here, wrap the type in a new type or give the trait a policy type parameter

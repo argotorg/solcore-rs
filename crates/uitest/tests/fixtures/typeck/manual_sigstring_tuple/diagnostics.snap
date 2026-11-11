@@ -33,5 +33,6 @@ error[SC0246]: impl `pair<uint256, bool>: SigString` must be defined next to its
 7 |     function sigStr(p: Proxy<(uint256, bool)>) returns (string) {
   |
   = note: trait `SigString` is defined in module `std.dispatch`
-  = note: `pair<uint256, bool>` is a builtin type, so only the module of trait `SigString` can define this impl
+  = note: an impl for a tuple belongs with the tuple's first element
+  = note: type `uint256` is defined in module `std`
   = help: move this impl into one of those modules, or into a module that imports one of them and is imported by it, so every module that can use the impl also sees it; for different behaviour here, wrap the type in a new type or give the trait a policy type parameter

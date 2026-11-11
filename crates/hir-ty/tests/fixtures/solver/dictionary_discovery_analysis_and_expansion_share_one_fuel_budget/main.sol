@@ -7,5 +7,4 @@ enum Box<a> {
     Box(a)
 }
 impl C<word> {}
-impl Sub<word> {}
 impl<a> Outer<Box<a>> where a: C {}
