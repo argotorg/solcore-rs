@@ -324,6 +324,24 @@ pub enum TypeckDiagnostic {
         /// Earlier default impl predicate.
         overlaps: String,
     },
+    /// `SC0248`: an impl, or a derived impl, does not provide one of its
+    /// trait's superclasses for the same type. A dictionary carries its
+    /// superclass dictionaries, so each superclass must hold under the impl's
+    /// conditions.
+    MissingSuperclassInstance {
+        /// Source span for the impl head or derive target.
+        span: LabelSpan,
+        /// Impl predicate snapshot.
+        instance: String,
+        /// Superclass predicate snapshot.
+        superclass: String,
+        /// Why the superclass does not hold.
+        reason: String,
+        /// Whether `#[derive]` synthesized the impl.
+        derived: bool,
+        /// How to provide the superclass.
+        help: String,
+    },
     /// `SC0219`: a default instance main argument contained no type variable.
     InvalidDefaultInstance {
         /// Source span for the instance head.
@@ -866,6 +884,23 @@ impl TypeckDiagnostic {
                 } else {
                     diagnostic
                 }
+            }
+            TypeckDiagnostic::MissingSuperclassInstance {
+                span,
+                instance,
+                superclass,
+                reason,
+                derived,
+                help,
+            } => {
+                let kind = if *derived { "derived impl" } else { "impl" };
+                Diagnostic::error(format!(
+                    "{kind} `{instance}` needs its superclass `{superclass}`, but {reason}"
+                ))
+                .with_code(DiagnosticCode::TYPECK_MISSING_SUPERCLASS_INSTANCE)
+                .with_primary_label_span(span.clone(), Some(format!("{kind} without a superclass impl")))
+                .with_note("an impl can be used as each of its trait's superclasses, so those superclasses need impls for the same type")
+                .with_help(help.clone())
             }
             TypeckDiagnostic::InvalidDefaultInstance { span, head } => Diagnostic::error(format!(
                 "Cannot have a default impl whose main argument contains no type variable: {head}"

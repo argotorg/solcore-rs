@@ -31,6 +31,7 @@ pub fn instance_soundness_diagnostics<'db>(
     }
 
     let pragmas = InstanceSoundnessPragmas::from_module(db, facts.module);
+    let trait_env = trait_env_for_module(db, module);
     let mut diagnostics =
         crate::alias::type_alias_normalization_errors(db, facts.module, &facts.item_resolutions)
             .into_iter()
@@ -49,7 +50,7 @@ pub fn instance_soundness_diagnostics<'db>(
             .and_then(|class| prior_heads.get(&class))
             .map(Vec::as_slice)
             .unwrap_or_default();
-        if let Some(head) = check_instance_soundness(
+        let Some(head) = check_instance_soundness(
             db,
             facts.module,
             fact,
@@ -57,7 +58,31 @@ pub fn instance_soundness_diagnostics<'db>(
             &pragmas,
             same_class_prior,
             &mut diagnostics,
-        ) && !fact.default
+        ) else {
+            continue;
+        };
+        let conditions = fact
+            .conditions
+            .iter()
+            .map(|condition| condition.pred)
+            .collect::<Vec<_>>();
+        let type_vars = type_var_bindings(
+            fact.instance.def_id_value(db),
+            fact.instance.type_var_elems(db),
+        );
+        check_superclass_instances(
+            db,
+            trait_env,
+            head,
+            &conditions,
+            SuperclassSite {
+                span: &fact.head_span,
+                type_var_names: &type_var_names(db, &type_vars),
+                derived: false,
+            },
+            &mut diagnostics,
+        );
+        if !fact.default
             && let Some(class) = class
         {
             prior_heads.entry(class).or_default().push(InstanceHead {
@@ -66,6 +91,7 @@ pub fn instance_soundness_diagnostics<'db>(
             });
         }
     }
+    let adt_infos = local_adt_infos(db, facts.module);
     for plan in derived_class_plans_with_resolutions(db, facts.module, &facts.item_resolutions) {
         let class = ClassId::User(plan.class);
         let prior = prior_heads
@@ -75,12 +101,103 @@ pub fn instance_soundness_diagnostics<'db>(
         let span = derived_class_target_span(db, facts.module, plan.adt, plan.target_index)
             .unwrap_or_else(|| LabelSpan::from_span(db, facts.module.span(db)));
         check_overlapping_instance(db, plan.head, span.clone(), prior, &[], &mut diagnostics);
+        let type_var_names = adt_infos
+            .iter()
+            .find(|info| info.adt.def_id_value(db) == plan.adt)
+            .map(|info| type_var_names(db, &info.type_vars))
+            .unwrap_or_default();
+        check_superclass_instances(
+            db,
+            trait_env,
+            plan.head,
+            &plan.conditions,
+            SuperclassSite {
+                span: &span,
+                type_var_names: &type_var_names,
+                derived: true,
+            },
+            &mut diagnostics,
+        );
         prior_heads.entry(class).or_default().push(InstanceHead {
             pred: plan.head,
             span: Some(span),
         });
     }
     diagnostics
+}
+
+/// Where an impl's superclass obligations are reported.
+struct SuperclassSite<'a> {
+    span: &'a LabelSpan,
+    type_var_names: &'a [String],
+    derived: bool,
+}
+
+/// Reports each superclass of `head` that does not hold under `conditions`.
+///
+/// A dictionary carries its superclass dictionaries, and specialization builds
+/// them by solving these same goals. The solver projects a superclass only
+/// from a local assumption, never from an impl, so an impl must be backed by
+/// superclass impls for the same type.
+fn check_superclass_instances<'db>(
+    db: &'db dyn Db,
+    trait_env: TraitEnvId<'db>,
+    head: Pred<'db>,
+    conditions: &[Pred<'db>],
+    site: SuperclassSite<'_>,
+    diagnostics: &mut Vec<TypeckDiagnostic>,
+) {
+    let is_error = |pred: &Pred<'db>| matches!(pred.kind(db), PredKind::Error);
+    if is_error(&head) || conditions.iter().any(is_error) {
+        return;
+    }
+    let superclasses = direct_superclass_predicates(db, trait_env.base(db), head);
+    if superclasses.is_empty() {
+        return;
+    }
+    let env = trait_env_with_givens(db, trait_env, conditions.to_vec());
+    for superclass in superclasses {
+        // A condition that states the superclass carries its dictionary, as in
+        // specialization; only other superclasses are solved.
+        if conditions.contains(&superclass) {
+            continue;
+        }
+        let report = solve_report(db, env, canonical_goal(db, superclass));
+        let reason = if report.exhausted {
+            "the trait solver gave up proving it"
+        } else {
+            match &report.solution {
+                Solution::Unique { subst, evidence }
+                    if solver_answer_is_closed_over_goal(db, superclass, env, subst, evidence) =>
+                {
+                    continue;
+                }
+                Solution::Unique { .. } => "its proof leaves a type undetermined",
+                Solution::Ambiguous { .. } => "more than one impl or condition provides it",
+                Solution::NoSolution => "no impl provides it",
+            }
+        };
+        let shown = display_pred_source(db, superclass, site.type_var_names);
+        let on_type_parameter = matches!(
+            superclass.kind(db),
+            PredKind::InClass { main, .. } if matches!(main.kind(db), TyKind::BoundVar(_))
+        );
+        let help = if site.derived {
+            format!("add an impl that provides `{shown}`, for example by deriving it as well")
+        } else if on_type_parameter {
+            format!("require `{shown}` in this impl's `where` clause")
+        } else {
+            format!("add an impl that provides `{shown}`")
+        };
+        diagnostics.push(TypeckDiagnostic::MissingSuperclassInstance {
+            span: site.span.clone(),
+            instance: display_pred_source(db, head, site.type_var_names),
+            superclass: shown,
+            reason: reason.to_owned(),
+            derived: site.derived,
+            help,
+        });
+    }
 }
 
 #[derive(Clone)]

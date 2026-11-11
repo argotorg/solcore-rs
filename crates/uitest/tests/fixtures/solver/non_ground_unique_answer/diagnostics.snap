@@ -3,6 +3,18 @@ source: crates/test-utils/src/lib.rs
 expression: rendered
 input_file: crates/uitest/tests/fixtures/solver/non_ground_unique_answer/main.sol
 ---
+error[SC0248]: impl `word: Child<b>` needs its superclass `word: Parent`, but no impl provides it
+ --> /main/main.sol:7:9
+  |
+6 | trait Child<a, b> where a: Parent {}
+7 | impl<b> Child<word, b> {}
+  |         ^^^^^^^^^^^^^^ impl without a superclass impl
+8 |
+  |
+  = note: an impl can be used as each of its trait's superclasses, so those superclasses need impls for the same type
+  = help: add an impl that provides `word: Parent`
+---
+
 error[SC0207]: cannot satisfy trait constraint: word: Parent
   --> /main/main.sol:14:12
    |

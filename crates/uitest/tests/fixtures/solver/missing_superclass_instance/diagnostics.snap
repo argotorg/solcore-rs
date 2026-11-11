@@ -1,0 +1,51 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/solver/missing_superclass_instance/main.sol
+---
+error[SC0248]: impl `T: B` needs its superclass `T: A`, but no impl provides it
+  --> /main/main.sol:19:6
+   |
+18 | // `T: B` can be used as `T: A`, but no impl provides `T: A`.
+19 | impl B<T> {
+   |      ^^^^ impl without a superclass impl
+20 |     function fb(x: T) returns (word) {
+   |
+   = note: an impl can be used as each of its trait's superclasses, so those superclasses need impls for the same type
+   = help: add an impl that provides `T: A`
+---
+
+error[SC0248]: impl `Pair<a>: B` needs its superclass `Pair<a>: A`, but no impl provides it
+  --> /main/main.sol:48:9
+   |
+47 | // Nothing provides `Pair<a>: A`, even under the condition.
+48 | impl<a> B<Pair<a>> where a: B {
+   |         ^^^^^^^^^^ impl without a superclass impl
+49 |     function fb(x: Pair<a>) returns (word) {
+   |
+   = note: an impl can be used as each of its trait's superclasses, so those superclasses need impls for the same type
+   = help: add an impl that provides `Pair<a>: A`
+---
+
+error[SC0248]: impl `a: D` needs its superclass `a: A`, but no impl provides it
+  --> /main/main.sol:57:9
+   |
+56 | // For a bare type parameter the superclass has to come from the condition.
+57 | impl<a> D<a> {}
+   |         ^^^^ impl without a superclass impl
+58 |
+   |
+   = note: an impl can be used as each of its trait's superclasses, so those superclasses need impls for the same type
+   = help: require `a: A` in this impl's `where` clause
+---
+
+error[SC0248]: derived impl `Color: Ord` needs its superclass `Color: Eq`, but no impl provides it
+  --> /main/main.sol:60:10
+   |
+59 | // The derived `Ord` impl needs `Color: Eq`, which is not derived.
+60 | #[derive(Ord)]
+   |          ^^^ derived impl without a superclass impl
+61 | enum Color {
+   |
+   = note: an impl can be used as each of its trait's superclasses, so those superclasses need impls for the same type
+   = help: add an impl that provides `Color: Eq`, for example by deriving it as well
