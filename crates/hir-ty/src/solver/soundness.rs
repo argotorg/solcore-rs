@@ -532,7 +532,19 @@ fn check_instance_soundness<'db>(
             diagnostics,
         );
     }
-    check_instance_methods(db, module, instance, item_resolutions, head, diagnostics);
+    let condition_preds = conditions
+        .iter()
+        .map(|(condition, _)| *condition)
+        .collect::<Vec<_>>();
+    check_instance_methods(
+        db,
+        module,
+        instance,
+        item_resolutions,
+        head,
+        &condition_preds,
+        diagnostics,
+    );
 
     if !pragmas.coverage.disables(&class_name) {
         check_coverage_condition(
@@ -765,6 +777,7 @@ fn check_instance_methods<'db>(
     instance: InstanceDef<'db>,
     item_resolutions: &hir_nameres::ItemResolutionFacts<'db>,
     head: Pred<'db>,
+    conditions: &[Pred<'db>],
     diagnostics: &mut Vec<TypeckDiagnostic>,
 ) {
     let PredKind::InClass { class, .. } = head.kind(db) else {
@@ -838,6 +851,13 @@ fn check_instance_methods<'db>(
         });
     }
 
+    let instance_def = instance.def_id_value(db);
+    let trait_env = nameres::module_id_for_source_file(db, instance_def.file(db))
+        .or_else(|| module_for_def(db, instance_def))
+        .map(|module| trait_env_for_module(db, module));
+    let superclasses = trait_env
+        .map(|env| direct_superclass_predicates(db, env.base(db), head))
+        .unwrap_or_default();
     for class_method in class_info.class.methods(db) {
         let method_name = ident_text(db, &class_method.name);
         let Some(instance_method) = methods
@@ -853,6 +873,9 @@ fn check_instance_methods<'db>(
             class_info: &class_info,
             instance_head: head,
             instance_head_span: LabelSpan::from_span(db, instance.head(db).span(db)),
+            instance_conditions: conditions,
+            instance_superclasses: &superclasses,
+            trait_env,
         };
         check_instance_method_signature(&ctx, class_method, *instance_method, diagnostics);
     }
@@ -1017,6 +1040,11 @@ struct InstanceMethodCheckCtx<'a, 'db> {
     class_info: &'a ClassLookup<'db>,
     instance_head: Pred<'db>,
     instance_head_span: LabelSpan,
+    /// Conditions of the impl, available to every impl method.
+    instance_conditions: &'a [Pred<'db>],
+    /// Superclasses of the impl head, carried by the impl's dictionary.
+    instance_superclasses: &'a [Pred<'db>],
+    trait_env: Option<TraitEnvId<'db>>,
 }
 
 fn check_instance_method_signature<'db>(
@@ -1094,7 +1122,8 @@ fn check_instance_method_signature<'db>(
     let mut actual_normalizer = AliasNormalizer::new(db, ctx.module, ctx.item_resolutions);
     let actual_scheme =
         actual_normalizer.normalize_scheme(method_lowerer.lower_function(instance_method).scheme);
-    if scheme_is_ambiguous(db, actual_scheme) {
+    let ambiguous = scheme_is_ambiguous(db, actual_scheme);
+    if ambiguous {
         diagnostics.push(TypeckDiagnostic::AmbiguousInferredType {
             span: ctx.instance_head_span.clone(),
             scheme: display_scheme_source(db, actual_scheme, &inherited),
@@ -1111,8 +1140,8 @@ fn check_instance_method_signature<'db>(
             .map(alias_error_to_diagnostic),
     );
 
+    let inherited_names = type_var_names(db, &inherited);
     if !ty_equal(db, expected, actual) {
-        let inherited_names = type_var_names(db, &inherited);
         diagnostics.push(TypeckDiagnostic::InvalidInstanceMethodSignature {
             span: LabelSpan::from_span(db, instance_method.sig(db).span(db)),
             method: method_name,
@@ -1122,6 +1151,70 @@ fn check_instance_method_signature<'db>(
                 display_ty_source(db, actual, &inherited_names)
             ),
         });
+        return;
+    }
+    // A type variable the trait method lacks is already an error, and the
+    // binders no longer line up with the trait method's.
+    if ambiguous {
+        return;
+    }
+
+    // A caller proves the trait method's constraints, and the impl's
+    // dictionary carries its conditions and superclasses. Specialization
+    // looks each impl-method constraint up among exactly these, so the impl
+    // method cannot require anything else.
+    let provided = class_scheme
+        .body(db)
+        .preds(db)
+        .iter()
+        // The class predicate itself is this impl.
+        .skip(1)
+        .map(|pred| substitute_bound_pred(db, *pred, &subst))
+        .chain(ctx.instance_conditions.iter().copied())
+        .chain(ctx.instance_superclasses.iter().copied())
+        .collect::<Vec<_>>();
+    let sig_preds = &instance_method.sig(db).preds;
+    let actual_preds = actual_scheme.body(db).preds(db);
+    for (index, pred) in actual_preds.iter().enumerate() {
+        if !matches!(pred.kind(db), PredKind::InClass { .. }) || provided.contains(pred) {
+            continue;
+        }
+        let entailed = ctx.trait_env.is_some_and(|env| {
+            let env = trait_env_with_givens(db, env, provided.clone());
+            matches!(
+                solve(db, env, canonical_goal(db, *pred)),
+                Solution::Unique { .. }
+            )
+        });
+        let span = sig_preds
+            .get(index)
+            .filter(|_| sig_preds.len() == actual_preds.len())
+            .map(|pred| LabelSpan::from_span(db, pred.span(db)))
+            .unwrap_or_else(|| LabelSpan::from_span(db, instance_method.sig(db).span(db)));
+        diagnostics.push(TypeckDiagnostic::UndeclaredInstanceMethodConstraint {
+            span,
+            method: method_name.clone(),
+            constraint: display_pred_source(db, *pred, &inherited_names),
+            entailed,
+        });
+    }
+}
+
+fn substitute_bound_pred<'db>(
+    db: &'db dyn Db,
+    pred: Pred<'db>,
+    subst: &FxHashMap<u32, Ty<'db>>,
+) -> Pred<'db> {
+    match pred.kind(db) {
+        PredKind::InClass { class, main, args } => Pred::in_class(
+            db,
+            *class,
+            substitute_bound_vars(db, *main, subst),
+            args.iter()
+                .map(|arg| substitute_bound_vars(db, *arg, subst))
+                .collect(),
+        ),
+        PredKind::Eq { .. } | PredKind::Error => pred,
     }
 }
 

@@ -120,6 +120,7 @@ impl DiagnosticCode {
     pub const TYPECK_ORPHAN_INSTANCE: &'static str = "SC0246";
     pub const TYPECK_OVERLAPPING_DEFAULT_INSTANCE: &'static str = "SC0247";
     pub const TYPECK_MISSING_SUPERCLASS_INSTANCE: &'static str = "SC0248";
+    pub const TYPECK_UNDECLARED_INSTANCE_METHOD_CONSTRAINT: &'static str = "SC0249";
     pub const TYPECK_AMBIGUOUS_INFERENCE_OR_TYPE_CONSTRUCTOR_ARITY: &'static str = "SC0299";
     pub const TYPECK_NON_EXHAUSTIVE_MATCH: &'static str = "SC0302";
     pub const EMIT_NON_EXHAUSTIVE_MATCH: &'static str = "SC0302";
@@ -281,6 +282,10 @@ impl DiagnosticCode {
         DiagnosticCodeEntry::new(
             "TYPECK_MISSING_SUPERCLASS_INSTANCE",
             Self::TYPECK_MISSING_SUPERCLASS_INSTANCE,
+        ),
+        DiagnosticCodeEntry::new(
+            "TYPECK_UNDECLARED_INSTANCE_METHOD_CONSTRAINT",
+            Self::TYPECK_UNDECLARED_INSTANCE_METHOD_CONSTRAINT,
         ),
         DiagnosticCodeEntry::new("TYPECK_COVERAGE_CONDITION", Self::TYPECK_COVERAGE_CONDITION),
         DiagnosticCodeEntry::new(
