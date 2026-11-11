@@ -1,13 +1,14 @@
 pragma solcore;
 
 // ambiguous-leaf: true
-trait C<a> {}
-trait Sub<a> where a: C {}
+import * from std;
+
 trait Ready<a> {}
-impl C<word> {}
-impl<a> Sub<a> {}
+trait Leaf<a> {}
+impl Leaf<word> {}
+default impl<a> C<a> where a: Leaf {}
 impl<a> Ready<a> where a: C {}
-impl<a> C<a> where a: Ready {}
+default impl<a> C<a> where a: Ready {}
 trait D<a> {}
 enum Box<a> {
     Box(a)
