@@ -1,4 +1,8 @@
 pragma solcore;
 
-import * from std;
-default impl<a> Choice<a> {}
+pragma no-patterson-condition Pick;
+export { Pick, Ready };
+trait Pick<a> {}
+trait Ready<a> {}
+default impl<a> Pick<a> where a: Ready {}
+impl Ready<word> {}

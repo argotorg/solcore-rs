@@ -3,6 +3,20 @@ source: crates/test-utils/src/lib.rs
 expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/manual_abi_decode_fixed_representation/main.sol
 ---
+error[SC0246]: impl `ABIDecoder<word, MemoryWordReader>: ABIDecode<word>` must be defined next to its trait or its type
+  --> /main/main.sol:18:6
+   |
+17 |
+18 | impl ABIDecode<ABIDecoder<word, MemoryWordReader>, word> {
+   |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ impl defined elsewhere
+19 |     function decode(d: ABIDecoder<word, MemoryWordReader>, offset: word) returns (word) {
+   |
+   = note: trait `ABIDecode` is defined in module `std`
+   = note: type `ABIDecoder` is defined in module `std`
+   = note: `word` is a builtin type, so only the module of trait `ABIDecode` can define this impl
+   = help: move this impl into one of those modules, or into a module that imports one of them and is imported by it, so every module that can use the impl also sees it; for different behaviour here, wrap the type in a new type or give the trait a policy type parameter
+---
+
 error[SC0231]: constructor ABI for contract `FixedField` cannot use visible manual `ABIDecode` evidence
   --> /main/main.sol:25:5
    |

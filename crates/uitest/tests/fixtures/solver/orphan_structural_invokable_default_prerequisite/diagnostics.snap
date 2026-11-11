@@ -1,0 +1,16 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/solver/orphan_structural_invokable_default_prerequisite/main.sol
+---
+error[SC0246]: impl `f: invokable<args, word>` must be defined next to its trait or its type
+  --> /main/main.sol:15:23
+   |
+14 |
+15 | default impl<f, args> invokable<f, args, word> where f: Growing {
+   |                       ^^^^^^^^^^^^^^^^^^^^^^^^ impl defined elsewhere
+16 |     function invoke(self: f, args: args) returns (word) {
+   |
+   = note: trait `invokable` is built in
+   = note: `f` is a type parameter, so no module can define this impl
+   = help: a built-in trait can only be implemented for a user-defined type, in the module that defines the type

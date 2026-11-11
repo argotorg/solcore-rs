@@ -38,7 +38,12 @@ pub fn instance_soundness_diagnostics<'db>(
             .collect::<Vec<_>>();
     let mut prior_heads = imported_non_default_heads(db, module, facts.module, &facts.imports);
     add_builtin_str_heads(db, &mut prior_heads);
+    let mut prior_defaults = imported_default_heads(db, module, &facts.imports);
     for fact in &facts.instances {
+        check_instance_locality(db, module, fact, &mut diagnostics);
+        if fact.default {
+            check_overlapping_default(db, fact, &mut prior_defaults, &mut diagnostics);
+        }
         let class = fact.class(db);
         let same_class_prior = class
             .and_then(|class| prior_heads.get(&class))
@@ -82,6 +87,88 @@ pub fn instance_soundness_diagnostics<'db>(
 struct InstanceHead<'db> {
     pred: Pred<'db>,
     span: Option<LabelSpan>,
+}
+
+/// A visible default impl head, for the definition-time default overlap check.
+struct DefaultHead<'db> {
+    pred: Pred<'db>,
+    span: LabelSpan,
+    unconditional: bool,
+    standard: bool,
+}
+
+/// Default impl heads visible from `module` through its imports.
+fn imported_default_heads<'db>(
+    db: &'db dyn Db,
+    module: ModuleId<'db>,
+    env: &nameres::ModuleImportSurface<'db>,
+) -> FxHashMap<ClassId<'db>, Vec<DefaultHead<'db>>> {
+    let mut heads = FxHashMap::<ClassId<'db>, Vec<DefaultHead<'db>>>::default();
+    for origin in &env.instances {
+        if origin.module == module {
+            continue;
+        }
+        let Some(facts) = module_instance_facts(db, origin.module).as_ref() else {
+            continue;
+        };
+        let Some(fact) = facts
+            .instances
+            .iter()
+            .find(|fact| fact.def == origin.def_id && fact.default)
+        else {
+            continue;
+        };
+        if let Some(class) = fact.class(db) {
+            heads.entry(class).or_default().push(default_head(db, fact));
+        }
+    }
+    heads
+}
+
+fn default_head<'db>(db: &'db dyn Db, fact: &InstanceFact<'db>) -> DefaultHead<'db> {
+    DefaultHead {
+        pred: fact.head,
+        span: fact.head_span.clone(),
+        unconditional: fact.conditions.is_empty(),
+        standard: crate::support::is_std_definition(db, fact.def),
+    }
+}
+
+/// Reports a default impl that overlaps another default impl of the same
+/// priority when one of them has no conditions: wherever both apply the goal
+/// is ambiguous, and an unconditional default always applies.
+fn check_overlapping_default<'db>(
+    db: &'db dyn Db,
+    fact: &InstanceFact<'db>,
+    prior_defaults: &mut FxHashMap<ClassId<'db>, Vec<DefaultHead<'db>>>,
+    diagnostics: &mut Vec<TypeckDiagnostic>,
+) {
+    if matches!(fact.head.kind(db), PredKind::Error) {
+        return;
+    }
+    let Some(class) = fact.class(db) else {
+        return;
+    };
+    let head = default_head(db, fact);
+    let priors = prior_defaults.entry(class).or_default();
+    if let Some(prior) = priors.iter().find(|prior| {
+        prior.standard == head.standard
+            && (prior.unconditional || head.unconditional)
+            && instance_heads_overlap(db, head.pred, prior.pred)
+    }) {
+        let type_vars = type_var_bindings(
+            fact.instance.def_id_value(db),
+            fact.instance.type_var_elems(db),
+        );
+        let type_var_names = type_var_names(db, &type_vars);
+        diagnostics.push(TypeckDiagnostic::OverlappingDefaultInstance {
+            instance_span: head.span.clone(),
+            overlaps_span: Some(prior.span.clone()),
+            instance: display_pred_source(db, head.pred, &type_var_names),
+            overlaps: display_pred_source(db, prior.pred, &[]),
+        });
+    }
+    priors.push(head);
 }
 
 fn add_builtin_str_heads<'db>(
@@ -180,6 +267,90 @@ impl PragmaEscape {
     fn disables(&self, class_name: &str) -> bool {
         self.all || self.classes.contains(class_name)
     }
+}
+
+/// Reports an impl defined outside the import cycles of the modules that
+/// define its trait and the head type of its main argument.
+///
+/// Every module that can state a goal sees the modules that define the goal's
+/// trait and types, so an impl next to one of them is visible wherever it could
+/// apply, and two overlapping impls meet where one of them is defined. An impl
+/// anywhere else is seen by some modules but not others, so the same goal would
+/// resolve differently across a program.
+fn check_instance_locality<'db>(
+    db: &'db dyn Db,
+    module: ModuleId<'db>,
+    fact: &InstanceFact<'db>,
+    diagnostics: &mut Vec<TypeckDiagnostic>,
+) {
+    let Some(owners) = coherence::instance_owners(db, fact.head) else {
+        return;
+    };
+    let impl_file = fact.def.file(db);
+    let is_local = |def: DefId<'db>| coherence::is_local_to(db, module, impl_file, def);
+    if owners.class.is_some_and(is_local) || owners.types.iter().copied().any(is_local) {
+        return;
+    }
+    let PredKind::InClass { class, .. } = fact.head.kind(db) else {
+        return;
+    };
+    let type_vars = type_var_bindings(
+        fact.instance.def_id_value(db),
+        fact.instance.type_var_elems(db),
+    );
+    let type_var_names = type_var_names(db, &type_vars);
+    let class_name = display_class_source(db, *class);
+    let mut notes = vec![match owners.class {
+        Some(def) => format!(
+            "trait `{class_name}` is defined in {}",
+            defining_module(db, def)
+        ),
+        None => format!("trait `{class_name}` is built in"),
+    }];
+    notes.extend(owners.types.iter().map(|def| {
+        format!(
+            "type `{}` is defined in {}",
+            def.name(db).unwrap_or_default(),
+            defining_module(db, *def)
+        )
+    }));
+    let head_kind = match owners.head.kind(db) {
+        TyKind::Named {
+            ctor: TyCtor::User(_),
+            ..
+        } => None,
+        TyKind::BoundVar(_) => Some("a type parameter"),
+        _ => Some("a builtin type"),
+    };
+    if let Some(head_kind) = head_kind {
+        let head = display_ty_source(db, owners.head, &type_var_names);
+        notes.push(if owners.class.is_some() {
+            format!(
+                "`{head}` is {head_kind}, so only the module of trait `{class_name}` can define this impl"
+            )
+        } else {
+            format!("`{head}` is {head_kind}, so no module can define this impl")
+        });
+    }
+    let help = if owners.class.is_none() && owners.types.is_empty() {
+        "a built-in trait can only be implemented for a user-defined type, in the module that defines the type"
+    } else {
+        "move this impl into one of those modules, or into a module that imports one of them and is imported by it, so every module that can use the impl also sees it; for different behaviour here, wrap the type in a new type or give the trait a policy type parameter"
+    };
+    diagnostics.push(TypeckDiagnostic::OrphanInstance {
+        span: fact.head_span.clone(),
+        instance: display_pred_source(db, fact.head, &type_var_names),
+        owners: notes,
+        help: help.to_owned(),
+    });
+}
+
+/// Names the module that defines `def` for a diagnostic.
+fn defining_module<'db>(db: &'db dyn Db, def: DefId<'db>) -> String {
+    nameres::module_id_for_source_file(db, def.file(db)).map_or_else(
+        || "another file".to_owned(),
+        |module| format!("module `{}`", nameres::module_id_display(db, module)),
+    )
 }
 
 fn check_instance_soundness<'db>(

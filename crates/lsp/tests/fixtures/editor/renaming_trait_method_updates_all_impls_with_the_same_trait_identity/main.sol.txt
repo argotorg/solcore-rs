@@ -1,8 +1,10 @@
 pragma solcore;
 
 import {Echo} from math;
-impl Echo<word> { function echo(x: word) returns (word) { return x; } }
-impl Echo<bool> { function echo(x: bool) returns (word) { return 0; } }
+enum Amount { Amount(word) }
+enum Flag { Flag(bool) }
+impl Echo<Amount> { function echo(x: Amount) returns (word) { return 1; } }
+impl Echo<Flag> { function echo(x: Flag) returns (word) { return 0; } }
 trait Other<t> { function echo(x: t) returns (word); }
 impl Other<word> { function echo(x: word) returns (word) { return x; } }
-function main() returns (word) { let x: word = 7; return Echo.echo(x); }
+function main() returns (word) { let x: Amount = Amount(7); return Echo.echo(x); }

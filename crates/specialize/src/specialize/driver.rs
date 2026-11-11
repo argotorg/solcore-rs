@@ -32,6 +32,11 @@ pub(super) struct Driver<'db> {
     pub(super) queue: VecDeque<PendingSpec<'db>>,
     pub(super) dispatch_selector_overrides: Vec<(String, String)>,
     pub(super) diagnostics: Vec<SpecializeDiagnostic<'db>>,
+    /// The impl selected for each ground class goal, keyed by class and main
+    /// argument, so a second impl for the same goal is reported.
+    pub(super) selected_instances: FxHashMap<(ClassId<'db>, Ty<'db>), DefId<'db>>,
+    /// Goals already reported as resolving to more than one impl.
+    pub(super) reported_incoherent_goals: FxHashSet<(ClassId<'db>, Ty<'db>)>,
 }
 
 #[derive(Debug, Clone)]
@@ -195,6 +200,8 @@ impl<'db> Driver<'db> {
             queue: VecDeque::new(),
             dispatch_selector_overrides: Vec::new(),
             diagnostics: Vec::new(),
+            selected_instances: FxHashMap::default(),
+            reported_incoherent_goals: FxHashSet::default(),
         };
         driver.collect_module_index();
         driver.collect_body_maps();

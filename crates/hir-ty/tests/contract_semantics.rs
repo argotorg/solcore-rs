@@ -320,17 +320,22 @@ fn db_with_overlapping_std(src: &str, shared_sources: bool) -> (TestDb, ModuleKe
     insert_real_std_modules(&mut db);
     // Exercise both a canonical source reached only through Main and sources
     // shared by Main/Std identities (as in an editor with overlapping roots).
-    let aliases: &[&str] = if shared_sources {
-        &["std", "dispatch", "Generic", "ABIGeneric"]
+    // `std.ABIGeneric` always keeps its Std identity because `std` imports it.
+    let (main_only, shared): (&[&str], &[&str]) = if shared_sources {
+        (&[], &["std", "dispatch", "Generic", "ABIGeneric"])
     } else {
-        &["dispatch", "ABIGeneric"]
+        (&["dispatch"], &["ABIGeneric"])
     };
-    for name in aliases {
+    for (name, keep_std) in main_only
+        .iter()
+        .map(|name| (name, false))
+        .chain(shared.iter().map(|name| (name, true)))
+    {
         let key = ModuleKey {
             library: LibraryId::Std,
             logical_path: vec![(*name).to_owned()],
         };
-        let file = if shared_sources {
+        let file = if keep_std {
             db.module_files[&key]
         } else {
             db.module_files.remove(&key).expect("canonical source")
@@ -1271,27 +1276,28 @@ fn db_with_reexported_abi_adt(fixture: &Fixture<&str>) -> (TestDb, ModuleKey) {
     (db, key)
 }
 
-#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/contract_semantics/reference_reexport_does_not_expose_definition_side_abi_evidence", glob: "main.sol")]
-fn reference_reexport_does_not_expose_definition_side_abi_evidence(fixture: Fixture<&str>) {
+#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/contract_semantics/reference_reexport_exposes_definition_side_abi_evidence", glob: "main.sol")]
+fn reference_reexport_exposes_definition_side_abi_evidence(fixture: Fixture<&str>) {
     let (db, key) = db_with_reexported_abi_adt(&fixture);
     let file = db.module_files[&key];
     let module = parse_file_to_hir(&db, file).module(&db);
     let contract = contract_named(&db, module, "Reexported");
     let surface = contract_dispatch_surface(&db, module, contract);
 
-    assert_eq!(surface.methods[0].signature, "roundtrip(<unsupported>)");
-    assert_eq!(surface.methods[0].inputs[0].ty.to_string(), "<unsupported>");
-    assert_eq!(
-        surface.methods[0].outputs[0].ty.to_string(),
-        "<unsupported>"
+    assert!(
+        surface
+            .diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code.as_deref() != Some("SC0231")),
+        "{:?}",
+        surface.diagnostics
     );
-    assert!(surface.diagnostics.iter().any(|diagnostic| {
-        diagnostic.code.as_deref() == Some("SC0231")
-            && diagnostic
-                .message
-                .contains("ABIAttribs and ABIDecode evidence is not visible")
-    }));
-    assert!(contract_abi_json(&db, module, contract).is_err());
+    let method = &surface.methods[0];
+    assert_eq!(method.signature, "roundtrip(sum(uint256,uint256))");
+    assert_eq!(method.inputs[0].ty.to_string(), "Payload");
+    assert_eq!(method.outputs[0].ty.to_string(), "Payload");
+    let abi = contract_abi_json(&db, module, contract).expect("reexported ADT ABI");
+    assert_eq!(abi.matches("\"type\": \"Payload\"").count(), 2, "{abi}");
 }
 
 #[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/contract_semantics/instance_import_in_reexport_module_exposes_definition_side_abi_evidence", glob: "main.sol")]

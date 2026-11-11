@@ -117,6 +117,8 @@ impl DiagnosticCode {
     pub const TYPECK_TYPE_ALIAS_EXPANSION_LIMIT: &'static str = "SC0243";
     pub const TYPECK_INCOMPLETE_INSTANCE: &'static str = "SC0244";
     pub const TYPECK_RESERVED_YUL_FUNCTION: &'static str = "SC0245";
+    pub const TYPECK_ORPHAN_INSTANCE: &'static str = "SC0246";
+    pub const TYPECK_OVERLAPPING_DEFAULT_INSTANCE: &'static str = "SC0247";
     pub const TYPECK_AMBIGUOUS_INFERENCE_OR_TYPE_CONSTRUCTOR_ARITY: &'static str = "SC0299";
     pub const TYPECK_NON_EXHAUSTIVE_MATCH: &'static str = "SC0302";
     pub const EMIT_NON_EXHAUSTIVE_MATCH: &'static str = "SC0302";
@@ -138,6 +140,7 @@ impl DiagnosticCode {
     pub const SPECIALIZE_PUBLIC_COMPTIME_PARAM: &'static str = "SC0413";
     pub const SPECIALIZE_REDUCTION_RECURSION: &'static str = "SC0414";
     pub const SPECIALIZE_REDUCTION_FUEL_EXHAUSTED: &'static str = "SC0415";
+    pub const SPECIALIZE_INCOHERENT_INSTANCE: &'static str = "SC0416";
 
     pub const EMIT_UNSUPPORTED_TYPE: &'static str = "SC0420";
     pub const EMIT_UNSUPPORTED_LITERAL: &'static str = "SC0421";
@@ -268,6 +271,11 @@ impl DiagnosticCode {
         DiagnosticCodeEntry::new(
             "TYPECK_RESERVED_YUL_FUNCTION",
             Self::TYPECK_RESERVED_YUL_FUNCTION,
+        ),
+        DiagnosticCodeEntry::new("TYPECK_ORPHAN_INSTANCE", Self::TYPECK_ORPHAN_INSTANCE),
+        DiagnosticCodeEntry::new(
+            "TYPECK_OVERLAPPING_DEFAULT_INSTANCE",
+            Self::TYPECK_OVERLAPPING_DEFAULT_INSTANCE,
         ),
         DiagnosticCodeEntry::new("TYPECK_COVERAGE_CONDITION", Self::TYPECK_COVERAGE_CONDITION),
         DiagnosticCodeEntry::new(
@@ -419,6 +427,10 @@ impl DiagnosticCode {
         DiagnosticCodeEntry::new(
             "SPECIALIZE_REDUCTION_FUEL_EXHAUSTED",
             Self::SPECIALIZE_REDUCTION_FUEL_EXHAUSTED,
+        ),
+        DiagnosticCodeEntry::new(
+            "SPECIALIZE_INCOHERENT_INSTANCE",
+            Self::SPECIALIZE_INCOHERENT_INSTANCE,
         ),
         DiagnosticCodeEntry::new("EMIT_UNSUPPORTED_TYPE", Self::EMIT_UNSUPPORTED_TYPE),
         DiagnosticCodeEntry::new("EMIT_UNSUPPORTED_LITERAL", Self::EMIT_UNSUPPORTED_LITERAL),

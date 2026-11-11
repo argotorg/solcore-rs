@@ -53,7 +53,7 @@ impl Child<word> {}
 function throughChild<t, u, r>(x: t, y: u) returns (word) where t: Child, u: Pick<r> {
     return Parent.choose(x, y);
 }
-function apply(f: function (word, word) returns (word), x: word, y: word) returns (word) {
+function apply<u>(f: function (word, u) returns (word), x: word, y: u) returns (word) {
     return f(x, y);
 }
 function applyOne(f: function (word) returns (word), x: word) returns (word) {

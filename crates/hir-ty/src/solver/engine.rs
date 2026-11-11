@@ -129,7 +129,8 @@ impl<'db> TabledEngine<'db> {
 
     /// Program clauses eligible for `key`, in resolution order: local givens,
     /// then non-default instances, then superclass projections, and — only
-    /// when no non-default clause head can unify with the goal — defaults.
+    /// when the main argument is not a type parameter and no non-default
+    /// clause head can unify with the goal — defaults.
     fn applicable_clauses(&self, key: &TableKey<'db>) -> Vec<ProgramClause<'db>> {
         // This is a one-way prefilter. Variables and their correlations are
         // deliberately ignored, so impossible clauses may remain but an
@@ -173,9 +174,19 @@ impl<'db> TabledEngine<'db> {
             .filter(|clause| clause.origin.is_default() && head_can_apply(clause))
             .cloned()
             .collect::<Vec<_>>();
-        // Check the assembled candidates, including goal-dependent compiler
-        // facts. The cached environment alone omits structural function rules.
-        if !default_clauses.is_empty() && !self.has_non_default_unifying_head(key, &clauses) {
+        // A default decides a goal only when no other impl can. That is
+        // unknown while the goal's main argument is a type parameter of the
+        // checked body: the module that instantiates it may supply a more
+        // specific impl, so such goals must be proved from where clauses.
+        // Otherwise check the assembled candidates, including goal-dependent
+        // compiler facts; the cached environment omits structural function
+        // rules.
+        if !default_clauses.is_empty()
+            && !coherence::main_arg_is_type_parameter(self.db, key.pred, |var| {
+                var >= key.flex_count
+            })
+            && !self.has_non_default_unifying_head(key, &clauses)
+        {
             clauses.extend(default_clauses);
         }
         clauses

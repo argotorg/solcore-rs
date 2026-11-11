@@ -212,7 +212,7 @@ fn derives_storage_evidence_for_a_qualified_imported_adt(fixture: dir_test::Fixt
 }
 
 #[dir_test::dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/solver/derived_storage_reexport_visibility", glob: "main.sol")]
-fn reexport_edges_do_not_leak_derived_storage_instances(fixture: dir_test::Fixture<&str>) {
+fn reexport_edges_expose_derived_storage_instances(fixture: dir_test::Fixture<&str>) {
     let fixture = std::path::Path::new(fixture.path()).parent().unwrap();
     let repo_root = repo_root_from_manifest(env!("CARGO_MANIFEST_DIR"));
     let mut db = TestDb::default();
@@ -250,7 +250,7 @@ fn reexport_edges_do_not_leak_derived_storage_instances(fixture: dir_test::Fixtu
             trait_env_for_module(&db, main_id),
             canonical_goal(&db, goal),
         ),
-        Solution::NoSolution
+        Solution::Unique { .. }
     ));
 }
 
