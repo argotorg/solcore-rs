@@ -424,6 +424,9 @@ fn check_instance_locality<'db>(
         ),
         None => format!("trait `{class_name}` is built in"),
     }];
+    if owners.in_tuple {
+        notes.push("an impl for a tuple belongs with the tuple's first element".to_owned());
+    }
     notes.extend(owners.types.iter().map(|def| {
         format!(
             "type `{}` is defined in {}",
