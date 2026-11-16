@@ -1,11 +1,9 @@
 pragma solcore;
 
-trait Target<a> {}
-trait Super<a> where a: Target {}
+import * from std;
+
 trait Bridge<a> {}
 trait Leaf<a> {}
-trait RecursiveLeaf<a> where a: Leaf {}
-trait IndependentLeaf<a> where a: Leaf {}
 trait D<a> {}
 enum Box<a> {
     Box(a)
@@ -18,11 +16,10 @@ trait Slow4<a> {}
 trait Slow5<a> {}
 trait Slow6<a> {}
 trait Slow7<a> {}
-impl<a> Target<a> where a: Bridge {}
+default impl<a> Target<a> where a: Bridge {}
 impl<a> Bridge<a> where a: Leaf {}
-impl<a> RecursiveLeaf<a> where Box<a>: D {}
-impl<a> IndependentLeaf<a> where a: Slow0 {}
-impl<a> Super<a> {}
+default impl<a> Leaf<a> where Box<a>: D {}
+default impl<a> Leaf<a> where a: Slow0 {}
 impl D<word> {}
 impl<a> D<Box<a>> where a: D, a: Target {}
 impl<a> Slow0<a> where a: Slow1 {}

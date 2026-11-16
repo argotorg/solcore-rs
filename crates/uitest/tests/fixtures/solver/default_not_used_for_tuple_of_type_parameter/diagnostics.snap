@@ -1,0 +1,15 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/solver/default_not_used_for_tuple_of_type_parameter/main.sol
+---
+error[SC0207]: cannot satisfy trait constraint: pair<t, t>: Fee
+  --> /main/fees.sol:18:17
+   |
+17 | // define a more specific impl for the tuple.
+18 | function charge<t>(x: t) returns (word) {
+   |                 ^ constraint originates here
+19 |     return Fee.fee((x, x));
+   |
+   = note: a default impl matches, but defaults are not used for type parameters: the module that instantiates the parameter may provide a more specific impl
+   = help: add `where pair<t, t>: Fee` to the enclosing function or impl

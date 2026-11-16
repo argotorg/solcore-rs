@@ -41,7 +41,7 @@ function decrement(n: word) returns (word) {
 enum ImplicitWrapped<t> {
     ImplicitWrapped(t)
 }
-impl<t> ImplicitChild<ImplicitWrapped<t>> {
+impl<t> ImplicitChild<ImplicitWrapped<t>> where t: ImplicitParent {
     function f(x: ImplicitWrapped<t>) returns (word) {
         return ImplicitParent.f(x);
     }

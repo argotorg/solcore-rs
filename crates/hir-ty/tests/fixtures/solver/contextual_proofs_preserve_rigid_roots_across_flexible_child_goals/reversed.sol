@@ -1,8 +1,6 @@
 pragma solcore;
 
-trait C<a> {}
-trait Seed<a> where a: C {}
+trait Fix<a, r> where a: Sub<r> {}
 trait Sub<a, r> where a: C {}
-trait Fix<a, r> {}
-impl<a, r> Sub<a, r> where a: C, a: Fix<r> {}
-impl<a> Seed<a> {}
+trait Seed<a> where a: C {}
+trait C<a> where a: Sub<word> {}

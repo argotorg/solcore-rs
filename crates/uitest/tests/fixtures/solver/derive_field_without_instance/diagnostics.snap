@@ -1,0 +1,23 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/solver/derive_field_without_instance/main.sol
+---
+error[SC0230]: cannot derive 'Eq' for type 'Wrap': field type 'NoEq' of constructor 'Wrap' does not implement 'Eq'
+  --> /main/main.sol:12:10
+   |
+11 | // The derived impl compares the field, so it needs `NoEq: Eq`.
+12 | #[derive(Eq)]
+   |          ^^ invalid derive target
+13 | enum Wrap {
+   |
+---
+
+error[SC0230]: cannot derive 'Eq' for type 'Holder': field type 'List<a>' of constructor 'Holder' does not implement 'Eq'
+  --> /main/main.sol:23:10
+   |
+22 | // `a: Eq` does not give `List<a>: Eq`, which the field needs.
+23 | #[derive(Eq)]
+   |          ^^ invalid derive target
+24 | enum Holder<a> {
+   |

@@ -96,6 +96,7 @@ impl<'db> TabledEngine<'db> {
             allowed_vars: allowed_goal_vars.clone(),
             rigid_vars: self.local_context_vars.clone(),
             context: ProofContext::default(),
+            givens_only: false,
         };
         let config = TabledConfig {
             scheduling: Scheduling::Fair,
@@ -130,7 +131,9 @@ impl<'db> TabledEngine<'db> {
     /// Program clauses eligible for `key`, in resolution order: local givens,
     /// then non-default instances, then superclass projections, and — only
     /// when the main argument is not a type parameter and no non-default
-    /// clause head can unify with the goal — defaults.
+    /// clause head can unify with the goal — defaults. A superclass
+    /// projection's condition is a `givens_only` goal, which admits only local
+    /// givens and further projections.
     fn applicable_clauses(&self, key: &TableKey<'db>) -> Vec<ProgramClause<'db>> {
         // This is a one-way prefilter. Variables and their correlations are
         // deliberately ignored, so impossible clauses may remain but an
@@ -152,8 +155,20 @@ impl<'db> TabledEngine<'db> {
                 })
                 .filter(&head_can_apply),
         );
-        clauses.extend(env::builtin_function_invokables(self.db, key.pred));
         let base_clauses = self.env.clauses_for_pred(self.db, key.pred);
+        if key.givens_only {
+            // An assumption entails its superclasses, but an impl does not:
+            // the impl's superclass dictionary is built by solving the
+            // superclass goal itself, so projecting from the impl would be
+            // circular. Instance checking requires each impl to prove its
+            // superclasses instead.
+            clauses.extend(base_clauses.iter().filter_map(|clause| {
+                (matches!(clause.origin, ClauseOrigin::Superclass(_)) && head_can_apply(clause))
+                    .then_some(clause.clone())
+            }));
+            return clauses;
+        }
+        clauses.extend(env::builtin_function_invokables(self.db, key.pred));
         clauses.extend(base_clauses.iter().filter_map(|clause| {
             (!clause.origin.is_default()
                 && !matches!(clause.origin, ClauseOrigin::Superclass(_))
@@ -223,6 +238,7 @@ impl<'db> TabledEngine<'db> {
             allowed_vars: state.condition_vars.clone(),
             rigid_vars: state.rigid_vars.clone(),
             context: state.context.clone(),
+            givens_only: state.givens_only,
         };
         Transition::Suspend { goal, state }
     }
@@ -319,8 +335,13 @@ impl<'db> ResolutionContext for TabledEngine<'db> {
         &mut self,
         goal: Self::Goal,
     ) -> CanonicalizeResult<Self::Key, Self::Rebase, Self::StopReason, Self::Error> {
-        let (key, rebase) =
-            canonicalize_goal(self.db, goal.pred, &goal.allowed_vars, &goal.rigid_vars);
+        let (key, rebase) = canonicalize_goal(
+            self.db,
+            goal.pred,
+            &goal.allowed_vars,
+            &goal.rigid_vars,
+            goal.givens_only,
+        );
         Ok(TabledCanonical::new(
             ContextKey {
                 logical: key,
@@ -394,6 +415,8 @@ impl<'db> ResolutionContext for TabledEngine<'db> {
                 return Ok(Transition::Reject);
             }
         }
+        let givens_only =
+            logical.givens_only || matches!(instantiated.origin, ClauseOrigin::Superclass(_));
         Ok(self.suspend(ConsumerState {
             clause: instantiated,
             subst,
@@ -403,6 +426,7 @@ impl<'db> ResolutionContext for TabledEngine<'db> {
             condition_vars,
             rigid_vars: logical.rigid_vars().to_vec(),
             context,
+            givens_only,
         }))
     }
 
@@ -419,8 +443,13 @@ impl<'db> ResolutionContext for TabledEngine<'db> {
         let condition = state
             .subst
             .apply_pred(self.db, state.clause.conditions[state.next_condition]);
-        let (child, _) =
-            canonicalize_goal(self.db, condition, &state.condition_vars, &state.rigid_vars);
+        let (child, _) = canonicalize_goal(
+            self.db,
+            condition,
+            &state.condition_vars,
+            &state.rigid_vars,
+            state.givens_only,
+        );
         let answer_key = self.logical_answer_key(&child, &answer);
         if self.discovery.is_some() {
             state.prerequisites.push(ProofNode {
@@ -791,6 +820,7 @@ pub(super) struct SolverGoal<'db> {
     allowed_vars: FxHashSet<u32>,
     rigid_vars: Vec<RigidVar>,
     context: ProofContext<'db>,
+    givens_only: bool,
 }
 
 /// A partially solved clause retained by `tablesolve` while it waits for the
@@ -806,6 +836,8 @@ pub(super) struct ConsumerState<'db> {
     /// Stable rigid origins mapped into the parent subgoal's coordinates.
     rigid_vars: Vec<RigidVar>,
     context: ProofContext<'db>,
+    /// Whether the clause's conditions may be proved only from local givens.
+    givens_only: bool,
 }
 
 pub(super) struct EngineResult<'db> {

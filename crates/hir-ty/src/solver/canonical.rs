@@ -34,6 +34,11 @@ pub(super) struct TableKey<'db> {
     /// shapes whose rigid variables originate from different local givens
     /// must not share a table entry.
     rigid_vars: Vec<RigidVar>,
+    /// Whether only local givens and their superclasses may prove the goal.
+    /// A superclass projection's condition is solved this way: an instance
+    /// entails its superclasses only through its own superclass dictionary,
+    /// which is itself built by solving this goal.
+    pub(super) givens_only: bool,
 }
 
 impl<'db> TableKey<'db> {
@@ -133,6 +138,7 @@ pub(super) fn canonicalize_goal<'db>(
     pred: Pred<'db>,
     allowed_vars: &FxHashSet<u32>,
     rigid_vars: &[RigidVar],
+    givens_only: bool,
 ) -> (TableKey<'db>, GoalRenaming) {
     let pred_vars_in_order = pred_vars_in_order(db, pred);
     let pred_vars = pred_vars_in_order.iter().copied().collect::<FxHashSet<_>>();
@@ -232,6 +238,7 @@ pub(super) fn canonicalize_goal<'db>(
             pred: canonical_pred,
             flex_count,
             rigid_vars: canonical_rigid_vars,
+            givens_only,
         },
         GoalRenaming {
             flex_actuals,

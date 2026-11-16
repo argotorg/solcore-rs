@@ -728,9 +728,15 @@ pub fn module_typeck_diagnostics<'db>(
             .map(|diagnostic| AnyDiagnostic::Typeck(diagnostic.lower())),
     );
     diagnostics.extend(
-        crate::solver::class_derivation_diagnostics(db, hir_module, &item_resolutions)
-            .into_iter()
-            .map(|diagnostic| AnyDiagnostic::Typeck(diagnostic.lower())),
+        crate::solver::class_derivation_diagnostics(
+            db,
+            hir_module,
+            &item_resolutions,
+            trait_env,
+            &env,
+        )
+        .into_iter()
+        .map(|diagnostic| AnyDiagnostic::Typeck(diagnostic.lower())),
     );
     if suppress_body_after_instance_error {
         sort_dedup_query_diagnostics(db, &mut diagnostics);

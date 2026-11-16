@@ -1,0 +1,27 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/solver/impl_method_extra_constraint/main.sol
+---
+error[SC0249]: impl method `c` requires `a: D`, which its trait method does not declare
+  --> /main/main.sol:18:48
+   |
+17 | impl<a> C<Box<a>> {
+18 |     function c(x: Box<a>) returns (word) where a: D {
+   |                                                ^^^^ constraint the trait method does not declare
+19 |         match (x) {
+   |
+   = note: callers prove only the trait method's constraints, and the impl adds only its own conditions and superclasses
+   = help: require it in the impl's `where` clause, or declare it on the trait method
+---
+
+error[SC0249]: impl method `c` requires `a: D`, which its trait method does not declare
+  --> /main/main.sol:35:49
+   |
+34 | impl<a> C<Pair<a>> where a: E {
+35 |     function c(x: Pair<a>) returns (word) where a: D {
+   |                                                 ^^^^ constraint the trait method does not declare
+36 |         return 2;
+   |
+   = note: callers prove only the trait method's constraints, and the impl adds only its own conditions and superclasses
+   = help: remove it: it already follows from the trait method and the impl's conditions

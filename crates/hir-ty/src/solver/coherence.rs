@@ -15,10 +15,16 @@
 //! module is transparent to both rules: an impl for `W<t, ...>` counts as an
 //! impl for `t`. std declares its decoder and storage wrappers this way, so
 //! `impl ABIDecode<ABIDecoder<T, r>, T>` belongs next to `T`.
+//!
+//! A tuple is transparent the same way through its first element. A trait
+//! with several input types takes them as one tuple, like std's
+//! `RValueIdxAccess<(collection, index), value>`, so
+//! `impl RValueIdxAccess<(T, i), v>` belongs next to `T`.
 
 use hir::input::SourceFile;
 
 use super::*;
+use crate::BuiltinTyCtor;
 
 const COHERENCE_WRAPPER_PRAGMA: &str = "coherence-wrapper";
 
@@ -54,20 +60,33 @@ fn is_coherence_wrapper<'db>(db: &'db dyn Db, def: DefId<'db>) -> bool {
     coherence_wrapper_names(db, module).contains(&name)
 }
 
+/// The type that stands for `ty` in both rules when `ty` is transparent: the
+/// first type argument of a coherence wrapper, or the first element of a
+/// tuple.
+fn coherence_inner<'db>(db: &'db dyn Db, ty: Ty<'db>) -> Option<Ty<'db>> {
+    match ty.kind(db) {
+        TyKind::Named {
+            ctor: TyCtor::User(ctor),
+            args,
+        } if is_coherence_wrapper(db, ctor.def) => args.first().copied(),
+        TyKind::Named {
+            ctor: TyCtor::Builtin(BuiltinTyCtor::Pair),
+            args,
+        }
+        | TyKind::Tuple(args) => args.first().copied(),
+        _ => None,
+    }
+}
+
 /// The argument of `ty` that decides impl placement and default selection:
-/// `ty` itself, or for a coherence wrapper the coherence head of its first
-/// type argument.
+/// `ty` itself, or for a coherence wrapper or a tuple the coherence head of
+/// its first type argument.
 pub(crate) fn coherence_head<'db>(db: &'db dyn Db, ty: Ty<'db>) -> Ty<'db> {
     let mut ty = ty;
-    loop {
-        match ty.kind(db) {
-            TyKind::Named {
-                ctor: TyCtor::User(ctor),
-                args,
-            } if !args.is_empty() && is_coherence_wrapper(db, ctor.def) => ty = args[0],
-            _ => return ty,
-        }
+    while let Some(inner) = coherence_inner(db, ty) {
+        ty = inner;
     }
+    ty
 }
 
 /// Whether the coherence head of `pred`'s main argument is a variable in
@@ -105,6 +124,8 @@ pub(super) struct InstanceOwners<'db> {
     /// Coherence wrappers around the main argument, outermost first, and the
     /// head type inside them when it is a user-defined type.
     pub(super) types: Vec<DefId<'db>>,
+    /// Whether the head was found inside a tuple.
+    pub(super) in_tuple: bool,
     /// The coherence head of the main argument.
     pub(super) head: Ty<'db>,
 }
@@ -123,21 +144,30 @@ pub(super) fn instance_owners<'db>(
         ClassId::Builtin(_) => None,
     };
     let mut types = Vec::new();
+    let mut in_tuple = false;
     let mut ty = *main;
-    while let TyKind::Named {
-        ctor: TyCtor::User(ctor),
-        args,
-    } = ty.kind(db)
-    {
-        types.push(ctor.def);
-        if args.is_empty() || !is_coherence_wrapper(db, ctor.def) {
-            break;
+    loop {
+        match ty.kind(db) {
+            TyKind::Named {
+                ctor: TyCtor::User(ctor),
+                ..
+            } => types.push(ctor.def),
+            TyKind::Named {
+                ctor: TyCtor::Builtin(BuiltinTyCtor::Pair),
+                ..
+            }
+            | TyKind::Tuple(_) => in_tuple = true,
+            _ => {}
         }
-        ty = args[0];
+        let Some(inner) = coherence_inner(db, ty) else {
+            break;
+        };
+        ty = inner;
     }
     Some(InstanceOwners {
         class,
         types,
+        in_tuple,
         head: ty,
     })
 }

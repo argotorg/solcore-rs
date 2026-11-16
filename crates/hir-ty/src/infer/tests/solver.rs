@@ -10,16 +10,65 @@ fn sibling_source(fixture: &Fixture<&str>, name: &str) -> String {
         .expect("solver fixture source")
 }
 
-fn fixture_flag(fixture: &Fixture<&str>, name: &str) -> bool {
+fn optional_fixture_directive(fixture: &Fixture<&str>, name: &str) -> Option<String> {
     let prefix = format!("// {name}:");
     fixture
         .content()
         .lines()
         .find_map(|line| line.strip_prefix(&prefix))
+        .map(|value| value.trim().to_owned())
+}
+
+fn fixture_directive(fixture: &Fixture<&str>, name: &str) -> String {
+    optional_fixture_directive(fixture, name)
         .unwrap_or_else(|| panic!("missing {name} in {}", fixture.path()))
-        .trim()
+}
+
+fn fixture_flag(fixture: &Fixture<&str>, name: &str) -> bool {
+    fixture_directive(fixture, name)
         .parse()
         .expect("boolean fixture directive")
+}
+
+/// A main-module fixture whose standard library is `std/std.sol` next to it,
+/// or the file in `std/` named by a `// std:` directive. Default impls there
+/// are standard defaults: the lowest-priority dictionaries, ranked below user
+/// defaults, which rank below regular impls.
+struct StdFixture {
+    db: TestDb,
+    main_key: ModuleKey,
+    std_file: SourceFile,
+    main_file: SourceFile,
+}
+
+impl StdFixture {
+    fn new(fixture: &Fixture<&str>) -> Self {
+        let std_name =
+            optional_fixture_directive(fixture, "std").unwrap_or_else(|| "std.sol".to_owned());
+        let std_path = std::path::Path::new(fixture.path())
+            .with_file_name("std")
+            .join(std_name);
+        let std_src = std::fs::read_to_string(std_path).expect("solver fixture std source");
+        let (db, main_key, [std_file, main_file]) = db_with_std(&std_src, fixture.content());
+        Self {
+            db,
+            main_key,
+            std_file,
+            main_file,
+        }
+    }
+
+    fn env(&self) -> TraitEnvId<'_> {
+        trait_env_for_module(&self.db, module_id_from_key(&self.db, &self.main_key))
+    }
+
+    fn main(&self) -> Module<'_> {
+        parse_file_to_hir(&self.db, self.main_file).module(&self.db)
+    }
+
+    fn std(&self) -> Module<'_> {
+        parse_file_to_hir(&self.db, self.std_file).module(&self.db)
+    }
 }
 
 #[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/solver/trait_solver_rejects_unproductive_instance_cycle", glob: "main.sol")]
@@ -606,22 +655,31 @@ fn imported_class_origin_contributes_superclass_clauses(fixture: Fixture<&str>) 
     let main_module = module_id_from_key(&db, &main_key);
     let lib_hir = parse_file_to_hir(&db, lib_file).module(&db);
 
-    let env = trait_env_for_module(&db, main_module);
-    let solution = solve_class_goal(
+    // Only lib declares Ord's superclass, so main can project Eq from an Ord
+    // assumption only through the imported class's clause.
+    let rigid = Ty::bound(&db, 0);
+    let env = trait_env_with_givens(
         &db,
-        env,
-        class_id(&db, lib_hir, "Eq"),
-        Ty::word(&db),
-        Vec::new(),
+        trait_env_for_module(&db, main_module),
+        vec![Pred::in_class(
+            &db,
+            class_id(&db, lib_hir, "Ord"),
+            rigid,
+            Vec::new(),
+        )],
     );
+    let solution = solve_class_goal(&db, env, class_id(&db, lib_hir, "Eq"), rigid, Vec::new());
 
-    assert!(matches!(
-        solution,
-        Solution::Unique {
-            evidence: Evidence::Superclass { .. },
-            ..
-        }
-    ));
+    assert!(
+        matches!(
+            solution,
+            Solution::Unique {
+                evidence: Evidence::Superclass { .. },
+                ..
+            }
+        ),
+        "{solution:?}"
+    );
     assert_eq!(lib_module.display(&db), "lib");
 }
 
@@ -664,35 +722,50 @@ fn trait_env_from_module_resolution_and_imports_deduplicates_superclass_modules(
     assert_eq!(superclass_origins, vec![child_def]);
 }
 
-#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/solver/superclass_solution_records_projection_evidence", glob: "main.sol")]
-fn superclass_solution_records_projection_evidence(fixture: Fixture<&str>) {
+#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/solver/superclass_projection_requires_a_local_given", glob: "main.sol")]
+fn superclass_projection_requires_a_local_given(fixture: Fixture<&str>) {
     let db = TestDb::default();
     let module = parse_module(&db, fixture.content());
     let module_resolution = hir_nameres::resolve_module(&db, module);
-    let env = trait_env(&db, module, &module_resolution);
+    let base = trait_env(&db, module, &module_resolution);
+    let eq = class_id(&db, module, "Eq");
 
-    let solution = solve_class_goal(
+    // `impl Ord<word>` does not prove `word: Eq`: the impl's Eq dictionary
+    // would itself be built by solving this goal.
+    let solution = solve_class_goal(&db, base, eq, Ty::word(&db), Vec::new());
+    assert!(matches!(solution, Solution::NoSolution), "{solution:?}");
+
+    // An Ord assumption carries its Eq dictionary, so the projection holds.
+    let rigid = Ty::bound(&db, 0);
+    let env = trait_env_with_givens(
         &db,
-        env,
-        class_id(&db, module, "Eq"),
-        Ty::word(&db),
-        Vec::new(),
+        base,
+        vec![Pred::in_class(
+            &db,
+            class_id(&db, module, "Ord"),
+            rigid,
+            Vec::new(),
+        )],
     );
-
-    assert!(matches!(
-        solution,
-        Solution::Unique {
-            evidence: Evidence::Superclass {
-                child,
+    let solution = solve_class_goal(&db, env, eq, rigid, Vec::new());
+    assert!(
+        matches!(
+            &solution,
+            Solution::Unique {
+                evidence: Evidence::Superclass {
+                    child,
+                    ..
+                },
                 ..
-            },
-            ..
-        } if matches!(*child, Evidence::Instance { .. })
-    ));
+            } if matches!(**child, Evidence::Builtin { .. })
+        ),
+        "{solution:?}"
+    );
 }
 
-#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/solver/direct_instance_precedes_superclass_projection", glob: "main.sol")]
-fn direct_instance_precedes_superclass_projection(fixture: Fixture<&str>) {
+#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/solver/superclass_goal_is_proved_only_by_its_own_impl", glob: "*.sol")]
+fn superclass_goal_is_proved_only_by_its_own_impl(fixture: Fixture<&str>) {
+    let direct_impl = fixture_flag(&fixture, "direct-impl");
     let db = TestDb::default();
     let module = parse_module(&db, fixture.content());
     let module_resolution = hir_nameres::resolve_module(&db, module);
@@ -706,13 +779,22 @@ fn direct_instance_precedes_superclass_projection(fixture: Fixture<&str>) {
         Vec::new(),
     );
 
-    assert!(matches!(
-        solution,
-        Solution::Unique {
-            evidence: Evidence::Instance { .. },
-            ..
-        }
-    ));
+    if direct_impl {
+        assert!(
+            matches!(
+                solution,
+                Solution::Unique {
+                    evidence: Evidence::Instance { .. },
+                    ..
+                }
+            ),
+            "{solution:?}"
+        );
+    } else {
+        // An impl does not entail its superclasses: `impl Ord<word>` alone
+        // leaves `word: Eq` without a dictionary.
+        assert!(matches!(solution, Solution::NoSolution), "{solution:?}");
+    }
 }
 
 #[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/solver/local_givens_and_superclasses_precede_global_instances", glob: "main.sol")]
@@ -838,17 +920,15 @@ fn nested_instance_ambiguity_preserves_distinct_prerequisite_dictionaries(fixtur
     assert_ne!(candidates[0].evidence, candidates[1].evidence);
 }
 
-#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/solver/nested_instance_prefers_direct_prerequisites_over_superclasses", glob: "main.sol")]
-fn nested_instance_prefers_direct_prerequisites_over_superclasses(fixture: Fixture<&str>) {
-    let db = TestDb::default();
-    let module = parse_module(&db, fixture.content());
-    let resolution = hir_nameres::resolve_module(&db, module);
-    let env = trait_env(&db, module, &resolution);
+#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/solver/nested_instance_prefers_better_ranked_prerequisites", glob: "main.sol")]
+fn nested_instance_prefers_better_ranked_prerequisites(fixture: Fixture<&str>) {
+    let fixture = StdFixture::new(&fixture);
+    let db = &fixture.db;
     let solution = solve_class_goal(
-        &db,
-        env,
-        class_id(&db, module, "D"),
-        Ty::word(&db),
+        db,
+        fixture.env(),
+        class_id(db, fixture.main(), "D"),
+        Ty::word(db),
         Vec::new(),
     );
     let Solution::Unique {
@@ -858,10 +938,16 @@ fn nested_instance_prefers_direct_prerequisites_over_superclasses(fixture: Fixtu
     else {
         panic!("{solution:?}");
     };
-    assert!(matches!(
-        sub_evidence.as_slice(),
-        [Evidence::Instance { .. }]
-    ));
+    // D's prerequisite C<word> has a user default and a std default. The
+    // preference between them applies inside D's dictionary too.
+    assert!(
+        matches!(
+            sub_evidence.as_slice(),
+            [Evidence::Instance { instance, .. }]
+                if !crate::support::is_std_definition(db, *instance)
+        ),
+        "{sub_evidence:?}"
+    );
 }
 
 #[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/solver/productive_instance_cycles_have_finite_distinct_dictionaries", glob: "main.sol")]
@@ -883,15 +969,17 @@ fn productive_instance_cycles_have_finite_distinct_dictionaries(fixture: Fixture
 
 #[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/solver/tabled_solver_prunes_dominated_dictionaries_before_expanding_parents", glob: "*.sol")]
 fn tabled_solver_prunes_dominated_dictionaries_before_expanding_parents(fixture: Fixture<&str>) {
+    let ambiguous_leaf = fixture_flag(&fixture, "ambiguous-leaf");
     for depth in [12, 24] {
-        let ambiguous_leaf = fixture_flag(&fixture, "ambiguous-leaf");
-        let db = TestDb::default();
-        let source = fixture.content();
-        let module = parse_module(&db, source);
-        let resolution = hir_nameres::resolve_module(&db, module);
-        let env = trait_env(&db, module, &resolution);
-        let ty = (0..depth).fold(Ty::word(&db), |ty, _| adt_ty(&db, module, "Box", vec![ty]));
-        let report = solve_class_report(&db, env, class_id(&db, module, "D"), ty, Vec::new());
+        // Every C goal has a user default, found at once (early) or after a
+        // chain of conditions (late), and the std default that it
+        // dominates. An ambiguous leaf adds a second user default at `word`.
+        let fixture = StdFixture::new(&fixture);
+        let db = &fixture.db;
+        let module = fixture.main();
+        let ty = (0..depth).fold(Ty::word(db), |ty, _| adt_ty(db, module, "Box", vec![ty]));
+        let report =
+            solve_class_report(db, fixture.env(), class_id(db, module, "D"), ty, Vec::new());
         assert!(!report.exhausted, "{report:?}");
         if ambiguous_leaf {
             let Solution::Ambiguous { candidates } = &report.solution else {
@@ -914,24 +1002,23 @@ fn tabled_solver_prunes_dominated_dictionaries_before_expanding_parents(fixture:
 
 #[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/solver/tabled_solver_preserves_lower_priority_seeds_in_preference_cycles", glob: "*.sol")]
 fn tabled_solver_preserves_lower_priority_seeds_in_preference_cycles(fixture: Fixture<&str>) {
-    let db = TestDb::default();
-    let source = fixture.content();
-    let module = parse_module(&db, source);
-    let resolution = hir_nameres::resolve_module(&db, module);
-    let env = trait_env(&db, module, &resolution);
+    let fixture = StdFixture::new(&fixture);
+    let db = &fixture.db;
     let report = solve_class_report(
-        &db,
-        env,
-        class_id(&db, module, "Top"),
-        Ty::word(&db),
+        db,
+        fixture.env(),
+        class_id(db, fixture.main(), "Top"),
+        Ty::word(db),
         Vec::new(),
     );
     assert!(!report.exhausted, "{report:?}");
     let Solution::Unique { mut evidence, .. } = report.solution else {
         panic!("{report:?}");
     };
-    // Top -> direct C -> direct D -> superclass C -> Sub. Dropping the
-    // superclass C seed because direct C exists would remove every proof.
+    // Top -> user default C -> D -> std default C. The user default ranks
+    // above the std default, but dropping the std default seed because the
+    // user default exists would remove every proof: the user default is
+    // only finite through it.
     for _ in 0..3 {
         let Evidence::Instance {
             mut sub_evidence, ..
@@ -943,7 +1030,11 @@ fn tabled_solver_preserves_lower_priority_seeds_in_preference_cycles(fixture: Fi
         evidence = sub_evidence.pop().unwrap();
     }
     assert!(
-        matches!(evidence, Evidence::Superclass { .. }),
+        matches!(
+            &evidence,
+            Evidence::Instance { instance, sub_evidence, .. }
+                if sub_evidence.is_empty() && crate::support::is_std_definition(db, *instance)
+        ),
         "{evidence:?}"
     );
 }
@@ -1031,15 +1122,19 @@ fn superclass_cycles_preserve_one_local_dictionary_identity(fixture: Fixture<&st
 
 #[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/solver/tabled_solver_prunes_cyclic_alternatives_in_their_consuming_context", glob: "*.sol")]
 fn tabled_solver_prunes_cyclic_alternatives_in_their_consuming_context(fixture: Fixture<&str>) {
+    let ambiguous_leaf = fixture_flag(&fixture, "ambiguous-leaf");
     for depth in [12, 24] {
-        let ambiguous_leaf = fixture_flag(&fixture, "ambiguous-leaf");
-        let db = TestDb::default();
-        let source = fixture.content();
-        let module = parse_module(&db, source);
-        let resolution = hir_nameres::resolve_module(&db, module);
-        let env = trait_env(&db, module, &resolution);
-        let ty = (0..depth).fold(Ty::word(&db), |ty, _| adt_ty(&db, module, "Box", vec![ty]));
-        let report = solve_class_report(&db, env, class_id(&db, module, "D"), ty, Vec::new());
+        // Each C goal has a user default and a lower-priority std default.
+        // In the instance and shared shapes the user default is cyclic and
+        // the std default is the seed that breaks the cycle; in the mutual
+        // shape the std defaults of C and Sub are cyclic through each other.
+        // An ambiguous leaf adds a second, finite user default at `word`.
+        let fixture = StdFixture::new(&fixture);
+        let db = &fixture.db;
+        let module = fixture.main();
+        let ty = (0..depth).fold(Ty::word(db), |ty, _| adt_ty(db, module, "Box", vec![ty]));
+        let report =
+            solve_class_report(db, fixture.env(), class_id(db, module, "D"), ty, Vec::new());
         assert!(!report.exhausted, "{depth} {ambiguous_leaf}: {report:?}");
         if ambiguous_leaf {
             let Solution::Ambiguous { candidates } = &report.solution else {
@@ -1065,7 +1160,21 @@ fn cyclic_preference_keeps_substitutions_needed_by_later_conditions(fixture: Fix
     let source = fixture.content();
     let module = parse_module(&db, source);
     let resolution = hir_nameres::resolve_module(&db, module);
-    let env = trait_env(&db, module, &resolution);
+    let base = trait_env(&db, module, &resolution);
+    // The wrong C<word, word> dictionary comes from a local assumption,
+    // either directly or projected through the cyclic Sub superclass, and so
+    // ranks above the impl that provides the needed C<word, bool>.
+    let wrong_given = fixture_directive(&fixture, "wrong-given");
+    let env = trait_env_with_givens(
+        &db,
+        base,
+        vec![Pred::in_class(
+            &db,
+            class_id(&db, module, &wrong_given),
+            Ty::word(&db),
+            vec![Ty::word(&db)],
+        )],
+    );
     let report = solve_class_report(
         &db,
         env,
@@ -1081,7 +1190,7 @@ fn cyclic_preference_keeps_substitutions_needed_by_later_conditions(fixture: Fix
     else {
         panic!("{report:?}")
     };
-    // The direct C<word,word> dictionary has a better priority but
+    // The assumed C<word,word> dictionary has a better priority but
     // cannot satisfy Wanted. It must not erase the bool substitution.
     assert_eq!(args, vec![Ty::word(&db), Ty::bool(&db)]);
 }
@@ -1091,7 +1200,19 @@ fn dictionary_discovery_analysis_and_expansion_share_one_fuel_budget(fixture: Fi
     let db = TestDb::default();
     let module = parse_module(&db, fixture.content());
     let resolution = hir_nameres::resolve_module(&db, module);
-    let env = trait_env(&db, module, &resolution);
+    // C<word> has two dictionaries, the impl and the projection of the
+    // assumed Sub<word>. Both satisfy Outer, so discovery shares one logical
+    // answer between two dictionaries and the analysis phase must run.
+    let env = trait_env_with_givens(
+        &db,
+        trait_env(&db, module, &resolution),
+        vec![Pred::in_class(
+            &db,
+            class_id(&db, module, "Sub"),
+            Ty::word(&db),
+            Vec::new(),
+        )],
+    );
     let goal = canonical_goal(
         &db,
         Pred::in_class(
@@ -1127,22 +1248,22 @@ fn dictionary_discovery_analysis_and_expansion_share_one_fuel_budget(fixture: Fi
 #[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/solver/finite_witness_footprints_propagate_through_shared_logical_answers", glob: "*.sol")]
 fn finite_witness_footprints_propagate_through_shared_logical_answers(fixture: Fixture<&str>) {
     for depth in [12, 24] {
-        let db = TestDb::default();
-        let source = fixture.content();
-        let module = parse_module(&db, source);
-        let resolution = hir_nameres::resolve_module(&db, module);
-        let env = trait_env(&db, module, &resolution);
-        let ty = (0..depth).fold(Ty::word(&db), |ty, _| adt_ty(&db, module, "Box", vec![ty]));
-        let report = solve_class_report(&db, env, class_id(&db, module, "D"), ty, Vec::new());
+        let fixture = StdFixture::new(&fixture);
+        let db = &fixture.db;
+        let module = fixture.main();
+        let ty = (0..depth).fold(Ty::word(db), |ty, _| adt_ty(db, module, "Box", vec![ty]));
+        let report =
+            solve_class_report(db, fixture.env(), class_id(db, module, "D"), ty, Vec::new());
         assert!(!report.exhausted, "{depth}: {report:?}");
         assert!(
             matches!(report.solution, Solution::Unique { .. }),
             "{report:?}"
         );
-        // Bridge has one logical answer but two witness footprints. Its
-        // fast recursive Leaf proof conflicts with an ancestor D; its
-        // slower independent proof must still reach Target and allow the
-        // superclass alternative to be pruned in D's consuming context.
+        // Bridge has one logical answer but two witness footprints, one per
+        // Leaf default. Its fast recursive Leaf proof conflicts with an
+        // ancestor D; its slower independent proof must still reach Target
+        // and allow the std default Target to be pruned in D's consuming
+        // context.
         assert!(report.stats.answers_found < 80 * depth + 100, "{report:?}");
     }
 }
@@ -1156,25 +1277,23 @@ fn contextual_proofs_preserve_rigid_roots_across_flexible_child_goals(fixture: F
         let resolution = hir_nameres::resolve_module(&db, module);
         let base = trait_env(&db, module, &resolution);
         let rigid = Ty::bound(&db, rigid_index);
+        let given = |name, args| Pred::in_class(&db, class_id(&db, module, name), rigid, args);
         let env = trait_env_with_givens(
             &db,
             base,
-            vec![Pred::in_class(
-                &db,
-                class_id(&db, module, "Fix"),
-                rigid,
-                vec![Ty::word(&db)],
-            )],
+            vec![given("Seed", Vec::new()), given("Fix", vec![Ty::word(&db)])],
         );
         let report = solve_class_report(&db, env, class_id(&db, module, "C"), rigid, Vec::new());
         assert!(!report.exhausted, "{report:?}");
         let Solution::Ambiguous { candidates } = report.solution else {
-            panic!("expected independent Seed and Sub dictionaries: {report:?}")
+            panic!("expected independent Seed and Fix dictionaries: {report:?}")
         };
         assert_eq!(candidates.len(), 2);
-        // The Sub projection root is fixed, but its child introduces a
-        // flexible r and shifts the rigid variable's canonical index.
-        // That cycle must terminate without merging the independent Seed.
+        // The Sub projection root is fixed, but its child Sub<rigid, r>
+        // introduces a flexible r, solved by projecting the Fix assumption,
+        // and shifts the rigid variable's canonical index. The child also
+        // projects back to C through C's Sub<word> superclass. That cycle
+        // must terminate without merging the independent Seed dictionary.
         for candidate in candidates {
             let Evidence::Superclass { pred, .. } = candidate.evidence else {
                 panic!("expected superclass dictionary")
@@ -1188,17 +1307,18 @@ fn contextual_proofs_preserve_rigid_roots_across_flexible_child_goals(fixture: F
     }
 }
 
-#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/solver/decreasing_instance_chains_prune_redundant_superclass_dictionaries", glob: "*.sol")]
-fn decreasing_instance_chains_prune_redundant_superclass_dictionaries(fixture: Fixture<&str>) {
+#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/solver/decreasing_chains_prune_redundant_lower_ranked_dictionaries", glob: "*.sol")]
+fn decreasing_chains_prune_redundant_lower_ranked_dictionaries(fixture: Fixture<&str>) {
+    let ambiguous_leaf = fixture_flag(&fixture, "ambiguous-leaf");
     for depth in [12, 24] {
-        let ambiguous_leaf = fixture_flag(&fixture, "ambiguous-leaf");
-        let db = TestDb::default();
-        let source = fixture.content();
-        let module = parse_module(&db, source);
-        let resolution = hir_nameres::resolve_module(&db, module);
-        let env = trait_env(&db, module, &resolution);
-        let ty = (0..depth).fold(Ty::word(&db), |ty, _| adt_ty(&db, module, "Box", vec![ty]));
-        let report = solve_class_report(&db, env, class_id(&db, module, "C"), ty, Vec::new());
+        // Each C<Box<a>> step has a user default and a std default, both
+        // decreasing to C<a>. The std default copies are redundant at every
+        // step and must not multiply along the chain.
+        let fixture = StdFixture::new(&fixture);
+        let db = &fixture.db;
+        let std = fixture.std();
+        let ty = (0..depth).fold(Ty::word(db), |ty, _| adt_ty(db, std, "Box", vec![ty]));
+        let report = solve_class_report(db, fixture.env(), class_id(db, std, "C"), ty, Vec::new());
         assert!(!report.exhausted, "{depth} {ambiguous_leaf}: {report:?}");
         if ambiguous_leaf {
             assert!(

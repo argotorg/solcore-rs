@@ -135,21 +135,28 @@ fn db_with_main_typeck(src: &str) -> (TestDb, ModuleKey) {
 }
 
 fn db_with_array_std(main_src: &str) -> (TestDb, ModuleKey) {
+    let (db, main_key, _) = db_with_std(
+        include_str!("../../tests/fixtures/inference/support/array_std.sol"),
+        main_src,
+    );
+    (db, main_key)
+}
+
+/// Registers `std_src` as the standard library root module `std` and
+/// `main_src` as module `main`, returning `main`'s key and the `std` and
+/// `main` source files.
+fn db_with_std(std_src: &str, main_src: &str) -> (TestDb, ModuleKey, [SourceFile; 2]) {
     let mut db = TestDb::default();
     let std_path = PathBuf::from("/std/std.sol");
     let main_path = PathBuf::from("/main/main.sol");
-    let std_file = source_file_at_path(
-        &db,
-        &std_path,
-        include_str!("../../tests/fixtures/inference/support/array_std.sol"),
-    );
+    let std_file = source_file_at_path(&db, &std_path, std_src);
     let main_file = source_file_at_path(&db, &main_path, main_src);
     let std_key = module_key_for_path(LibraryId::Std, &PathBuf::from("/std"), &std_path).unwrap();
     let main_key =
         module_key_for_path(LibraryId::Main, &PathBuf::from("/main"), &main_path).unwrap();
     db.insert_module_file(std_key, std_file);
     db.insert_module_file(main_key.clone(), main_file);
-    (db, main_key)
+    (db, main_key, [std_file, main_file])
 }
 
 fn canonical_std_adt_ty<'db>(db: &'db TestDb, name: &str, args: Vec<Ty<'db>>) -> Ty<'db> {
