@@ -921,7 +921,82 @@ contract C {
     assert_eq!(rejected.status.code(), Some(2));
     assert!(
         String::from_utf8_lossy(&rejected.stderr)
-            .contains("--opt-level requires --bin or --coverage")
+            .contains("--opt-level requires --bin, --coverage or --ethdebug")
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn cli_ethdebug_writes_stock_debug_files_next_to_the_bytecode() {
+    let dir = temp_dir("ethdebug");
+    fs::create_dir_all(&dir).expect("create temp dir");
+    let input = dir.join("main.sol");
+    let output_dir = dir.join("out");
+    fs::write(
+        &input,
+        r#"
+pragma solcore;
+import * from std;
+import * from std.dispatch;
+
+contract C {
+    function twice(x: uint256) public returns (uint256) {
+        return x + x;
+    }
+}
+"#,
+    )
+    .expect("write source");
+    let std_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std");
+    let driver = |extra: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_solcore-driver"))
+            .arg("--ethdebug")
+            .args(extra)
+            .arg("--std-root")
+            .arg(&std_root)
+            .arg(&input)
+            .output()
+            .expect("run driver")
+    };
+
+    let rejected = driver(&[]);
+    assert_eq!(rejected.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&rejected.stderr).contains("--ethdebug requires --output-dir"));
+
+    let output = driver(&["-o", output_dir.to_str().unwrap()]);
+    assert!(
+        output.status.success(),
+        "driver failed\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let read = |name: &str| -> serde_json::Value {
+        let text = fs::read_to_string(output_dir.join(name)).unwrap_or_else(|_| panic!("{name}"));
+        serde_json::from_str(&text).expect("valid JSON")
+    };
+    for file in ["C.bin", "C.bin-runtime"] {
+        assert!(output_dir.join(file).is_file(), "{file}");
+    }
+    let resources = read("ethdebug_resources.json");
+    assert_eq!(resources["compilation"], read("ethdebug_compilation.json"));
+    let sources = resources["compilation"]["sources"].as_array().unwrap();
+    let main = sources.iter().find(|source| source["path"] == "main.sol");
+    let main = main.expect("main.sol is a source")["id"].clone();
+
+    for (file, environment) in [
+        ("C_ethdebug.json", "create"),
+        ("C_ethdebug-runtime.json", "call"),
+    ] {
+        let program = read(file);
+        assert_eq!(program["environment"], environment);
+        assert_eq!(program["compilation"]["id"], resources["compilation"]["id"]);
+    }
+    let runtime = read("C_ethdebug-runtime.json");
+    let instructions = runtime["instructions"].as_array().unwrap();
+    assert!(
+        instructions
+            .iter()
+            .any(|instruction| instruction["context"]["code"]["source"]["id"] == main)
     );
 
     let _ = fs::remove_dir_all(&dir);

@@ -49,10 +49,12 @@ pub(crate) struct Args {
     pub(crate) emit_sonatina: Option<EmitTarget>,
     /// Writes `<contract>.bin` and `<contract>.bin-runtime` for each contract.
     pub(crate) emit_bin: bool,
-    /// Optimization level of the bytecode compiled for `--bin` and `--coverage`.
+    /// Optimization level of the bytecode compiled for `--bin`, `--coverage` and `--ethdebug`.
     pub(crate) opt_level: sonatina::OptLevel,
     /// Optional bytecode-to-origin coverage report target.
     pub(crate) coverage: Option<EmitTarget>,
+    /// Writes ethdebug debug info for each contract into the output directory.
+    pub(crate) ethdebug: bool,
     /// Optional top-level Yul object selection for strict-assembly output.
     pub(crate) emit_yul_object: Option<String>,
     /// Resource limits used by monomorphization and partial evaluation.
@@ -125,6 +127,7 @@ pub(crate) fn parse_args(args: Vec<OsString>) -> Result<ParsedArgs, String> {
     let mut emit_bin = false;
     let mut opt_level = None;
     let mut coverage = None;
+    let mut ethdebug = false;
     let mut emit_yul_object = None;
     let mut specialize_options = specialize::SpecializeOptions::default();
     let mut iter = args.into_iter();
@@ -277,6 +280,9 @@ pub(crate) fn parse_args(args: Vec<OsString>) -> Result<ParsedArgs, String> {
             }
             Some("--coverage") => {
                 coverage = Some(EmitTarget::Stdout);
+            }
+            Some("--ethdebug") => {
+                ethdebug = true;
             }
             Some("--emit-yul-object") => {
                 let value = next_string_option_value(&mut iter, "--emit-yul-object", "NAME")?;
@@ -445,8 +451,13 @@ pub(crate) fn parse_args(args: Vec<OsString>) -> Result<ParsedArgs, String> {
     if emit_yul_object.is_some() && emit_yul.is_none() {
         return Err("--emit-yul-object requires --emit-yul".to_owned());
     }
+    if ethdebug && output_dir.is_none() {
+        return Err("--ethdebug requires --output-dir".to_owned());
+    }
+    // A debugger needs the bytecode the debug info describes.
+    let emit_bin = emit_bin || ethdebug;
     if opt_level.is_some() && !emit_bin && coverage.is_none() {
-        return Err("--opt-level requires --bin or --coverage".to_owned());
+        return Err("--opt-level requires --bin, --coverage or --ethdebug".to_owned());
     }
     Ok(ParsedArgs::Run(Box::new(Args {
         input,
@@ -468,6 +479,7 @@ pub(crate) fn parse_args(args: Vec<OsString>) -> Result<ParsedArgs, String> {
         emit_bin,
         opt_level: opt_level.unwrap_or_default(),
         coverage,
+        ethdebug,
         emit_yul_object,
         specialize_options,
     })))
@@ -700,10 +712,14 @@ Options:
   --emit-sonatina[=FILE]             Emit Sonatina IR to stdout or FILE
   --bin                              Compile through Sonatina and write <contract>.bin and
                                       <contract>.bin-runtime (hex) for each contract
-  --opt-level 0|1|2|s                Optimization level for --bin and --coverage (default: 0)
+  --opt-level 0|1|2|s                Optimization level for --bin, --coverage and --ethdebug (default: 0)
   --coverage[=FILE]                  Report, per contract and section, how many code bytes come from
                                       source, from compiler-generated code, or from no origin, as JSON
                                       on stdout or in FILE
+  --ethdebug                         Write ethdebug debug info and the .bin files for each contract
+                                      into --output-dir: <contract>_ethdebug.json (creation),
+                                      <contract>_ethdebug-runtime.json, ethdebug_resources.json and
+                                      ethdebug_compilation.json
   --emit-yul-object NAME             Select one top-level Yul object for --emit-yul
   --pe-fuel N                        Set partial-evaluation total work fuel (default: 8192)
   --pe-depth N                       Set specialization/evaluator depth (default: 128)

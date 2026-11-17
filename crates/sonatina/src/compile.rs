@@ -46,9 +46,9 @@ pub struct CompiledObject {
 pub struct CompiledSection {
     /// The whole section. The init section ends with the runtime code it embeds.
     pub bytes: Vec<u8>,
-    /// Length of the executable code at the start of `bytes`. Only known with
-    /// `debug_info`; 0 without it.
-    pub code_len: u32,
+    /// Length of the executable code at the start of `bytes`. Sonatina reports
+    /// it only with observability, so it is `None` without `debug_info`.
+    pub code_len: Option<u32>,
     /// Covers `0..code_len` exactly, in order, without gaps or overlaps. Empty
     /// without `debug_info`.
     pub map: Vec<PcRange>,
@@ -152,7 +152,7 @@ fn compiled_section(
     if !debug_info {
         return Ok(CompiledSection {
             bytes: section.bytes,
-            code_len: 0,
+            code_len: None,
             map: Vec::new(),
         });
     }
@@ -186,7 +186,7 @@ fn compiled_section(
     })?;
     Ok(CompiledSection {
         bytes: section.bytes,
-        code_len: observability.code_bytes,
+        code_len: Some(observability.code_bytes),
         map,
     })
 }

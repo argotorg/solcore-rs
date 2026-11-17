@@ -83,8 +83,8 @@ fn origin_map_tiles_the_code_of_every_section() {
                             assert!(range.end > range.start, "{name} {opt_level:?}");
                             cursor = range.end;
                         }
-                        assert_eq!(cursor, section.code_len, "{name} {opt_level:?}");
-                        assert!(section.code_len as usize <= section.bytes.len());
+                        assert_eq!(Some(cursor), section.code_len, "{name} {opt_level:?}");
+                        assert!(section.code_len.unwrap() as usize <= section.bytes.len());
                     }
                 }
             }
@@ -110,7 +110,9 @@ fn origin_debug_info_does_not_change_the_bytes() {
                         "{name} {opt_level:?}"
                     );
                     assert!(plain.init.map.is_empty());
+                    assert_eq!(plain.init.code_len, None);
                     assert!(!mapped.init.map.is_empty());
+                    assert!(mapped.init.code_len.is_some());
                 }
             }
         }

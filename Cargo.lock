@@ -3526,6 +3526,7 @@ dependencies = [
  "salsa",
  "serde_json",
  "solcore-compiler",
+ "solcore-ethdebug",
  "solcore-hir",
  "solcore-hir-ty",
  "solcore-hull",
@@ -3539,6 +3540,13 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "url",
+]
+
+[[package]]
+name = "solcore-ethdebug"
+version = "0.1.0-alpha"
+dependencies = [
+ "serde_json",
 ]
 
 [[package]]

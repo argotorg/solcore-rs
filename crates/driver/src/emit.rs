@@ -9,12 +9,13 @@ use hir::{diag::Diagnostic, input::SourceFile};
 use hull::origin::{ResolvedOrigin, SourceTable};
 use nameres::ModuleId;
 use serde_json::{Value, json};
-use sonatina::{CompileOptions, CompiledObject, CompiledSection, OptLevel};
+use sonatina::{CompileOptions, CompiledObject, CompiledSection, OptLevel, PcRange};
 use url::Url;
 
 use crate::{
     args::{Args, EmitTarget},
     db::DriverDb,
+    debug_info::ethdebug_files,
 };
 
 #[derive(Debug)]
@@ -133,7 +134,7 @@ pub(crate) fn maybe_emit_backend_outputs(
             &program,
             CompileOptions {
                 opt_level: args.opt_level,
-                debug_info: args.coverage.is_some(),
+                debug_info: args.coverage.is_some() || args.ethdebug,
             },
         )
         .map_err(|err| BackendFailure::Message(format!("Sonatina compilation failed:\n  {err}")))?;
@@ -145,11 +146,21 @@ pub(crate) fn maybe_emit_backend_outputs(
             )),
             None => None,
         };
+        let ethdebug = if args.ethdebug {
+            ethdebug_files(db, &program, &objects, args.opt_level)
+                .map_err(BackendFailure::Message)?
+        } else {
+            Vec::new()
+        };
         if args.emit_bin {
             for object in &objects {
                 write_bin_output(object, args.output_dir.as_deref())
                     .map_err(BackendFailure::Message)?;
             }
+        }
+        for (name, text) in ethdebug {
+            write_output_file(Path::new(&name), args.output_dir.as_deref(), &text)
+                .map_err(BackendFailure::Message)?;
         }
         if let Some((target, json)) = coverage {
             write_emit_output(target, args.output_dir.as_deref(), &json)?;
@@ -167,14 +178,51 @@ fn write_bin_output(object: &CompiledObject, output_dir: Option<&Path>) -> Resul
     ];
     for (extension, section) in sections {
         let Some(section) = section else { continue };
-        let hex = section.bytes.iter().fold(String::new(), |mut hex, byte| {
-            let _ = write!(hex, "{byte:02x}");
-            hex
-        });
         let filename = format!("{}.{extension}", object.contract);
-        write_output_file(&PathBuf::from(filename), output_dir, &hex)?;
+        write_output_file(&PathBuf::from(filename), output_dir, &hex(&section.bytes))?;
     }
     Ok(())
+}
+
+/// Lower-case hex without prefix.
+pub(crate) fn hex(bytes: &[u8]) -> String {
+    bytes.iter().fold(String::new(), |mut hex, byte| {
+        let _ = write!(hex, "{byte:02x}");
+        hex
+    })
+}
+
+/// The flag's spelling of an optimization level.
+pub(crate) fn opt_level_name(opt_level: OptLevel) -> &'static str {
+    match opt_level {
+        OptLevel::O0 => "0",
+        OptLevel::O1 => "1",
+        OptLevel::O2 => "2",
+        OptLevel::Os => "s",
+    }
+}
+
+/// Parses the origin stamp of a mapped byte range and finds the id of its file
+/// in the program's source table. A stamp that is not an origin, or that names
+/// a file the table lacks, is an error.
+pub(crate) fn resolve_origin(
+    table: &SourceTable,
+    range: &PcRange,
+    stamp: &str,
+) -> Result<(u32, ResolvedOrigin), String> {
+    let origin = ResolvedOrigin::parse(stamp).map_err(|err| {
+        format!(
+            "bytes {}..{} have an unreadable origin: {err}",
+            range.start, range.end
+        )
+    })?;
+    let Some(source) = table.id(&origin.url) else {
+        return Err(format!(
+            "bytes {}..{} are attributed to `{}`, which is not a source of the program",
+            range.start, range.end, origin.url
+        ));
+    };
+    Ok((source, origin))
 }
 
 /// One JSON object per contract and section: how many code bytes come from
@@ -217,6 +265,9 @@ fn section_coverage(
     section: &CompiledSection,
     opt_level: OptLevel,
 ) -> Result<Value, String> {
+    let code_len = section
+        .code_len
+        .ok_or("the section was compiled without debug info")?;
     let (mut source, mut generated, mut unmapped) = (0u32, 0u32, 0u32);
     let mut reasons = BTreeMap::<&str, u32>::new();
     let mut files = BTreeMap::<String, u32>::new();
@@ -230,18 +281,7 @@ fn section_coverage(
                 continue;
             }
         };
-        let origin = ResolvedOrigin::parse(text).map_err(|err| {
-            format!(
-                "bytes {}..{} have an unreadable origin: {err}",
-                range.start, range.end
-            )
-        })?;
-        if table.id(&origin.url).is_none() {
-            return Err(format!(
-                "bytes {}..{} are attributed to `{}`, which is not a source of the program",
-                range.start, range.end, origin.url
-            ));
-        }
+        let (_, origin) = resolve_origin(table, range, text)?;
         if origin.generated.is_some() {
             generated += len;
         } else {
@@ -249,24 +289,17 @@ fn section_coverage(
             *files.entry(display_path(db, &origin.url)).or_default() += len;
         }
     }
-    if source + generated + unmapped != section.code_len {
+    if source + generated + unmapped != code_len {
         return Err(format!(
-            "source, generated and unmapped bytes add up to {}, but the code has {} bytes",
+            "source, generated and unmapped bytes add up to {}, but the code has {code_len} bytes",
             source + generated + unmapped,
-            section.code_len
         ));
     }
-    let opt = match opt_level {
-        OptLevel::O0 => "0",
-        OptLevel::O1 => "1",
-        OptLevel::O2 => "2",
-        OptLevel::Os => "s",
-    };
     Ok(json!({
         "contract": contract,
         "section": section_name,
-        "opt": opt,
-        "code_bytes": section.code_len,
+        "opt": opt_level_name(opt_level),
+        "code_bytes": code_len,
         "source_bytes": source,
         "generated_bytes": generated,
         "unmapped_bytes": unmapped,
@@ -278,7 +311,7 @@ fn section_coverage(
 /// The path under which a source file appears in debug output: relative to the
 /// main library root for the program's own files, `std/<relative>` for the
 /// standard library, and the file path itself for anything else.
-fn display_path(db: &DriverDb, url: &str) -> String {
+pub(crate) fn display_path(db: &DriverDb, url: &str) -> String {
     let Some(path) = Url::parse(url).ok().and_then(|url| url.to_file_path().ok()) else {
         return url.to_owned();
     };
@@ -315,7 +348,11 @@ fn write_emit_output(
     }
 }
 
-fn write_output_file(path: &Path, output_dir: Option<&Path>, content: &str) -> Result<(), String> {
+pub(crate) fn write_output_file(
+    path: &Path,
+    output_dir: Option<&Path>,
+    content: &str,
+) -> Result<(), String> {
     let path = emit_file_path(path, output_dir);
     if let Some(parent) = path
         .parent()
