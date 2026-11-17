@@ -97,11 +97,12 @@ pub(crate) fn maybe_emit_backend_outputs(
         .map_err(BackendFailure::Diagnostics)?;
 
     if let Some(target) = &args.emit_hull {
-        write_emit_output(
-            target,
-            args.output_dir.as_deref(),
-            &hull::pretty_program(db, &program),
-        )?;
+        let text = if args.hull_origins {
+            hull::origin_listing(db, &program)
+        } else {
+            hull::pretty_program(db, &program)
+        };
+        write_emit_output(target, args.output_dir.as_deref(), &text)?;
     }
     if let Some(target) = &args.emit_yul {
         let yul = yul::render_hull_program_object(db, &program, args.emit_yul_object.as_deref())

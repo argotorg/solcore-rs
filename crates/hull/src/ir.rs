@@ -1,5 +1,7 @@
 use hir::{ast::function::YulStmt, span::Span};
 
+use crate::origin::GeneratedReason;
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct HullName(String);
 
@@ -185,6 +187,10 @@ pub struct Arg<'db> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Function<'db> {
     pub span: Span<'db>,
+    /// Set when the compiler, not source text, produced this function. Inside
+    /// such a function, statements located at [`Function::span`] are generated
+    /// code; see [`crate::origin::stmt_origin`]. Not part of the printed Hull text.
+    pub generated: Option<GeneratedReason>,
     pub name: Name,
     pub args: Vec<Arg<'db>>,
     pub ret: Ty<'db>,

@@ -41,6 +41,8 @@ pub(crate) struct Args {
     pub(crate) emit_abi: bool,
     /// Optional Hull output target.
     pub(crate) emit_hull: Option<EmitTarget>,
+    /// Makes `--emit-hull` print the origin listing instead of the Hull text.
+    pub(crate) hull_origins: bool,
     /// Optional Yul output target.
     pub(crate) emit_yul: Option<EmitTarget>,
     /// Optional Sonatina IR output target.
@@ -111,6 +113,7 @@ pub(crate) fn parse_args(args: Vec<OsString>) -> Result<ParsedArgs, String> {
     let mut output_dir = None;
     let mut emit_abi = false;
     let mut emit_hull = None;
+    let mut hull_origins = false;
     let mut emit_yul = None;
     let mut emit_sonatina = None;
     let mut emit_yul_object = None;
@@ -239,6 +242,9 @@ pub(crate) fn parse_args(args: Vec<OsString>) -> Result<ParsedArgs, String> {
             }
             Some("--emit-hull") => {
                 emit_hull = Some(EmitTarget::Stdout);
+            }
+            Some("--hull-origins") => {
+                hull_origins = true;
             }
             Some("--emit-yul") => {
                 emit_yul = Some(EmitTarget::Stdout);
@@ -397,6 +403,9 @@ pub(crate) fn parse_args(args: Vec<OsString>) -> Result<ParsedArgs, String> {
             input.display()
         ));
     }
+    if hull_origins && emit_hull.is_none() {
+        return Err("--hull-origins requires --emit-hull".to_owned());
+    }
     if emit_yul_object.is_some() && emit_yul.is_none() {
         return Err("--emit-yul-object requires --emit-yul".to_owned());
     }
@@ -414,6 +423,7 @@ pub(crate) fn parse_args(args: Vec<OsString>) -> Result<ParsedArgs, String> {
         output_dir,
         emit_abi,
         emit_hull,
+        hull_origins,
         emit_yul,
         emit_sonatina,
         emit_yul_object,
@@ -630,6 +640,8 @@ Options:
   -o, --output-dir DIR               Directory for emitted artifact and ABI files
   --abi                              Emit a JSON ABI file for each contract
   --emit-hull[=FILE]                 Emit Hull to stdout or FILE
+  --hull-origins                     With --emit-hull, list the origin of each Hull function and
+                                      statement (source range or generated code) instead of the Hull text
   --emit-yul[=FILE]                  Emit Yul strict assembly to stdout or FILE
   --emit-sonatina[=FILE]             Emit Sonatina IR to stdout or FILE
   --emit-yul-object NAME             Select one top-level Yul object for --emit-yul

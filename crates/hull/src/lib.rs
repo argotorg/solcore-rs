@@ -10,6 +10,8 @@
 mod check;
 mod emit;
 mod ir;
+pub mod origin;
+mod origin_listing;
 mod pretty;
 mod scope_stack;
 mod word;
@@ -20,5 +22,6 @@ pub use ir::{
     Alt, Arg, CodeBlock, Con, Expr, ExprKind, Function, HullName, Name, Object, Pat, PatKind,
     Program, Stmt, StmtKind, Ty, TyKind,
 };
+pub use origin_listing::origin_listing;
 pub use pretty::{PrettyHull, pretty_program};
 pub use word::{WordLiteralError, wrap_word_literal};

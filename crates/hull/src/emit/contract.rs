@@ -67,6 +67,30 @@ impl<'db> Emitter<'db> {
                 )
             })
             .collect::<Vec<_>>();
+        // The deployment entry and the std dispatch runtime entry are produced
+        // by the compiler, not written in source. Mark them where the contract's
+        // entries are known; see `origin::stmt_origin` for what the mark means.
+        let entry_names = contract
+            .entries
+            .iter()
+            .filter_map(|entry| match entry {
+                MonoEntry::DeploymentMain { specialized, .. }
+                | MonoEntry::RuntimeMain {
+                    specialized,
+                    origin: MonoRuntimeMainOrigin::StdDispatch,
+                    ..
+                } => Some(specialized.as_str()),
+                _ => None,
+            })
+            .collect::<BTreeSet<_>>();
+        for function in deployment_functions
+            .iter_mut()
+            .chain(runtime_functions.iter_mut())
+        {
+            if entry_names.contains(function.name.as_str()) {
+                function.generated = Some(GeneratedReason::Entry);
+            }
+        }
         if let Some(helper) = storage_hash_helper.as_deref() {
             let helper_function = self.storage_hash2_function(contract.span, helper);
             deployment_functions.push(helper_function.clone());
