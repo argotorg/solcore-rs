@@ -47,6 +47,12 @@ pub(crate) struct Args {
     pub(crate) emit_yul: Option<EmitTarget>,
     /// Optional Sonatina IR output target.
     pub(crate) emit_sonatina: Option<EmitTarget>,
+    /// Writes `<contract>.bin` and `<contract>.bin-runtime` for each contract.
+    pub(crate) emit_bin: bool,
+    /// Optimization level of the bytecode compiled for `--bin` and `--coverage`.
+    pub(crate) opt_level: sonatina::OptLevel,
+    /// Optional bytecode-to-origin coverage report target.
+    pub(crate) coverage: Option<EmitTarget>,
     /// Optional top-level Yul object selection for strict-assembly output.
     pub(crate) emit_yul_object: Option<String>,
     /// Resource limits used by monomorphization and partial evaluation.
@@ -116,6 +122,9 @@ pub(crate) fn parse_args(args: Vec<OsString>) -> Result<ParsedArgs, String> {
     let mut hull_origins = false;
     let mut emit_yul = None;
     let mut emit_sonatina = None;
+    let mut emit_bin = false;
+    let mut opt_level = None;
+    let mut coverage = None;
     let mut emit_yul_object = None;
     let mut specialize_options = specialize::SpecializeOptions::default();
     let mut iter = args.into_iter();
@@ -147,6 +156,13 @@ pub(crate) fn parse_args(args: Vec<OsString>) -> Result<ParsedArgs, String> {
                     return Err("--emit-sonatina= requires FILE".to_owned());
                 }
                 emit_sonatina = Some(EmitTarget::File(PathBuf::from(value)));
+                continue;
+            }
+            if let Some(value) = strip_os_prefix(&arg, "--coverage=") {
+                if value.as_os_str().is_empty() {
+                    return Err("--coverage= requires FILE".to_owned());
+                }
+                coverage = Some(EmitTarget::File(PathBuf::from(value)));
                 continue;
             }
             if let Some(value) = strip_os_prefix(&arg, "--root=") {
@@ -252,6 +268,16 @@ pub(crate) fn parse_args(args: Vec<OsString>) -> Result<ParsedArgs, String> {
             Some("--emit-sonatina") => {
                 emit_sonatina = Some(EmitTarget::Stdout);
             }
+            Some("--bin") => {
+                emit_bin = true;
+            }
+            Some("--opt-level") => {
+                let value = next_string_option_value(&mut iter, "--opt-level", "0|1|2|s")?;
+                opt_level = Some(parse_opt_level(&value)?);
+            }
+            Some("--coverage") => {
+                coverage = Some(EmitTarget::Stdout);
+            }
             Some("--emit-yul-object") => {
                 let value = next_string_option_value(&mut iter, "--emit-yul-object", "NAME")?;
                 emit_yul_object = Some(value);
@@ -277,6 +303,16 @@ pub(crate) fn parse_args(args: Vec<OsString>) -> Result<ParsedArgs, String> {
             Some(option @ ("--external-lib" | "--lib")) => {
                 let value = next_os_option_value(&mut iter, option, "NAME=PATH")?;
                 external_roots.push(parse_external_root(value)?);
+            }
+            Some(arg) if arg.starts_with("--opt-level=") => {
+                opt_level = Some(parse_opt_level(&arg["--opt-level=".len()..])?);
+            }
+            Some(arg) if arg.starts_with("--coverage=") => {
+                let value = &arg["--coverage=".len()..];
+                if value.is_empty() {
+                    return Err("--coverage= requires FILE".to_owned());
+                }
+                coverage = Some(EmitTarget::File(PathBuf::from(value)));
             }
             Some(arg) if arg.starts_with("--emit-yul-object=") => {
                 let value = &arg["--emit-yul-object=".len()..];
@@ -409,6 +445,9 @@ pub(crate) fn parse_args(args: Vec<OsString>) -> Result<ParsedArgs, String> {
     if emit_yul_object.is_some() && emit_yul.is_none() {
         return Err("--emit-yul-object requires --emit-yul".to_owned());
     }
+    if opt_level.is_some() && !emit_bin && coverage.is_none() {
+        return Err("--opt-level requires --bin or --coverage".to_owned());
+    }
     Ok(ParsedArgs::Run(Box::new(Args {
         input,
         main_root,
@@ -426,6 +465,9 @@ pub(crate) fn parse_args(args: Vec<OsString>) -> Result<ParsedArgs, String> {
         hull_origins,
         emit_yul,
         emit_sonatina,
+        emit_bin,
+        opt_level: opt_level.unwrap_or_default(),
+        coverage,
         emit_yul_object,
         specialize_options,
     })))
@@ -585,6 +627,18 @@ fn parse_positive_limit(option: &str, value: &str) -> Result<usize, String> {
     Ok(limit)
 }
 
+fn parse_opt_level(value: &str) -> Result<sonatina::OptLevel, String> {
+    match value {
+        "0" => Ok(sonatina::OptLevel::O0),
+        "1" => Ok(sonatina::OptLevel::O1),
+        "2" => Ok(sonatina::OptLevel::O2),
+        "s" => Ok(sonatina::OptLevel::Os),
+        _ => Err(format!(
+            "--opt-level must be one of 0, 1, 2, or s, got `{value}`"
+        )),
+    }
+}
+
 fn parse_diagnostic_format(value: &str) -> Result<DiagnosticFormat, String> {
     match value {
         "human" => Ok(DiagnosticFormat::Human),
@@ -644,6 +698,12 @@ Options:
                                       statement (source range or generated code) instead of the Hull text
   --emit-yul[=FILE]                  Emit Yul strict assembly to stdout or FILE
   --emit-sonatina[=FILE]             Emit Sonatina IR to stdout or FILE
+  --bin                              Compile through Sonatina and write <contract>.bin and
+                                      <contract>.bin-runtime (hex) for each contract
+  --opt-level 0|1|2|s                Optimization level for --bin and --coverage (default: 0)
+  --coverage[=FILE]                  Report, per contract and section, how many code bytes come from
+                                      source, from compiler-generated code, or from no origin, as JSON
+                                      on stdout or in FILE
   --emit-yul-object NAME             Select one top-level Yul object for --emit-yul
   --pe-fuel N                        Set partial-evaluation total work fuel (default: 8192)
   --pe-depth N                       Set specialization/evaluator depth (default: 128)

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
 
 use hir::{
     Db as HirDb,
@@ -6,11 +6,11 @@ use hir::{
 };
 use hull::{
     Con, Expr as HullExpr, ExprKind, Function as HullFunction, Object as HullObject, PatKind,
-    Program as HullProgram, Stmt as HullStmt, StmtKind, Ty as HullTy, TyKind,
+    Program as HullProgram, Stmt as HullStmt, StmtKind, Ty as HullTy, TyKind, origin::stmt_origin,
 };
 use smallvec::{SmallVec, smallvec};
 use sonatina_ir::{
-    BlockId, EmbedSymbol, I256, Immediate, Linkage, Module, Signature, Type, ValueId,
+    BlockId, EmbedSymbol, I256, Immediate, InstId, Linkage, Module, Signature, Type, ValueId,
     builder::{FunctionBuilder, ModuleBuilder, ObjectBuilder, Variable},
     func_cursor::InstInserter,
     inst::{
@@ -480,7 +480,8 @@ impl<'db> Translator<'db> {
                     function.name.as_str()
                 ))
             })?;
-        let mut lowerer = FunctionLowerer::new(self, scope, func_ref, function.ret.clone());
+        let mut lowerer =
+            FunctionLowerer::new(self, scope, func_ref, function.ret.clone(), Some(function));
         for (index, arg) in function.args.iter().enumerate() {
             let value = lowerer.fb.func.arg_values[index];
             lowerer.bind_parameter(arg.name.as_str(), &arg.ty, value)?;
@@ -498,7 +499,7 @@ impl<'db> Translator<'db> {
     ) -> Result<(), TranslationError> {
         let func_ref = self.entry(scope)?;
         let unit = HullTy::unit(span);
-        let mut lowerer = FunctionLowerer::new(self, scope, func_ref, unit);
+        let mut lowerer = FunctionLowerer::new(self, scope, func_ref, unit, None);
         let mut terminated = lowerer.lower_stmts(stmts)?;
         if !terminated && let Some(main) = entry_function {
             let callee = lowerer
@@ -578,6 +579,11 @@ struct FunctionLowerer<'a, 'db> {
     continue_targets: Vec<BlockId>,
     yul_functions: Vec<HashMap<String, YulFunctionDecl>>,
     yul_returns: Option<Vec<Variable>>,
+    /// The Hull function being lowered, or `None` for object-level code. Inline
+    /// Yul functions keep the Hull function that contains their `assembly`
+    /// block. Statements are stamped by `hull::origin::stmt_origin`, which
+    /// needs it to apply the generated-code rule.
+    function: Option<&'a HullFunction<'db>>,
 }
 
 impl<'a, 'db> FunctionLowerer<'a, 'db> {
@@ -586,6 +592,7 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
         scope: &str,
         func_ref: FuncRef,
         ret: HullTy<'db>,
+        function: Option<&'a HullFunction<'db>>,
     ) -> Self {
         let mut fb = module.builder.func_builder::<InstInserter>(func_ref);
         let entry = fb.append_block();
@@ -601,6 +608,7 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
             continue_targets: Vec::new(),
             yul_functions: Vec::new(),
             yul_returns: None,
+            function,
         }
     }
 
@@ -610,8 +618,9 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
         func_ref: FuncRef,
         span: hir::span::Span<'db>,
         yul_functions: Vec<HashMap<String, YulFunctionDecl>>,
+        function: Option<&'a HullFunction<'db>>,
     ) -> Self {
-        let mut lowerer = Self::new(module, scope, func_ref, HullTy::unit(span));
+        let mut lowerer = Self::new(module, scope, func_ref, HullTy::unit(span), function);
         lowerer.yul_functions = yul_functions;
         lowerer.yul_returns = Some(Vec::new());
         lowerer
@@ -738,7 +747,42 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
         Ok(false)
     }
 
+    /// Lowers one statement, then stamps the instructions it created with the
+    /// statement's origin. Nested statements are lowered and stamped first, so
+    /// an enclosing statement only claims what its children did not (loop
+    /// headers, branches, join code).
     fn lower_stmt(&mut self, stmt: &HullStmt<'db>) -> Result<bool, TranslationError> {
+        let watermark = self.fb.func.dfg.num_insts();
+        let result = self.lower_stmt_inner(stmt);
+        self.stamp_insts_since(watermark, stmt.span);
+        result
+    }
+
+    /// Gives every instruction created since `watermark` that has no origin
+    /// yet the origin of a statement at `span`. A zero-width span has no
+    /// origin and stamps nothing. Code that no statement made (the implicit
+    /// return, the fall-through stop, phis made when blocks are sealed) is
+    /// never stamped and stays unmapped.
+    fn stamp_insts_since(&mut self, watermark: usize, span: hir::span::Span<'db>) {
+        let end = self.fb.func.dfg.num_insts();
+        if end == watermark {
+            return;
+        }
+        let Some(origin) = stmt_origin(self.function, span).resolve(self.module.db) else {
+            return;
+        };
+        let origin: Arc<str> = Arc::from(origin.encode());
+        for index in watermark..end {
+            let inst = InstId(index as u32);
+            if self.fb.func.inst_frontend_origin(inst).is_none() {
+                self.fb
+                    .func
+                    .set_inst_frontend_origin(inst, Arc::clone(&origin));
+            }
+        }
+    }
+
+    fn lower_stmt_inner(&mut self, stmt: &HullStmt<'db>) -> Result<bool, TranslationError> {
         match &stmt.kind {
             StmtKind::Let { name, ty } => {
                 self.declare_binding(name.as_str(), ty)?;
@@ -1551,6 +1595,7 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
             declaration.func,
             span,
             visible_functions,
+            self.function,
         );
         let word = HullTy::word(span);
         for (index, param) in params.iter().enumerate() {
@@ -1585,6 +1630,13 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
     }
 
     fn lower_yul_stmt(&mut self, stmt: &YulStmt<'db>) -> Result<bool, TranslationError> {
+        let watermark = self.fb.func.dfg.num_insts();
+        let result = self.lower_yul_stmt_inner(stmt);
+        self.stamp_insts_since(watermark, stmt.span);
+        result
+    }
+
+    fn lower_yul_stmt_inner(&mut self, stmt: &YulStmt<'db>) -> Result<bool, TranslationError> {
         match &stmt.kind {
             YulStmtKind::Block(stmts) => self.lower_yul_stmts(stmts),
             YulStmtKind::Let { names, init } => {

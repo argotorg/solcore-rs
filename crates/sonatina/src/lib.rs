@@ -1,5 +1,7 @@
-//! Checked Hull-to-Sonatina lowering for the EVM Osaka target.
+//! Checked Hull-to-Sonatina lowering for the EVM Osaka target, and EVM bytecode with a map from
+//! code bytes to source origins.
 
+mod compile;
 mod lower;
 
 use std::{error::Error, fmt};
@@ -7,6 +9,10 @@ use std::{error::Error, fmt};
 use hir::Db as HirDb;
 use hull::Program as HullProgram;
 use sonatina_ir::{Module, ir_writer::ModuleWriter};
+
+pub use compile::{
+    CompileOptions, CompiledObject, CompiledSection, OptLevel, PcRange, compile_hull_program,
+};
 
 /// A failure while translating typed Hull into Sonatina IR.
 #[derive(Debug, Clone, PartialEq, Eq)]

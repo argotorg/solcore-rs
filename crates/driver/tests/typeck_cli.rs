@@ -840,6 +840,94 @@ contract C {
 }
 
 #[test]
+fn cli_emits_bytecode_and_a_coverage_report() {
+    let dir = temp_dir("emit-bin");
+    fs::create_dir_all(&dir).expect("create temp dir");
+    let input = dir.join("main.sol");
+    let output_dir = dir.join("out");
+    let coverage = dir.join("coverage.json");
+    fs::write(
+        &input,
+        r#"
+pragma solcore;
+import * from std;
+import * from std.dispatch;
+
+contract C {
+    function twice(x: uint256) public returns (uint256) {
+        return x + x;
+    }
+}
+"#,
+    )
+    .expect("write source");
+    let std_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_solcore-driver"))
+        .args(["--bin", "--opt-level", "2"])
+        .arg(format!("--coverage={}", coverage.display()))
+        .arg("--std-root")
+        .arg(&std_root)
+        .arg("-o")
+        .arg(&output_dir)
+        .arg(&input)
+        .output()
+        .expect("run driver");
+    assert!(
+        output.status.success(),
+        "driver failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    for file in ["C.bin", "C.bin-runtime"] {
+        let hex = fs::read_to_string(output_dir.join(file)).expect("read bytecode");
+        assert!(
+            !hex.is_empty() && hex.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')),
+            "{file}: {hex}"
+        );
+    }
+    let report: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&coverage).expect("read coverage"))
+            .expect("valid coverage JSON");
+    let sections: Vec<_> = report
+        .as_array()
+        .expect("one object per contract and section")
+        .iter()
+        .map(|row| row["section"].as_str().expect("section name"))
+        .collect();
+    assert_eq!(sections, ["init", "runtime"]);
+    for row in report.as_array().unwrap() {
+        let bytes = |key: &str| row[key].as_u64().expect(key);
+        assert_eq!(row["contract"], "C");
+        assert_eq!(row["opt"], "2");
+        assert_eq!(
+            bytes("source_bytes") + bytes("generated_bytes") + bytes("unmapped_bytes"),
+            bytes("code_bytes")
+        );
+        // Files are named relative to the project root and the library root.
+        let files = row["by_file"].as_object().expect("by_file");
+        assert!(
+            files
+                .keys()
+                .all(|path| path == "main.sol" || path.starts_with("std/"))
+        );
+    }
+
+    let rejected = Command::new(env!("CARGO_BIN_EXE_solcore-driver"))
+        .args(["--opt-level", "2"])
+        .arg(&input)
+        .output()
+        .expect("run driver");
+    assert_eq!(rejected.status.code(), Some(2));
+    assert!(
+        String::from_utf8_lossy(&rejected.stderr)
+            .contains("--opt-level requires --bin or --coverage")
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn cli_emits_memory_array_return_abi_and_both_backends() {
     let dir = temp_dir("memory-array-return");
     fs::create_dir_all(&dir).expect("create temp dir");
