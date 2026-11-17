@@ -20,7 +20,7 @@ use hir::{
     span::Span,
 };
 
-use crate::ir::{CodeBlock, Function, Object, Program, Stmt, StmtKind};
+use crate::ir::{Function, Object, Program, Stmt, StmtKind};
 
 /// Why a piece of code exists although no source text says it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -32,22 +32,31 @@ pub enum GeneratedReason {
     StorageHelper,
     /// Methods derived for an ADT.
     Derived,
+    /// Helper functions for string and revert-message literals. They are
+    /// shared by content, so no single use of the literal explains them.
+    Literal,
 }
 
 impl GeneratedReason {
+    const ALL: [Self; 4] = [
+        Self::Entry,
+        Self::StorageHelper,
+        Self::Derived,
+        Self::Literal,
+    ];
+
     /// The spelling used in the wire form and in listings.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Entry => "entry",
             Self::StorageHelper => "storage-helper",
             Self::Derived => "derived",
+            Self::Literal => "literal",
         }
     }
 
     fn from_name(name: &str) -> Option<Self> {
-        [Self::Entry, Self::StorageHelper, Self::Derived]
-            .into_iter()
-            .find(|reason| reason.as_str() == name)
+        Self::ALL.into_iter().find(|reason| reason.as_str() == name)
     }
 }
 
@@ -290,52 +299,68 @@ impl SourceTable {
     }
 }
 
-fn object_spans<'db>(object: &Object<'db>, visit: &mut impl FnMut(Span<'db>)) {
-    code_block_spans(&object.code, visit);
-    for inner in &object.inners {
-        object_spans(inner, visit);
-    }
-}
-
-fn code_block_spans<'db>(code: &CodeBlock<'db>, visit: &mut impl FnMut(Span<'db>)) {
-    for function in &code.functions {
-        function_spans(function, visit);
-    }
-    stmts_spans(&code.stmts, visit);
-}
-
-fn function_spans<'db>(function: &Function<'db>, visit: &mut impl FnMut(Span<'db>)) {
-    visit(function.span);
-    stmts_spans(&function.body, visit);
-}
-
-fn stmts_spans<'db>(stmts: &[Stmt<'db>], visit: &mut impl FnMut(Span<'db>)) {
+/// Calls `visit(function, stmt, depth)` for each statement of `stmts` and, after
+/// it, for the statements nested in it. `depth` is 0 for `stmts` and grows by
+/// one per level of nesting. `function` is the Hull function the statements
+/// belong to, or `None` for object-level code.
+pub(crate) fn walk_stmts<'db>(
+    function: Option<&Function<'db>>,
+    stmts: &[Stmt<'db>],
+    depth: usize,
+    visit: &mut impl FnMut(Option<&Function<'db>>, &Stmt<'db>, usize),
+) {
     for stmt in stmts {
-        visit(stmt.span);
+        visit(function, stmt, depth);
         match &stmt.kind {
-            StmtKind::Block(body) => stmts_spans(body, visit),
+            StmtKind::Block(body) => walk_stmts(function, body, depth + 1, visit),
             StmtKind::For {
                 init, post, body, ..
             } => {
-                stmts_spans(init, visit);
-                stmts_spans(post, visit);
-                stmts_spans(body, visit);
+                for nested in [init, post, body] {
+                    walk_stmts(function, nested, depth + 1, visit);
+                }
             }
             StmtKind::Match { alts, .. } => {
                 for alt in alts {
-                    stmts_spans(&alt.body, visit);
+                    walk_stmts(function, &alt.body, depth + 1, visit);
                 }
             }
-            StmtKind::Assembly(body) => yul_stmts_spans(body, visit),
             StmtKind::Let { .. }
             | StmtKind::Assign { .. }
             | StmtKind::Expr(_)
             | StmtKind::Return(_)
             | StmtKind::Break
             | StmtKind::Continue
+            | StmtKind::Assembly(_)
             | StmtKind::Revert(_)
             | StmtKind::Comment(_) => {}
         }
+    }
+}
+
+fn object_spans<'db>(object: &Object<'db>, visit: &mut impl FnMut(Span<'db>)) {
+    for function in &object.code.functions {
+        function_spans(function, visit);
+    }
+    walk_stmts(None, &object.code.stmts, 0, &mut |_, stmt, _| {
+        stmt_spans(stmt, visit)
+    });
+    for inner in &object.inners {
+        object_spans(inner, visit);
+    }
+}
+
+fn function_spans<'db>(function: &Function<'db>, visit: &mut impl FnMut(Span<'db>)) {
+    visit(function.span);
+    walk_stmts(Some(function), &function.body, 0, &mut |_, stmt, _| {
+        stmt_spans(stmt, visit)
+    });
+}
+
+fn stmt_spans<'db>(stmt: &Stmt<'db>, visit: &mut impl FnMut(Span<'db>)) {
+    visit(stmt.span);
+    if let StmtKind::Assembly(body) = &stmt.kind {
+        yul_stmts_spans(body, visit);
     }
 }
 
@@ -375,34 +400,16 @@ fn yul_stmts_spans<'db>(stmts: &[YulStmt<'db>], visit: &mut impl FnMut(Span<'db>
 #[cfg(test)]
 mod tests {
     use hir::{
-        anchor::DefLocationTable,
         diag::Offset,
         input::SourceFile,
         span::{AnchorId, Span},
     };
-    use parser::parse_file_to_hir;
+    use solcore_test_utils::define_frontend_test_db;
 
     use super::*;
     use crate::ir::{Arg, Expr, Ty};
 
-    #[salsa::db]
-    #[derive(Default, Clone)]
-    struct TestDb {
-        storage: salsa::Storage<Self>,
-    }
-
-    #[salsa::db]
-    impl salsa::Database for TestDb {}
-
-    #[salsa::db]
-    impl hir::Db for TestDb {
-        fn def_location_table<'db>(&'db self, file: SourceFile) -> &'db DefLocationTable<'db> {
-            parse_file_to_hir(self, file).def_locations(self)
-        }
-    }
-
-    #[salsa::db]
-    impl parser::Db for TestDb {}
+    define_frontend_test_db!(TestDb, hir_ty);
 
     fn file(db: &TestDb, url: &str) -> SourceFile {
         SourceFile::new(db, url.parse().expect("valid URL"), Some("x".repeat(64)))
@@ -455,12 +462,7 @@ mod tests {
     #[test]
     fn origin_wire_form_round_trips() {
         let odd_url = "file:///tmp/a dir/with space|and|pipe/m.sol";
-        for generated in [
-            None,
-            Some(GeneratedReason::Entry),
-            Some(GeneratedReason::StorageHelper),
-            Some(GeneratedReason::Derived),
-        ] {
+        for generated in std::iter::once(None).chain(GeneratedReason::ALL.map(Some)) {
             for url in ["memory:///m.sol", odd_url, "x y  z"] {
                 let origin = ResolvedOrigin {
                     generated,
@@ -522,7 +524,7 @@ mod tests {
     }
 
     #[test]
-    fn origin_follows_the_generated_rule() {
+    fn origin_follows_the_generated_rule_and_resolves_to_a_file_range() {
         let db = TestDb::default();
         let main = file(&db, "memory:///main.sol");
         let whole = span(&db, main, 0, 40);
@@ -555,12 +557,8 @@ mod tests {
             }
         );
         assert_eq!(function_origin(&unmarked), Origin::Source(whole));
-    }
 
-    #[test]
-    fn origin_resolves_to_file_and_absolute_range() {
-        let db = TestDb::default();
-        let main = file(&db, "memory:///main.sol");
+        // An origin resolves to its file and absolute range.
         assert_eq!(Origin::Source(span(&db, main, 4, 4)).resolve(&db), None);
         assert_eq!(
             Origin::Source(span(&db, main, 4, 9)).resolve(&db),

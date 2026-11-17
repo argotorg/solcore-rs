@@ -6,14 +6,14 @@ use std::{
 };
 
 use hir::{diag::Diagnostic, input::SourceFile};
-use hull::origin::{ResolvedOrigin, SourceTable};
+use hull::origin::{GeneratedReason, ResolvedOrigin, SourceTable};
 use nameres::ModuleId;
 use serde_json::{Value, json};
 use sonatina::{CompileOptions, CompiledObject, CompiledSection, OptLevel, PcRange};
 use url::Url;
 
 use crate::{
-    args::{Args, EmitTarget},
+    args::{Args, EmitTarget, OPT_LEVELS},
     db::DriverDb,
     debug_info::ethdebug_files,
 };
@@ -138,16 +138,17 @@ pub(crate) fn maybe_emit_backend_outputs(
             },
         )
         .map_err(|err| BackendFailure::Message(format!("Sonatina compilation failed:\n  {err}")))?;
+        let table = SourceTable::from_program(db, &program);
         let coverage = match &args.coverage {
             Some(target) => Some((
                 target,
-                coverage_json(db, &program, &objects, args.opt_level)
+                coverage_json(db, &table, &objects, args.opt_level)
                     .map_err(BackendFailure::Message)?,
             )),
             None => None,
         };
         let ethdebug = if args.ethdebug {
-            ethdebug_files(db, &program, &objects, args.opt_level)
+            ethdebug_files(db, &table, &program, &objects, args.opt_level)
                 .map_err(BackendFailure::Message)?
         } else {
             Vec::new()
@@ -194,49 +195,58 @@ pub(crate) fn hex(bytes: &[u8]) -> String {
 
 /// The flag's spelling of an optimization level.
 pub(crate) fn opt_level_name(opt_level: OptLevel) -> &'static str {
-    match opt_level {
-        OptLevel::O0 => "0",
-        OptLevel::O1 => "1",
-        OptLevel::O2 => "2",
-        OptLevel::Os => "s",
-    }
+    let (name, _) = OPT_LEVELS
+        .iter()
+        .find(|(_, level)| *level == opt_level)
+        .expect("every optimization level has a spelling");
+    name
 }
 
-/// Parses the origin stamp of a mapped byte range and finds the id of its file
-/// in the program's source table. A stamp that is not an origin, or that names
-/// a file the table lacks, is an error.
-pub(crate) fn resolve_origin(
-    table: &SourceTable,
-    range: &PcRange,
-    stamp: &str,
-) -> Result<(u32, ResolvedOrigin), String> {
+/// What the byte map says about a range of code bytes.
+pub(crate) enum Attribution {
+    /// No origin, for Sonatina's reason.
+    Unmapped(&'static str),
+    /// Code the compiler made, for this reason.
+    Generated(GeneratedReason),
+    /// Text of the source file with this id in the program's source table.
+    Source { file: u32, origin: ResolvedOrigin },
+}
+
+/// Reads the origin stamp of a range of the byte map. A stamp that is not an
+/// origin, or that names a file the source table lacks, is an error.
+pub(crate) fn classify(table: &SourceTable, range: &PcRange) -> Result<Attribution, String> {
+    let stamp = match &range.origin {
+        Ok(stamp) => stamp,
+        Err(reason) => return Ok(Attribution::Unmapped(reason)),
+    };
     let origin = ResolvedOrigin::parse(stamp).map_err(|err| {
         format!(
             "bytes {}..{} have an unreadable origin: {err}",
             range.start, range.end
         )
     })?;
-    let Some(source) = table.id(&origin.url) else {
+    let Some(file) = table.id(&origin.url) else {
         return Err(format!(
             "bytes {}..{} are attributed to `{}`, which is not a source of the program",
             range.start, range.end, origin.url
         ));
     };
-    Ok((source, origin))
+    Ok(match origin.generated {
+        Some(reason) => Attribution::Generated(reason),
+        None => Attribution::Source { file, origin },
+    })
 }
 
 /// One JSON object per contract and section: how many code bytes come from
 /// source, from compiler-generated code, or from no origin, and why.
 ///
-/// A byte-map string that is not an origin, or that names a file the program's
-/// source table lacks, is an error.
+/// A range that [`classify`] refuses is an error.
 fn coverage_json(
     db: &DriverDb,
-    program: &hull::Program<'_>,
+    table: &SourceTable,
     objects: &[CompiledObject],
     opt_level: OptLevel,
 ) -> Result<String, String> {
-    let table = SourceTable::from_program(db, program);
     let mut rows = Vec::new();
     for object in objects {
         let sections = [
@@ -246,7 +256,7 @@ fn coverage_json(
         for (name, section) in sections {
             let Some(section) = section else { continue };
             rows.push(
-                section_coverage(db, &table, &object.contract, name, section, opt_level)
+                section_coverage(db, table, &object.contract, name, section, opt_level)
                     .map_err(|err| format!("coverage of `{}` {name}: {err}", object.contract))?,
             );
         }
@@ -273,27 +283,17 @@ fn section_coverage(
     let mut files = BTreeMap::<String, u32>::new();
     for range in &section.map {
         let len = range.end - range.start;
-        let text = match &range.origin {
-            Ok(text) => text,
-            Err(reason) => {
+        match classify(table, range)? {
+            Attribution::Unmapped(reason) => {
                 unmapped += len;
                 *reasons.entry(reason).or_default() += len;
-                continue;
             }
-        };
-        let (_, origin) = resolve_origin(table, range, text)?;
-        if origin.generated.is_some() {
-            generated += len;
-        } else {
-            source += len;
-            *files.entry(display_path(db, &origin.url)).or_default() += len;
+            Attribution::Generated(_) => generated += len,
+            Attribution::Source { origin, .. } => {
+                source += len;
+                *files.entry(display_path(db, &origin.url)).or_default() += len;
+            }
         }
-    }
-    if source + generated + unmapped != code_len {
-        return Err(format!(
-            "source, generated and unmapped bytes add up to {}, but the code has {code_len} bytes",
-            source + generated + unmapped,
-        ));
     }
     Ok(json!({
         "contract": contract,

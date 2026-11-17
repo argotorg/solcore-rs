@@ -148,3 +148,45 @@ contract C {
     assert_eq!(output.diagnostics, Vec::new());
     assert_eq!(main_return_number(&output).as_deref(), Some("0"));
 }
+
+#[test]
+fn recursion_is_found_by_value_even_at_a_depth_of_one() {
+    // `id(x)` calls itself with the value it was given. A value that was
+    // folded at compile time is located at the expression that asked for it,
+    // so the first call and the recursive call differ only in location.
+    let source = r#"
+pragma solcore;
+
+function id(x: word) returns (word) {
+    return x;
+}
+
+contract Answer {
+    function main() returns (word) {
+        return id(0);
+    }
+    function id(x: word) public returns (word) {
+        return id(x);
+    }
+}
+"#;
+    let output = specialize_src_with_std_options(
+        source,
+        SpecializeOptions {
+            max_depth: 1,
+            ..SpecializeOptions::default()
+        },
+    );
+    let kinds = output
+        .diagnostics
+        .iter()
+        .map(|diagnostic| &diagnostic.kind)
+        .collect::<Vec<_>>();
+    assert!(
+        matches!(
+            kinds.as_slice(),
+            [SpecializeDiagnosticKind::ReductionRecursion { .. }]
+        ),
+        "{kinds:?}"
+    );
+}

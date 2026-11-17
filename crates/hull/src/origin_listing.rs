@@ -23,8 +23,8 @@ use std::fmt::Write as _;
 use hir::{Db as HirDb, diag::AbsoluteSpan};
 
 use crate::{
-    ir::{Alt, CodeBlock, Expr, ExprKind, Function, Object, Program, Stmt, StmtKind},
-    origin::{ResolvedOrigin, function_origin, stmt_origin},
+    ir::{CodeBlock, Expr, ExprKind, Function, Object, Program, Stmt, StmtKind},
+    origin::{ResolvedOrigin, function_origin, stmt_origin, walk_stmts},
 };
 
 /// Renders the origin listing of `program`, ending with a summary line.
@@ -98,9 +98,9 @@ impl<'db> Listing<'db> {
     }
 
     fn stmts(&mut self, function: Option<&Function<'db>>, stmts: &[Stmt<'db>], depth: usize) {
-        for stmt in stmts {
+        walk_stmts(function, stmts, depth, &mut |function, stmt, depth| {
             self.stmt(function, stmt, depth);
-        }
+        });
     }
 
     fn stmt(&mut self, function: Option<&Function<'db>>, stmt: &Stmt<'db>, depth: usize) {
@@ -142,27 +142,10 @@ impl<'db> Listing<'db> {
                 self.expr(rhs, within, inner);
             }
             StmtKind::Expr(expr) | StmtKind::Return(expr) => self.expr(expr, within, inner),
-            StmtKind::Block(body) => self.stmts(function, body, inner),
-            StmtKind::For {
-                init,
-                cond,
-                post,
-                body,
-            } => {
-                self.stmts(function, init, inner);
-                self.expr(cond, within, inner);
-                self.stmts(function, post, inner);
-                self.stmts(function, body, inner);
-            }
-            StmtKind::Match {
-                scrutinee, alts, ..
-            } => {
-                self.expr(scrutinee, within, inner);
-                for Alt { body, .. } in alts {
-                    self.stmts(function, body, inner);
-                }
-            }
+            StmtKind::For { cond, .. } => self.expr(cond, within, inner),
+            StmtKind::Match { scrutinee, .. } => self.expr(scrutinee, within, inner),
             StmtKind::Let { .. }
+            | StmtKind::Block(_)
             | StmtKind::Break
             | StmtKind::Continue
             | StmtKind::Assembly(_)

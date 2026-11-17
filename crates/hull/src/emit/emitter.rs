@@ -440,13 +440,6 @@ impl<'db> Emitter<'db> {
             .map(|body| self.emit_stmts(body))
             .unwrap_or_default();
         self.predeclared_lets.truncate(predeclared);
-        // An absent `else` has no text of its own: its arm is empty and sits at
-        // the end of the `if`.
-        let else_span = if else_body.is_some() {
-            span
-        } else {
-            Span::new(span.anchor(), span.end(), span.end())
-        };
         out.push(Stmt {
             span,
             kind: StmtKind::Match {
@@ -463,9 +456,9 @@ impl<'db> Emitter<'db> {
                         body: then_stmts,
                     },
                     Alt {
-                        span: else_span,
+                        span,
                         pat: Pat {
-                            span: else_span,
+                            span,
                             kind: PatKind::Con(Con::Inl),
                         },
                         binder: self.fresh_alt().into(),
@@ -843,7 +836,7 @@ impl<'db> Emitter<'db> {
     ) -> Function<'db> {
         Function {
             span,
-            generated: None,
+            generated: Some(GeneratedReason::Literal),
             name: name.into(),
             args: Vec::new(),
             ret: Ty::unit(span),
@@ -917,7 +910,7 @@ impl<'db> Emitter<'db> {
         let word = Ty::word(span);
         Function {
             span,
-            generated: None,
+            generated: Some(GeneratedReason::Literal),
             name: name.into(),
             args: Vec::new(),
             ret: word.clone(),

@@ -138,12 +138,12 @@ pub fn resources_json(compilation: &Compilation<'_>) -> Value {
 /// A program object with one instruction per opcode of `program.code`.
 ///
 /// Each instruction gets the context of the range that contains its offset.
-/// Refused: ranges that are empty, unsorted, overlapping, leave a gap or pass
-/// the end of the code; a code context or the definition naming a source that
-/// is not in `sources`.
+/// Refused: ranges that are empty, unsorted, overlapping, leave a gap, pass the
+/// end of the code or start inside an instruction; a code context or the
+/// definition naming a source that is not in `sources` or text outside it.
 pub fn program_json(program: &Program<'_>, sources: &[Source<'_>]) -> Result<Value, Error> {
     let (def_source, def_offset, def_length) = program.definition;
-    check_source(sources, def_source).map_err(|why| {
+    check_source(sources, def_source, def_offset, def_length).map_err(|why| {
         Error::new(format!(
             "definition of `{}` is invalid: {why}",
             program.contract
@@ -153,7 +153,9 @@ pub fn program_json(program: &Program<'_>, sources: &[Source<'_>]) -> Result<Val
 
     let mut instructions = Vec::new();
     let (mut pc, mut range) = (0, 0);
+    let mut starts = Vec::new();
     while pc < program.code.len() {
+        starts.push(pc);
         while program.ranges[range].end as usize <= pc {
             range += 1;
         }
@@ -175,6 +177,13 @@ pub fn program_json(program: &Program<'_>, sources: &[Source<'_>]) -> Result<Val
         }
         instructions.push(instruction);
         pc += 1 + push_data_len(opcode);
+    }
+    // A range that starts inside a PUSH immediate would be skipped silently.
+    for Range { start, end, .. } in program.ranges {
+        if starts.binary_search(&(*start as usize)).is_err() {
+            let why = "does not start at an instruction";
+            return Err(Error::new(format!("range {start}..{end} {why}")));
+        }
     }
 
     Ok(json!({
@@ -217,8 +226,13 @@ fn check_ranges(ranges: &[Range], code_len: usize, sources: &[Source<'_>]) -> Re
                 "bytes {cursor}..{start} are in no range"
             )));
         }
-        if let Context::Code { source, .. } = context {
-            check_source(sources, *source)
+        if let Context::Code {
+            source,
+            offset,
+            length,
+        } = context
+        {
+            check_source(sources, *source, *offset, *length)
                 .map_err(|why| Error::new(format!("range {start}..{end}: {why}")))?;
         }
         cursor = *end;
@@ -231,11 +245,20 @@ fn check_ranges(ranges: &[Range], code_len: usize, sources: &[Source<'_>]) -> Re
     Ok(())
 }
 
-fn check_source(sources: &[Source<'_>], id: u32) -> Result<(), String> {
-    if sources.iter().any(|source| source.id == id) {
-        return Ok(());
+/// The source `id` must be listed and hold the text `offset..offset + length`.
+fn check_source(sources: &[Source<'_>], id: u32, offset: u32, length: u32) -> Result<(), String> {
+    let source = sources
+        .iter()
+        .find(|source| source.id == id)
+        .ok_or_else(|| format!("source {id} is not in the source list"))?;
+    let end = u64::from(offset) + u64::from(length);
+    if end > source.contents.len() as u64 {
+        return Err(format!(
+            "source {id} has {} bytes, but the range is {offset}..{end}",
+            source.contents.len()
+        ));
     }
-    Err(format!("source {id} is not in the source list"))
+    Ok(())
 }
 
 /// Number of immediate bytes that follow `opcode` (PUSH1 to PUSH32).
@@ -373,7 +396,7 @@ mod tests {
     }
 
     #[test]
-    fn program_refuses_ranges_that_do_not_tile_the_code() {
+    fn program_refuses_ranges_that_do_not_tile_the_code_or_split_an_instruction() {
         let refused = |ranges: &[Range], expected: &str| {
             let message = write(&CODE, (0, 0, 1), ranges).unwrap_err().to_string();
             assert!(message.contains(expected), "{message}");
@@ -387,10 +410,16 @@ mod tests {
         refused(&[none(0, 7)], "ranges end at 7, but the code has 6 bytes");
         refused(&[none(0, 3), none(3, 3), none(3, 6)], "is empty");
         refused(&[], "ranges end at 0, but the code has 6 bytes");
+        // The PUSH1 at 0 owns the byte at 1.
+        refused(
+            &[none(0, 1), none(1, 6)],
+            "1..6 does not start at an instruction",
+        );
+        refused(&[none(0, 1), none(1, 2), none(2, 6)], "1..2 does not start");
     }
 
     #[test]
-    fn program_refuses_a_source_that_is_not_in_the_list() {
+    fn program_refuses_a_source_that_is_not_in_the_list_and_text_outside_it() {
         let message = write(&CODE, (0, 0, 1), &[range(0, 6, code(1, 0, 1))])
             .unwrap_err()
             .to_string();
@@ -400,6 +429,22 @@ mod tests {
         );
         let message = write(&[], (9, 0, 1), &[]).unwrap_err().to_string();
         assert!(message.contains("definition of `C`"), "{message}");
+
+        // Source 0 has 10 bytes.
+        for definition in [(0, 8, 3), (0, 11, 0)] {
+            let message = write(&CODE, definition, &[range(0, 6, Context::None)])
+                .unwrap_err()
+                .to_string();
+            assert!(message.contains("definition of `C`"), "{message}");
+        }
+        let message = write(&CODE, (0, 0, 1), &[range(0, 6, code(0, 8, 3))])
+            .unwrap_err()
+            .to_string();
+        assert!(
+            message.contains("source 0 has 10 bytes, but the range is 8..11"),
+            "{message}"
+        );
+        assert!(write(&CODE, (0, 7, 3), &[range(0, 6, code(0, 8, 2))]).is_ok());
     }
 
     #[test]

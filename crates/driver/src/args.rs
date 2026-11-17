@@ -6,6 +6,14 @@ use std::{
 
 const DEFAULT_DIAGNOSTIC_WIDTH: usize = 100;
 
+/// The spellings of `--opt-level` and the levels they name.
+pub(crate) const OPT_LEVELS: [(&str, sonatina::OptLevel); 4] = [
+    ("0", sonatina::OptLevel::O0),
+    ("1", sonatina::OptLevel::O1),
+    ("2", sonatina::OptLevel::O2),
+    ("s", sonatina::OptLevel::Os),
+];
+
 pub(crate) enum ParsedArgs {
     Run(Box<Args>),
     StandardJson,
@@ -640,15 +648,10 @@ fn parse_positive_limit(option: &str, value: &str) -> Result<usize, String> {
 }
 
 fn parse_opt_level(value: &str) -> Result<sonatina::OptLevel, String> {
-    match value {
-        "0" => Ok(sonatina::OptLevel::O0),
-        "1" => Ok(sonatina::OptLevel::O1),
-        "2" => Ok(sonatina::OptLevel::O2),
-        "s" => Ok(sonatina::OptLevel::Os),
-        _ => Err(format!(
-            "--opt-level must be one of 0, 1, 2, or s, got `{value}`"
-        )),
-    }
+    OPT_LEVELS
+        .iter()
+        .find_map(|&(name, level)| (name == value).then_some(level))
+        .ok_or_else(|| format!("--opt-level must be one of 0, 1, 2, or s, got `{value}`"))
 }
 
 fn parse_diagnostic_format(value: &str) -> Result<DiagnosticFormat, String> {

@@ -1204,74 +1204,49 @@ fn locations_capture_bindings_are_located_at_the_lambda(fixture: Fixture<&str>) 
     });
 }
 
-#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/regressions/locations/implicit_else", glob: "main.sol")]
-fn locations_implicit_else_has_no_text(fixture: Fixture<&str>) {
-    use solcore_hull::{Con, Function, Object, PatKind, Program, Stmt, StmtKind};
-
-    fn if_matches<'a, 'db>(stmts: &'a [Stmt<'db>], found: &mut Vec<&'a Stmt<'db>>) {
-        for stmt in stmts {
-            match &stmt.kind {
-                StmtKind::Match { alts, .. } => {
-                    if alts.len() == 2 && alts[1].pat.kind == PatKind::Con(Con::Inl) {
-                        found.push(stmt);
-                    }
-                    for alt in alts {
-                        if_matches(&alt.body, found);
-                    }
-                }
-                StmtKind::Block(body) => if_matches(body, found),
-                _ => {}
-            }
-        }
-    }
-
-    fn all_functions<'a, 'db>(program: &'a Program<'db>) -> Vec<&'a Function<'db>> {
-        fn in_object<'a, 'db>(object: &'a Object<'db>, out: &mut Vec<&'a Function<'db>>) {
-            out.extend(&object.code.functions);
-            for inner in &object.inners {
-                in_object(inner, out);
-            }
-        }
-        let mut out = program.functions.iter().collect::<Vec<_>>();
-        for object in &program.objects {
-            in_object(object, &mut out);
-        }
-        out
-    }
-
-    fn the_if<'a, 'db>(functions: &[&'a Function<'db>], prefix: &str) -> &'a Stmt<'db> {
-        let function = functions
+/// The helpers of string or revert literals are shared by content, so they are
+/// generated code: no use of the literal owns them.
+fn assert_literal_helpers_are_generated(listing: &str, prefix: &str) {
+    let names = listing
+        .lines()
+        .filter_map(|line| line.trim_start().strip_prefix("fn "))
+        .filter(|rest| rest.starts_with(prefix))
+        .filter_map(|rest| rest.split_whitespace().next())
+        .collect::<Vec<_>>();
+    assert!(!names.is_empty(), "no `{prefix}` helper\n{listing}");
+    for name in names {
+        let header = listing
+            .lines()
+            .find(|line| line.trim_start().starts_with(&format!("fn {name} ")))
+            .expect("listed function");
+        assert!(header.contains(" gen literal "), "{header}\n{listing}");
+        let function = listing_function(listing, name);
+        let statements = function
             .iter()
-            .find(|function| function.name.to_string().starts_with(prefix))
-            .unwrap_or_else(|| panic!("missing function {prefix}"));
-        let mut found = Vec::new();
-        if_matches(&function.body, &mut found);
-        assert_eq!(found.len(), 1, "{prefix}");
-        found[0]
-    }
-
-    with_emission(fixture, FixtureOptions::default(), |_, emitted| {
-        assert_emission_diagnostics(&emitted, true);
-        let functions = all_functions(&emitted.program);
-
-        // Fires: an absent `else` is empty and sits at the end of the `if`.
-        let stmt = the_if(&functions, "main_C_without_else_");
-        let StmtKind::Match { alts, .. } = &stmt.kind else {
-            unreachable!()
-        };
-        assert_eq!(alts[0].span, stmt.span);
-        for span in [alts[1].span, alts[1].pat.span] {
-            assert_eq!(span.anchor(), stmt.span.anchor());
-            assert_eq!(span.begin(), stmt.span.end());
-            assert_eq!(span.end(), stmt.span.end());
+            .filter(|line| line.trim_start().starts_with("S "))
+            .collect::<Vec<_>>();
+        assert!(!statements.is_empty(), "{name}\n{listing}");
+        for statement in statements {
+            assert!(
+                statement.contains(" gen literal "),
+                "{statement}\n{listing}"
+            );
         }
+    }
+}
 
-        // Silent: a written `else` keeps the range of the whole statement.
-        let stmt = the_if(&functions, "main_C_with_else_");
-        let StmtKind::Match { alts, .. } = &stmt.kind else {
-            unreachable!()
-        };
-        assert_eq!(alts[1].span, stmt.span);
-        assert_eq!(alts[1].pat.span, stmt.span);
+#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/regressions/strings/objectless_string_materializer", glob: "main.sol")]
+fn locations_string_literal_helpers_are_generated(fixture: Fixture<&str>) {
+    with_emission(fixture, FixtureOptions::default(), |db, emitted| {
+        let listing = solcore_hull::origin_listing(db, &emitted.program);
+        assert_literal_helpers_are_generated(&listing, "__strlit_");
+    });
+}
+
+#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/regressions/strings/nested_revert_literal", glob: "main.sol")]
+fn locations_revert_literal_helpers_are_generated(fixture: Fixture<&str>) {
+    with_emission(fixture, FixtureOptions::default(), |db, emitted| {
+        let listing = solcore_hull::origin_listing(db, &emitted.program);
+        assert_literal_helpers_are_generated(&listing, "__revertlit_");
     });
 }

@@ -1,7 +1,7 @@
 //! Hull to EVM bytecode through Sonatina, with a map from code bytes to origins.
 //!
-//! Lowering stamps every instruction a Hull statement made with the encoded
-//! [`hull::origin::ResolvedOrigin`] of that statement. After optimization the
+//! With debug info, lowering stamps every instruction a Hull statement made with
+//! the encoded [`hull::origin::ResolvedOrigin`] of that statement. After optimization the
 //! stamp of each surviving instruction is handed to Sonatina as its
 //! post-optimization provenance, and Sonatina reports, for every range of code
 //! bytes, either that provenance or the reason the range has none.
@@ -18,14 +18,15 @@ use sonatina_ir::{InstId, Module, module::FuncRef};
 
 pub use sonatina_codegen::OptLevel;
 
-use crate::{TranslationError, translate_hull_program};
+use crate::{TranslationError, lower};
 
 /// Options of [`compile_hull_program`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CompileOptions {
     pub opt_level: OptLevel,
-    /// Fill [`CompiledSection::map`] and [`CompiledSection::code_len`]. Never
-    /// changes the emitted bytes.
+    /// Stamp the instructions with their origins and fill
+    /// [`CompiledSection::map`] and [`CompiledSection::code_len`]. Never changes
+    /// the emitted bytes.
     pub debug_info: bool,
 }
 
@@ -74,7 +75,7 @@ pub fn compile_hull_program<'db>(
     program: &HullProgram<'db>,
     options: CompileOptions,
 ) -> Result<Vec<CompiledObject>, TranslationError> {
-    let module = translate_hull_program(db, program)?;
+    let module = lower::translate_hull_program(db, program, options.debug_info)?;
     let mut compile = EvmCompile::new(module)
         .with_opt_level(options.opt_level)
         .with_observability(options.debug_info);

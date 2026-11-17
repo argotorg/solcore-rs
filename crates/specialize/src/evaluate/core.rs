@@ -2896,7 +2896,7 @@ impl<'db> Evaluator<'db> {
     fn has_recursive_inline_frame(&self, name: &str, args: &[MonoExpr<'db>]) -> bool {
         self.inline_stack
             .iter()
-            .any(|frame| frame.name == name && frame.args == args)
+            .any(|frame| frame.name == name && same_values(&frame.args, args))
     }
 
     fn inline_chain_is_comptime(&self, current_frame_comptime: bool) -> bool {
@@ -3566,6 +3566,28 @@ fn locate_plain_value<'db>(expr: &mut MonoExpr<'db>, span: Span<'db>) {
         MonoExprKind::TypeAnnot { expr, .. } => locate_plain_value(expr, span),
         _ => {}
     }
+}
+
+/// Whether two expression lists denote the same values, wherever the values are
+/// located. A plain data value is compared by shape and type; any other
+/// expression must be equal.
+fn same_values<'db>(a: &[MonoExpr<'db>], b: &[MonoExpr<'db>]) -> bool {
+    a.len() == b.len() && a.iter().zip(b).all(|(a, b)| same_value(a, b))
+}
+
+fn same_value<'db>(a: &MonoExpr<'db>, b: &MonoExpr<'db>) -> bool {
+    use MonoExprKind::{Con, Tuple, TypeAnnot};
+    a.ty == b.ty
+        && match (&a.kind, &b.kind) {
+            (Tuple(a), Tuple(b)) => same_values(a, b),
+            (Con { ctor: c, args: a }, Con { ctor: d, args: b }) => {
+                (&c.name, c.ty) == (&d.name, d.ty) && same_values(a, b)
+            }
+            (TypeAnnot { expr: a, ty: s }, TypeAnnot { expr: b, ty: t }) => {
+                s == t && same_value(a, b)
+            }
+            (a, b) => a == b,
+        }
 }
 
 fn materialize_comptime_value<'db>(db: &'db dyn Db, expr: MonoExpr<'db>) -> MonoExpr<'db> {

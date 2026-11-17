@@ -7,7 +7,7 @@ use sonatina::{CompiledObject, CompiledSection, OptLevel};
 
 use crate::{
     db::DriverDb,
-    emit::{display_path, hex, opt_level_name, resolve_origin},
+    emit::{Attribution, classify, display_path, hex, opt_level_name},
 };
 
 /// The name of the language in the sources. Not `Solidity`: SolDB reads the
@@ -22,11 +22,11 @@ const COMPILER_VERSION: &str = env!("CARGO_PKG_VERSION");
 /// without an origin get no context.
 pub(crate) fn ethdebug_files(
     db: &DriverDb,
+    table: &SourceTable,
     program: &hull::Program<'_>,
     objects: &[CompiledObject],
     opt_level: OptLevel,
 ) -> Result<Vec<(String, String)>, String> {
-    let table = SourceTable::from_program(db, program);
     let files: Vec<_> = table
         .entries()
         .map(|(id, url, file)| (id, display_path(db, url), file))
@@ -69,7 +69,7 @@ pub(crate) fn ethdebug_files(
         ),
     ];
     for object in objects {
-        let definition = definition(db, &table, program, object)?;
+        let definition = definition(db, table, program, object)?;
         let sections = [
             (Some(&object.init), Environment::Create, "_ethdebug.json"),
             (
@@ -80,7 +80,7 @@ pub(crate) fn ethdebug_files(
         ];
         for (section, environment, suffix) in sections {
             let Some(section) = section else { continue };
-            let ranges = ranges(&table, section)?;
+            let ranges = ranges(table, section)?;
             let code = section
                 .code_len
                 .and_then(|len| section.bytes.get(..len as usize))
@@ -157,19 +157,16 @@ fn ranges(table: &SourceTable, section: &CompiledSection) -> Result<Vec<Range>, 
         .map
         .iter()
         .map(|range| {
-            let context = match &range.origin {
-                Err(_) => Context::None,
-                Ok(stamp) => {
-                    let (source, origin) = resolve_origin(table, range, stamp)?;
-                    match origin.generated {
-                        Some(reason) => Context::Remark(format!("generated: {}", reason.as_str())),
-                        None => Context::Code {
-                            source,
-                            offset: origin.start,
-                            length: origin.end - origin.start,
-                        },
-                    }
+            let context = match classify(table, range)? {
+                Attribution::Unmapped(_) => Context::None,
+                Attribution::Generated(reason) => {
+                    Context::Remark(format!("generated: {}", reason.as_str()))
                 }
+                Attribution::Source { file, origin } => Context::Code {
+                    source: file,
+                    offset: origin.start,
+                    length: origin.end - origin.start,
+                },
             };
             Ok(Range {
                 start: range.start,

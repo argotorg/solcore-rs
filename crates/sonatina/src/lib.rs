@@ -40,12 +40,23 @@ impl fmt::Display for TranslationError {
 
 impl Error for TranslationError {}
 
-/// Lowers a checked Hull program to verified Sonatina IR.
+/// Lowers a checked Hull program to verified Sonatina IR. No instruction has an
+/// origin; see [`translate_hull_program_with_origins`].
 pub fn translate_hull_program<'db>(
     db: &'db dyn HirDb,
     program: &HullProgram<'db>,
 ) -> Result<Module, TranslationError> {
-    lower::translate_hull_program(db, program)
+    lower::translate_hull_program(db, program, false)
+}
+
+/// Like [`translate_hull_program`], and the instructions a Hull statement makes
+/// carry its origin (`hull::origin::stmt_origin`). A statement without a source
+/// range, and code that no statement made, have none.
+pub fn translate_hull_program_with_origins<'db>(
+    db: &'db dyn HirDb,
+    program: &HullProgram<'db>,
+) -> Result<Module, TranslationError> {
+    lower::translate_hull_program(db, program, true)
 }
 
 /// Lowers a single-contract program with a wrapper that calls the named runtime

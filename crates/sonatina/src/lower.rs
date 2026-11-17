@@ -1,4 +1,7 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 
 use hir::{
     Db as HirDb,
@@ -51,11 +54,15 @@ mod reachability;
 
 use reachability::Reachability;
 
+/// With `stamp_origins`, instructions carry the origin of the Hull statement
+/// that made them (`hull::origin::stmt_origin`); without it, no instruction has
+/// an origin.
 pub(super) fn translate_hull_program<'db>(
     db: &'db dyn HirDb,
     program: &HullProgram<'db>,
+    stamp_origins: bool,
 ) -> Result<Module, TranslationError> {
-    Translator::new(db).translate(program)
+    Translator::new(db, stamp_origins).translate(program)
 }
 
 pub(super) fn translate_hull_program_returning_runtime_entry<'db>(
@@ -75,7 +82,7 @@ pub(super) fn translate_hull_program_returning_runtime_entry<'db>(
             object.name
         )));
     }
-    let mut translator = Translator::new(db);
+    let mut translator = Translator::new(db, false);
     translator
         .returning_entries
         .insert("object0.inner0.init".to_owned(), entry.to_owned());
@@ -137,13 +144,16 @@ struct Translator<'db> {
     section_objects: HashMap<String, String>,
     next_type: usize,
     next_yul_function: usize,
+    /// Whether statements stamp the instructions they make with their origin.
+    stamp_origins: bool,
 }
 
 impl<'db> Translator<'db> {
-    fn new(db: &'db dyn HirDb) -> Self {
+    fn new(db: &'db dyn HirDb, stamp_origins: bool) -> Self {
         let isa = evm_isa();
         let builder = ModuleBuilder::new(ModuleCtx::new(&isa));
         Self {
+            stamp_origins,
             db,
             builder,
             isa,
@@ -584,6 +594,9 @@ struct FunctionLowerer<'a, 'db> {
     /// block. Statements are stamped by `hull::origin::stmt_origin`, which
     /// needs it to apply the generated-code rule.
     function: Option<&'a HullFunction<'db>>,
+    /// Instructions a finished statement has taken, whether it stamped them or
+    /// left them unmapped.
+    claimed: HashSet<InstId>,
 }
 
 impl<'a, 'db> FunctionLowerer<'a, 'db> {
@@ -609,6 +622,7 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
             yul_functions: Vec::new(),
             yul_returns: None,
             function,
+            claimed: HashSet::new(),
         }
     }
 
@@ -758,26 +772,29 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
         result
     }
 
-    /// Gives every instruction created since `watermark` that has no origin
-    /// yet the origin of a statement at `span`. A zero-width span has no
-    /// origin and stamps nothing. Code that no statement made (the implicit
-    /// return, the fall-through stop, phis made when blocks are sealed) is
-    /// never stamped and stays unmapped.
+    /// Gives every instruction created since `watermark` that no nested
+    /// statement has taken the origin of a statement at `span`. A zero-width
+    /// span has no origin: it takes the instructions and leaves them unmapped,
+    /// so an enclosing statement does not claim them. Code that no statement
+    /// made (the implicit return, the fall-through stop, phis made when blocks
+    /// are sealed) is never stamped and stays unmapped.
     fn stamp_insts_since(&mut self, watermark: usize, span: hir::span::Span<'db>) {
         let end = self.fb.func.dfg.num_insts();
-        if end == watermark {
+        if !self.module.stamp_origins || end == watermark {
             return;
         }
-        let Some(origin) = stmt_origin(self.function, span).resolve(self.module.db) else {
-            return;
-        };
-        let origin: Arc<str> = Arc::from(origin.encode());
+        let origin = stmt_origin(self.function, span)
+            .resolve(self.module.db)
+            .map(|origin| Arc::<str>::from(origin.encode()));
         for index in watermark..end {
             let inst = InstId(index as u32);
-            if self.fb.func.inst_frontend_origin(inst).is_none() {
+            if !self.claimed.insert(inst) {
+                continue;
+            }
+            if let Some(origin) = &origin {
                 self.fb
                     .func
-                    .set_inst_frontend_origin(inst, Arc::clone(&origin));
+                    .set_inst_frontend_origin(inst, Arc::clone(origin));
             }
         }
     }
