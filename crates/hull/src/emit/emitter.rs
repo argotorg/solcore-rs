@@ -440,6 +440,13 @@ impl<'db> Emitter<'db> {
             .map(|body| self.emit_stmts(body))
             .unwrap_or_default();
         self.predeclared_lets.truncate(predeclared);
+        // An absent `else` has no text of its own: its arm is empty and sits at
+        // the end of the `if`.
+        let else_span = if else_body.is_some() {
+            span
+        } else {
+            Span::new(span.anchor(), span.end(), span.end())
+        };
         out.push(Stmt {
             span,
             kind: StmtKind::Match {
@@ -456,9 +463,9 @@ impl<'db> Emitter<'db> {
                         body: then_stmts,
                     },
                     Alt {
-                        span,
+                        span: else_span,
                         pat: Pat {
-                            span,
+                            span: else_span,
                             kind: PatKind::Con(Con::Inl),
                         },
                         binder: self.fresh_alt().into(),

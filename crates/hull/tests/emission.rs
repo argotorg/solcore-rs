@@ -1077,3 +1077,201 @@ fn regressions_strings_revert_literal(fixture: Fixture<&str>) {
         assert!(!hull.contains("0x6e128399"), "{hull}");
     });
 }
+
+/// Number of leading spaces of an origin listing line.
+fn listing_indent(line: &str) -> usize {
+    line.len() - line.trim_start().len()
+}
+
+/// The lines below the header of the listed function whose name starts with
+/// `name_prefix`, up to the next node at the header's depth or above.
+fn listing_function<'a>(listing: &'a str, name_prefix: &str) -> Vec<&'a str> {
+    let lines = listing.lines().collect::<Vec<_>>();
+    let header = lines
+        .iter()
+        .position(|line| {
+            line.trim_start()
+                .strip_prefix("fn ")
+                .is_some_and(|rest| rest.starts_with(name_prefix))
+        })
+        .unwrap_or_else(|| panic!("missing listed function {name_prefix:?}\n{listing}"));
+    let depth = listing_indent(lines[header]);
+    lines[header + 1..]
+        .iter()
+        .copied()
+        .take_while(|line| listing_indent(line) > depth)
+        .collect()
+}
+
+/// The `start-end` range of a listing line that ends in a range and a file.
+fn listing_range(line: &str) -> (usize, usize) {
+    let range = line
+        .split_whitespace()
+        .rev()
+        .nth(1)
+        .unwrap_or_else(|| panic!("listing line without a range: {line:?}"));
+    let (start, end) = range
+        .split_once('-')
+        .unwrap_or_else(|| panic!("listing line without a range: {line:?}"));
+    (
+        start.parse().expect("range start"),
+        end.parse().expect("range end"),
+    )
+}
+
+/// The range of the word literal `value` in `function`, and the range of the
+/// statement that holds it.
+fn literal_and_statement(function: &[&str], value: &str) -> ((usize, usize), (usize, usize)) {
+    let literal = function
+        .iter()
+        .position(|line| line.trim_start().starts_with(&format!("E word {value} ")))
+        .unwrap_or_else(|| panic!("missing literal {value}:\n{}", function.join("\n")));
+    let statement = function[..literal]
+        .iter()
+        .rposition(|line| {
+            listing_indent(line) < listing_indent(function[literal])
+                && line.trim_start().starts_with("S ")
+        })
+        .expect("a literal sits inside a statement");
+    (
+        listing_range(function[literal]),
+        listing_range(function[statement]),
+    )
+}
+
+#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/regressions/locations/folded_value", glob: "main.sol")]
+fn locations_folded_value_is_located_at_the_request(fixture: Fixture<&str>) {
+    let source = fixture.content().to_string();
+    with_emission(fixture, FixtureOptions::default(), move |db, emitted| {
+        assert_emission_diagnostics(&emitted, true);
+        let listing = solcore_hull::origin_listing(db, &emitted.program);
+
+        // Fires: `outer()` folds to the literal in `inner`. The literal is
+        // located at the call that asked for it, inside its statement.
+        let folded = listing_function(&listing, "main_C_folded_");
+        let (literal, statement) = literal_and_statement(&folded, "42");
+        assert_eq!(&source[literal.0..literal.1], "outer()", "{listing}");
+        assert!(
+            statement.0 <= literal.0 && literal.1 <= statement.1,
+            "{literal:?} is outside {statement:?}\n{listing}"
+        );
+
+        // Silent: a literal written in the statement keeps its own range.
+        let direct = listing_function(&listing, "main_C_direct_");
+        let (literal, statement) = literal_and_statement(&direct, "7");
+        assert_eq!(&source[literal.0..literal.1], "7", "{listing}");
+        assert!(
+            statement.0 <= literal.0 && literal.1 <= statement.1,
+            "{literal:?} is outside {statement:?}\n{listing}"
+        );
+    });
+}
+
+#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/regressions/locations/closure_capture", glob: "main.sol")]
+fn locations_capture_bindings_are_located_at_the_lambda(fixture: Fixture<&str>) {
+    let source = fixture.content().to_string();
+    with_emission(fixture, FixtureOptions::default(), move |db, emitted| {
+        assert_emission_diagnostics(&emitted, true);
+        let listing = solcore_hull::origin_listing(db, &emitted.program);
+
+        // Fires: each capture binding has the range of a lifted lambda, which
+        // is the text of a `lam` expression.
+        let lambdas = listing
+            .lines()
+            .filter(|line| line.trim_start().starts_with("fn __lambda"))
+            .map(listing_range)
+            .collect::<Vec<_>>();
+        assert_eq!(lambdas.len(), 2, "{listing}");
+        let capturing = listing_function(&listing, "main_C_capturing_");
+        let captures = capturing
+            .iter()
+            .filter(|line| line.trim_start().starts_with("S let $captured"))
+            .map(|line| listing_range(line))
+            .collect::<Vec<_>>();
+        assert_eq!(captures.len(), 2, "{}", capturing.join("\n"));
+        for range in captures {
+            assert!(lambdas.contains(&range), "{range:?} in {lambdas:?}");
+            assert!(source[range.0..range.1].starts_with("lam "), "{range:?}");
+        }
+
+        // Silent: a lambda without a capture needs no capture binding.
+        let plain = listing_function(&listing, "main_C_plain_");
+        assert!(
+            plain.iter().all(|line| !line.contains("$captured")),
+            "{}",
+            plain.join("\n")
+        );
+    });
+}
+
+#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/regressions/locations/implicit_else", glob: "main.sol")]
+fn locations_implicit_else_has_no_text(fixture: Fixture<&str>) {
+    use solcore_hull::{Con, Function, Object, PatKind, Program, Stmt, StmtKind};
+
+    fn if_matches<'a, 'db>(stmts: &'a [Stmt<'db>], found: &mut Vec<&'a Stmt<'db>>) {
+        for stmt in stmts {
+            match &stmt.kind {
+                StmtKind::Match { alts, .. } => {
+                    if alts.len() == 2 && alts[1].pat.kind == PatKind::Con(Con::Inl) {
+                        found.push(stmt);
+                    }
+                    for alt in alts {
+                        if_matches(&alt.body, found);
+                    }
+                }
+                StmtKind::Block(body) => if_matches(body, found),
+                _ => {}
+            }
+        }
+    }
+
+    fn all_functions<'a, 'db>(program: &'a Program<'db>) -> Vec<&'a Function<'db>> {
+        fn in_object<'a, 'db>(object: &'a Object<'db>, out: &mut Vec<&'a Function<'db>>) {
+            out.extend(&object.code.functions);
+            for inner in &object.inners {
+                in_object(inner, out);
+            }
+        }
+        let mut out = program.functions.iter().collect::<Vec<_>>();
+        for object in &program.objects {
+            in_object(object, &mut out);
+        }
+        out
+    }
+
+    fn the_if<'a, 'db>(functions: &[&'a Function<'db>], prefix: &str) -> &'a Stmt<'db> {
+        let function = functions
+            .iter()
+            .find(|function| function.name.to_string().starts_with(prefix))
+            .unwrap_or_else(|| panic!("missing function {prefix}"));
+        let mut found = Vec::new();
+        if_matches(&function.body, &mut found);
+        assert_eq!(found.len(), 1, "{prefix}");
+        found[0]
+    }
+
+    with_emission(fixture, FixtureOptions::default(), |_, emitted| {
+        assert_emission_diagnostics(&emitted, true);
+        let functions = all_functions(&emitted.program);
+
+        // Fires: an absent `else` is empty and sits at the end of the `if`.
+        let stmt = the_if(&functions, "main_C_without_else_");
+        let StmtKind::Match { alts, .. } = &stmt.kind else {
+            unreachable!()
+        };
+        assert_eq!(alts[0].span, stmt.span);
+        for span in [alts[1].span, alts[1].pat.span] {
+            assert_eq!(span.anchor(), stmt.span.anchor());
+            assert_eq!(span.begin(), stmt.span.end());
+            assert_eq!(span.end(), stmt.span.end());
+        }
+
+        // Silent: a written `else` keeps the range of the whole statement.
+        let stmt = the_if(&functions, "main_C_with_else_");
+        let StmtKind::Match { alts, .. } = &stmt.kind else {
+            unreachable!()
+        };
+        assert_eq!(alts[1].span, stmt.span);
+        assert_eq!(alts[1].pat.span, stmt.span);
+    });
+}

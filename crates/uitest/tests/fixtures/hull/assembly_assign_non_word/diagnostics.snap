@@ -3,16 +3,6 @@ source: crates/test-utils/src/lib.rs
 expression: rendered
 input_file: crates/uitest/tests/fixtures/hull/assembly_assign_non_word/main.sol
 ---
-error[SC0434]: Hull type mismatch: expected (unit + unit), got word
-  --> /main/main.sol:9:13
-   |
- 8 |     function main() public returns (word) {
- 9 |         let b: bool = false;
-   |             ^ type mismatch
-10 |         assembly {
-   |
----
-
 error[SC0448]: inline assembly assignment to `b` requires word type, got (unit + unit)
   --> /main/main.sol:11:13
    |
@@ -20,4 +10,14 @@ error[SC0448]: inline assembly assignment to `b` requires word type, got (unit +
 11 |             b := add(1, 1)
    |             ^^^^^^^^^^^^^^ assembly assignment must be word
 12 |         }
+   |
+---
+
+error[SC0434]: Hull type mismatch: expected (unit + unit), got word
+  --> /main/main.sol:13:13
+   |
+12 |         }
+13 |         if (b) {
+   |             ^ type mismatch
+14 |             return 1;
    |

@@ -1555,6 +1555,28 @@ impl<'db> Evaluator<'db> {
         expr: MonoExpr<'db>,
     ) -> MonoExpr<'db> {
         let span = expr.span;
+        let mut out = self.eval_expr_inner(env, comptime_env, expr);
+        // A value computed at compile time executes nothing at run time. It is
+        // located at the expression that asked for it, not at the text that
+        // produced it. Lambdas and closure values keep their own location,
+        // since the lifted function is the lambda's run-time code.
+        if out.span != span && self.is_plain_data_value(&out) {
+            locate_plain_value(&mut out, span);
+        }
+        out
+    }
+
+    fn is_plain_data_value(&self, expr: &MonoExpr<'db>) -> bool {
+        self.expr_is_known_value(expr) && !self.value_contains_callable(expr)
+    }
+
+    fn eval_expr_inner(
+        &mut self,
+        env: &VEnv<'db>,
+        comptime_env: &CEnv,
+        expr: MonoExpr<'db>,
+    ) -> MonoExpr<'db> {
+        let span = expr.span;
         let ty = expr.ty;
         match expr.kind {
             MonoExprKind::Var(id) => env
@@ -3529,6 +3551,21 @@ fn yul_stmts_have_leave(stmts: &[YulStmt<'_>]) -> bool {
         | YulStmtKind::Continue
         | YulStmtKind::Error => false,
     })
+}
+
+/// Locates every node of a plain data value at `span`. The parts of a
+/// constructor or tuple value are computed at compile time together with it.
+fn locate_plain_value<'db>(expr: &mut MonoExpr<'db>, span: Span<'db>) {
+    expr.span = span;
+    match &mut expr.kind {
+        MonoExprKind::Tuple(parts) | MonoExprKind::Con { args: parts, .. } => {
+            for part in parts {
+                locate_plain_value(part, span);
+            }
+        }
+        MonoExprKind::TypeAnnot { expr, .. } => locate_plain_value(expr, span),
+        _ => {}
+    }
 }
 
 fn materialize_comptime_value<'db>(db: &'db dyn Db, expr: MonoExpr<'db>) -> MonoExpr<'db> {
