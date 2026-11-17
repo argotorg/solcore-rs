@@ -1,13 +1,15 @@
 use super::*;
 
-/// Dictionary identity, separate from the path used to discover it. Projecting
-/// the same predicate from one local dictionary is independent of the sequence
-/// of superclass edges; other dictionaries retain their complete prerequisites.
+/// Dictionary identity, separate from the path used to discover it. A
+/// dictionary rooted in local givens is identified by its predicate alone,
+/// whichever given and superclass edges lead to it: coherence gives a concrete
+/// predicate a single impl, and specialization normalizes every projection to
+/// that impl's dictionary. Other dictionaries retain their complete
+/// prerequisites.
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub(super) enum DictionaryIdentity<'db> {
     Given {
         pred: Pred<'db>,
-        source: Pred<'db>,
     },
     Instance {
         instance: DefId<'db>,
@@ -71,16 +73,14 @@ impl<'db> Evidence<'db> {
         &self,
         is_given: &impl Fn(Pred<'db>) -> bool,
     ) -> DictionaryIdentity<'db> {
-        if let Some(source) = evidence_root_given(self)
-            && is_given(source)
-        {
+        if evidence_root_given(self).is_some_and(is_given) {
             let pred = match self {
                 Self::Builtin { pred } | Self::Superclass { pred, .. } => *pred,
                 _ => {
                     unreachable!("only given dictionaries and their projections have a given root")
                 }
             };
-            return DictionaryIdentity::Given { pred, source };
+            return DictionaryIdentity::Given { pred };
         }
         match self {
             Self::Instance {
@@ -250,8 +250,8 @@ pub(super) fn solution_from_answers<'db>(
         return Solution::NoSolution;
     };
 
-    let mut seen_candidates = FxHashSet::default();
-    let mut candidates = Vec::new();
+    let mut seen_candidates = FxHashMap::default();
+    let mut candidates: Vec<Candidate<'db>> = Vec::new();
     for answer in answers {
         if answer_priority(db, env, &answer) != best_priority {
             continue;
@@ -260,8 +260,19 @@ pub(super) fn solution_from_answers<'db>(
             .candidate
             .evidence
             .dictionary_identity(&|pred| env.local_givens(db).contains(&pred));
-        if seen_candidates.insert((answer.candidate.subst.clone(), identity)) {
-            candidates.push(answer.candidate);
+        match seen_candidates.get(&(answer.candidate.subst.clone(), identity.clone())) {
+            None => {
+                seen_candidates
+                    .insert((answer.candidate.subst.clone(), identity), candidates.len());
+                candidates.push(answer.candidate);
+            }
+            Some(&index) => {
+                let rank = given_evidence_rank(db, env, &answer.candidate.evidence);
+                let kept = given_evidence_rank(db, env, &candidates[index].evidence);
+                if matches!((rank, kept), (Some(rank), Some(kept)) if rank < kept) {
+                    candidates[index] = answer.candidate;
+                }
+            }
         }
     }
 
@@ -386,6 +397,31 @@ pub(super) fn evidence_root_given<'db>(evidence: &Evidence<'db>) -> Option<Pred<
         Evidence::Builtin { pred } => Some(*pred),
         Evidence::Superclass { child, .. } => evidence_root_given(child),
         Evidence::Instance { .. } | Evidence::Derived { .. } => None,
+    }
+}
+
+/// Every proof of a predicate from local givens denotes one dictionary, so the
+/// rank only picks which proof represents it: the fewest superclass
+/// projections, then the earliest given. The choice is then independent of the
+/// order in which answers arrive.
+fn given_evidence_rank<'db>(
+    db: &'db dyn Db,
+    env: TraitEnvId<'db>,
+    evidence: &Evidence<'db>,
+) -> Option<(usize, usize)> {
+    let source = evidence_root_given(evidence)?;
+    let position = env
+        .local_givens(db)
+        .iter()
+        .position(|given| *given == source)?;
+    Some((given_projection_depth(evidence), position))
+}
+
+/// Number of superclass projections between `evidence` and its given root.
+fn given_projection_depth(evidence: &Evidence<'_>) -> usize {
+    match evidence {
+        Evidence::Superclass { child, .. } => 1 + given_projection_depth(child),
+        Evidence::Builtin { .. } | Evidence::Instance { .. } | Evidence::Derived { .. } => 0,
     }
 }
 
