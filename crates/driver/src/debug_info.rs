@@ -27,29 +27,8 @@ pub(crate) fn ethdebug_files(
     objects: &[CompiledObject],
     opt_level: OptLevel,
 ) -> Result<Vec<(String, String)>, String> {
-    let files: Vec<_> = table
-        .entries()
-        .map(|(id, url, file)| (id, display_path(db, url), file))
-        .collect();
-    let mut sources = Vec::with_capacity(files.len());
-    for (id, path, file) in &files {
-        let contents = (*file)
-            .content(db)
-            .as_deref()
-            .ok_or_else(|| format!("source file `{path}` has no text"))?;
-        if sources
-            .iter()
-            .any(|source: &Source<'_>| source.path == path)
-        {
-            return Err(format!("two source files are named `{path}`"));
-        }
-        sources.push(Source {
-            id: *id,
-            path,
-            contents,
-            language: LANGUAGE,
-        });
-    }
+    let paths = source_paths(db, table)?;
+    let sources = sources(db, table, &paths)?;
     let id = compilation_id(opt_level, &sources);
     let compilation = Compilation {
         id: &id,
@@ -99,11 +78,78 @@ pub(crate) fn ethdebug_files(
         }
     }
     out.into_iter()
-        .map(|(name, json)| {
-            let mut text = serde_json::to_string_pretty(&json)
-                .map_err(|err| format!("failed to render `{name}`: {err}"))?;
-            text.push('\n');
-            Ok((name, text))
+        .map(|(name, json)| json_file(name, &json))
+        .collect()
+}
+
+/// `ethdebug_compilation.json` alone, to describe the source ids of
+/// `--yul-locations` output. It is the file `--ethdebug` writes, so the ids,
+/// paths and compilation id are the same in both.
+pub(crate) fn compilation_file(
+    db: &DriverDb,
+    table: &SourceTable,
+    paths: &[(u32, String)],
+    opt_level: OptLevel,
+) -> Result<(String, String), String> {
+    let sources = sources(db, table, paths)?;
+    let id = compilation_id(opt_level, &sources);
+    let compilation = Compilation {
+        id: &id,
+        compiler_name: "solcore",
+        compiler_version: COMPILER_VERSION,
+        sources: &sources,
+    };
+    json_file(
+        "ethdebug_compilation.json".to_owned(),
+        &ethdebug::compilation_json(&compilation),
+    )
+}
+
+fn json_file(name: String, json: &serde_json::Value) -> Result<(String, String), String> {
+    let mut text = serde_json::to_string_pretty(json)
+        .map_err(|err| format!("failed to render `{name}`: {err}"))?;
+    text.push('\n');
+    Ok((name, text))
+}
+
+/// The `(id, path)` of every file of the program, under the names that every
+/// output uses (`@use-src` lines and ethdebug sources alike). Two files may not
+/// share a name.
+pub(crate) fn source_paths(
+    db: &DriverDb,
+    table: &SourceTable,
+) -> Result<Vec<(u32, String)>, String> {
+    let mut paths: Vec<(u32, String)> = Vec::new();
+    for (id, url, _) in table.entries() {
+        let path = display_path(db, url);
+        if paths.iter().any(|(_, seen)| *seen == path) {
+            return Err(format!("two source files are named `{path}`"));
+        }
+        paths.push((id, path));
+    }
+    Ok(paths)
+}
+
+/// The files of `paths`, with their text.
+fn sources<'a>(
+    db: &'a DriverDb,
+    table: &SourceTable,
+    paths: &'a [(u32, String)],
+) -> Result<Vec<Source<'a>>, String> {
+    table
+        .entries()
+        .zip(paths)
+        .map(|((id, _, file), (_, path))| {
+            let contents = file
+                .content(db)
+                .as_deref()
+                .ok_or_else(|| format!("source file `{path}` has no text"))?;
+            Ok(Source {
+                id,
+                path,
+                contents,
+                language: LANGUAGE,
+            })
         })
         .collect()
 }

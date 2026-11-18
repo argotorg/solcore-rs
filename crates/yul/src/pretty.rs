@@ -23,7 +23,7 @@ impl PrettyYul for Program {
             if index > 0 {
                 out.push('\n');
             }
-            write_object(&mut out, object, 0);
+            write_object(&mut out, object, 0, &[]);
         }
         out
     }
@@ -32,7 +32,7 @@ impl PrettyYul for Program {
 impl PrettyYul for Object {
     fn to_yul_string(&self) -> String {
         let mut out = String::new();
-        write_object(&mut out, self, 0);
+        write_object(&mut out, self, 0, &[]);
         out
     }
 }
@@ -59,7 +59,24 @@ impl PrettyYul for Expr {
     }
 }
 
-fn write_object(out: &mut String, object: &Object, indent: usize) {
+/// Prints `object` with `/// @use-src` before it and every object inside it,
+/// naming the `(id, path)` source files that its `@src` annotations use. solc
+/// reads the annotations of an object only through its own `@use-src` line.
+pub fn pretty_object_with_sources(object: &Object, sources: &[(u32, String)]) -> String {
+    let mut out = String::new();
+    write_object(&mut out, object, 0, sources);
+    out
+}
+
+fn write_object(out: &mut String, object: &Object, indent: usize, sources: &[(u32, String)]) {
+    if !sources.is_empty() {
+        let list = sources
+            .iter()
+            .map(|(id, path)| format!("{id}:\"{}\"", escape_string(path)))
+            .collect::<Vec<_>>()
+            .join(", ");
+        line(out, indent, &format!("/// @use-src {list}"));
+    }
     line(
         out,
         indent,
@@ -68,7 +85,7 @@ fn write_object(out: &mut String, object: &Object, indent: usize) {
     write_code(out, &object.code, indent + 1);
     for inner in &object.inners {
         match inner {
-            Inner::Object(object) => write_object(out, object, indent + 1),
+            Inner::Object(object) => write_object(out, object, indent + 1, sources),
             Inner::Data(data) => write_data(out, data, indent + 1),
         }
     }
@@ -194,6 +211,10 @@ fn write_stmt(out: &mut String, stmt: &Stmt, indent: usize) {
                 &format!("/* {} */", comment.replace("*/", "* /")),
             );
         }
+        Stmt::SrcLoc(Some((id, start, end))) => {
+            line(out, indent, &format!("/// @src {id}:{start}:{end}"))
+        }
+        Stmt::SrcLoc(None) => line(out, indent, "/// @src -1:-1:-1"),
         Stmt::Expr(value) => line(out, indent, &render_expr(value)),
     }
 }

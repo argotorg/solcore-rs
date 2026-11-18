@@ -24,3 +24,4 @@ parser = { workspace = true }
 salsa = { workspace = true }
 solcore-test-utils = { path = "../test-utils" }
 specialize = { path = "../specialize", package = "solcore-specialize" }
+yul = { path = "../yul", package = "solcore-yul" }

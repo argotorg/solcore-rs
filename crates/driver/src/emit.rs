@@ -1,4 +1,5 @@
 use std::{
+    cell::LazyCell,
     collections::BTreeMap,
     fmt::Write as _,
     fs,
@@ -15,7 +16,7 @@ use url::Url;
 use crate::{
     args::{Args, EmitTarget, OPT_LEVELS},
     db::DriverDb,
-    debug_info::ethdebug_files,
+    debug_info::{compilation_file, ethdebug_files, source_paths},
 };
 
 #[derive(Debug)]
@@ -117,10 +118,31 @@ pub(crate) fn maybe_emit_backend_outputs(
         };
         write_emit_output(target, args.output_dir.as_deref(), &text)?;
     }
+    // One table per compile, shared by every output that names source files.
+    let table = LazyCell::new(|| SourceTable::from_program(db, &program));
     if let Some(target) = &args.emit_yul {
-        let yul = yul::render_hull_program_object(db, &program, args.emit_yul_object.as_deref())
-            .map_err(|err| BackendFailure::Message(format!("Yul translation failed:\n  {err}")))?;
+        let object = args.emit_yul_object.as_deref();
+        let failed = |err| BackendFailure::Message(format!("Yul translation failed:\n  {err}"));
+        let mut compilation = None;
+        let yul = if args.yul_locations {
+            let paths = source_paths(db, &table).map_err(BackendFailure::Message)?;
+            if args.output_dir.is_some() {
+                // Describes the source ids that the annotations use.
+                compilation = Some(
+                    compilation_file(db, &table, &paths, args.opt_level)
+                        .map_err(BackendFailure::Message)?,
+                );
+            }
+            yul::render_hull_program_object_with_locations(db, &program, object, &table, &paths)
+        } else {
+            yul::render_hull_program_object(db, &program, object)
+        }
+        .map_err(failed)?;
         write_emit_output(target, args.output_dir.as_deref(), &yul)?;
+        if let Some((name, text)) = compilation {
+            write_output_file(Path::new(&name), args.output_dir.as_deref(), &text)
+                .map_err(BackendFailure::Message)?;
+        }
     }
     if let Some(target) = &args.emit_sonatina {
         let sonatina = sonatina::render_hull_program(db, &program).map_err(|err| {
@@ -138,7 +160,6 @@ pub(crate) fn maybe_emit_backend_outputs(
             },
         )
         .map_err(|err| BackendFailure::Message(format!("Sonatina compilation failed:\n  {err}")))?;
-        let table = SourceTable::from_program(db, &program);
         let coverage = match &args.coverage {
             Some(target) => Some((
                 target,

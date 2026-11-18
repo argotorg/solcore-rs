@@ -973,6 +973,79 @@ contract C {
 }
 
 #[test]
+fn cli_annotates_yul_with_source_locations() {
+    let dir = temp_dir("yul-locations");
+    fs::create_dir_all(&dir).expect("create temp dir");
+    let input = dir.join("main.sol");
+    fs::write(
+        &input,
+        r#"
+pragma solcore;
+import * from std;
+import * from std.dispatch;
+
+contract C {
+    function twice(x: uint256) public returns (uint256) {
+        return x + x;
+    }
+}
+"#,
+    )
+    .expect("write source");
+    let std_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std");
+    let driver = |args: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_solcore-driver"))
+            .args(args)
+            .arg("--std-root")
+            .arg(&std_root)
+            .arg(&input)
+            .output()
+            .expect("run driver")
+    };
+
+    let out_dir = dir.join("out");
+    let output = driver(&[
+        "--emit-yul=C.yul",
+        "--yul-locations",
+        "-o",
+        out_dir.to_str().unwrap(),
+    ]);
+    assert!(
+        output.status.success(),
+        "driver failed\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let yul = fs::read_to_string(out_dir.join("C.yul")).expect("read Yul");
+    let compilation = fs::read_to_string(out_dir.join("ethdebug_compilation.json"))
+        .expect("the compilation file describes the ids");
+    let compilation: serde_json::Value = serde_json::from_str(&compilation).expect("valid JSON");
+    let sources = compilation["sources"].as_array().expect("sources");
+    // Every object lists the same files, under the ids and paths of ethdebug.
+    let list = sources
+        .iter()
+        .map(|source| format!("{}:{}", source["id"], source["path"]))
+        .collect::<Vec<_>>()
+        .join(", ");
+    assert_eq!(yul.matches(&format!("/// @use-src {list}\n")).count(), 2);
+    let main = sources.iter().find(|source| source["path"] == "main.sol");
+    let main = main.expect("main.sol is a source")["id"].clone();
+    assert!(yul.contains(&format!("/// @src {main}:")), "{yul}");
+    assert!(yul.contains("/// @src -1:-1:-1"), "{yul}");
+
+    let rejected = driver(&["--yul-locations"]);
+    assert_eq!(rejected.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&rejected.stderr);
+    assert!(
+        stderr.contains("--yul-locations requires --emit-yul"),
+        "{stderr}"
+    );
+    let rejected = driver(&["--emit-yul", "--yul-locations=flat"]);
+    assert_eq!(rejected.status.code(), Some(2));
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn cli_emits_memory_array_return_abi_and_both_backends() {
     let dir = temp_dir("memory-array-return");
     fs::create_dir_all(&dir).expect("create temp dir");

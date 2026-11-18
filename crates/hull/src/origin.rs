@@ -74,26 +74,52 @@ pub enum Origin<'db> {
     },
 }
 
+/// What decides the origin of the statements of a function: its generated mark
+/// and its own span. A translator that cannot hold the function itself keeps
+/// this and calls [`stmt_origin_in`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FunctionScope<'db> {
+    generated: Option<GeneratedReason>,
+    span: Span<'db>,
+}
+
+impl<'db> FunctionScope<'db> {
+    pub fn of(function: &Function<'db>) -> Self {
+        Self {
+            generated: function.generated,
+            span: function.span,
+        }
+    }
+}
+
 /// The origin of `span` for a statement (Hull or inline Yul) inside `function`.
+/// See [`stmt_origin_in`].
+pub fn stmt_origin<'db>(function: Option<&Function<'db>>, span: Span<'db>) -> Origin<'db> {
+    stmt_origin_in(function.map(FunctionScope::of), span)
+}
+
+/// The origin of `span` for a statement (Hull or inline Yul) inside the
+/// function with this scope.
 ///
-/// `function == None` means object-level code, which is always generated entry
+/// `scope == None` means object-level code, which is always generated entry
 /// code. Inside a function marked as generated, a statement located at the
 /// function's own span is generated (the generators thread one span through
 /// everything they build); a statement with any other span keeps it as source,
 /// as when a generated wrapper inlines library statements.
-pub fn stmt_origin<'db>(function: Option<&Function<'db>>, span: Span<'db>) -> Origin<'db> {
-    match function {
+pub fn stmt_origin_in<'db>(scope: Option<FunctionScope<'db>>, span: Span<'db>) -> Origin<'db> {
+    match scope {
         None => Origin::Generated {
             reason: GeneratedReason::Entry,
             context: span,
         },
-        Some(function) => match function.generated {
-            Some(reason) if span == function.span => Origin::Generated {
-                reason,
-                context: span,
-            },
-            _ => Origin::Source(span),
+        Some(FunctionScope {
+            generated: Some(reason),
+            span: function_span,
+        }) if span == function_span => Origin::Generated {
+            reason,
+            context: span,
         },
+        Some(_) => Origin::Source(span),
     }
 }
 
@@ -119,14 +145,18 @@ pub struct ResolvedOrigin {
 }
 
 impl<'db> Origin<'db> {
+    fn parts(&self) -> (Option<GeneratedReason>, Span<'db>) {
+        match *self {
+            Self::Source(span) => (None, span),
+            Self::Generated { reason, context } => (Some(reason), context),
+        }
+    }
+
     /// Resolves the origin to absolute offsets, or `None` for a zero-width span.
     ///
     /// Edge-only, like [`Span::resolve_to_absolute`].
     pub fn resolve(&self, db: &'db dyn HirDb) -> Option<ResolvedOrigin> {
-        let (generated, span) = match *self {
-            Self::Source(span) => (None, span),
-            Self::Generated { reason, context } => (Some(reason), context),
-        };
+        let (generated, span) = self.parts();
         let absolute = span.resolve_to_absolute(db);
         if absolute.start == absolute.end {
             return None;
@@ -261,7 +291,8 @@ impl SourceTable {
     /// Edge-only, like [`Span::resolve_to_absolute`].
     pub fn from_program<'db>(db: &'db dyn HirDb, program: &Program<'db>) -> Self {
         let mut files = BTreeMap::<String, SourceFile>::new();
-        let mut visit = |span: Span<'db>| {
+        walk_origins(program, &mut |_, origin| {
+            let span = origin.parts().1;
             if span.begin() == span.end() {
                 return;
             }
@@ -270,13 +301,7 @@ impl SourceTable {
             if !files.contains_key(url) {
                 files.insert(url.to_owned(), file);
             }
-        };
-        for function in &program.functions {
-            function_spans(function, &mut visit);
-        }
-        for object in &program.objects {
-            object_spans(object, &mut visit);
-        }
+        });
         Self {
             entries: files.into_iter().collect(),
         }
@@ -338,52 +363,99 @@ pub(crate) fn walk_stmts<'db>(
     }
 }
 
-fn object_spans<'db>(object: &Object<'db>, visit: &mut impl FnMut(Span<'db>)) {
-    for function in &object.code.functions {
-        function_spans(function, visit);
+/// The origin of every Hull statement and inline Yul statement of `program`,
+/// in program order, resolved to absolute ranges. These are the origins a
+/// backend may attribute code to: a function definition is not a statement.
+/// A statement with a zero-width span has no origin and is left out.
+///
+/// Edge-only, like [`Origin::resolve`].
+pub fn statement_origins<'db>(db: &'db dyn HirDb, program: &Program<'db>) -> Vec<ResolvedOrigin> {
+    let mut origins = Vec::new();
+    walk_origins(program, &mut |site, origin| {
+        if site == Site::Statement
+            && let Some(origin) = origin.resolve(db)
+        {
+            origins.push(origin);
+        }
+    });
+    origins
+}
+
+/// What an origin visited by [`walk_origins`] belongs to.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Site {
+    Function,
+    Statement,
+}
+
+/// Calls `visit` with the origin of every function, Hull statement and inline
+/// Yul statement of `program`.
+fn walk_origins<'db>(program: &Program<'db>, visit: &mut impl FnMut(Site, Origin<'db>)) {
+    for function in &program.functions {
+        function_origins(function, visit);
     }
-    walk_stmts(None, &object.code.stmts, 0, &mut |_, stmt, _| {
-        stmt_spans(stmt, visit)
+    for object in &program.objects {
+        object_origins(object, visit);
+    }
+}
+
+fn object_origins<'db>(object: &Object<'db>, visit: &mut impl FnMut(Site, Origin<'db>)) {
+    for function in &object.code.functions {
+        function_origins(function, visit);
+    }
+    walk_stmts(None, &object.code.stmts, 0, &mut |function, stmt, _| {
+        stmt_origins(function, stmt, visit)
     });
     for inner in &object.inners {
-        object_spans(inner, visit);
+        object_origins(inner, visit);
     }
 }
 
-fn function_spans<'db>(function: &Function<'db>, visit: &mut impl FnMut(Span<'db>)) {
-    visit(function.span);
-    walk_stmts(Some(function), &function.body, 0, &mut |_, stmt, _| {
-        stmt_spans(stmt, visit)
-    });
+fn function_origins<'db>(function: &Function<'db>, visit: &mut impl FnMut(Site, Origin<'db>)) {
+    visit(Site::Function, function_origin(function));
+    walk_stmts(
+        Some(function),
+        &function.body,
+        0,
+        &mut |function, stmt, _| stmt_origins(function, stmt, visit),
+    );
 }
 
-fn stmt_spans<'db>(stmt: &Stmt<'db>, visit: &mut impl FnMut(Span<'db>)) {
-    visit(stmt.span);
+fn stmt_origins<'db>(
+    function: Option<&Function<'db>>,
+    stmt: &Stmt<'db>,
+    visit: &mut impl FnMut(Site, Origin<'db>),
+) {
+    visit(Site::Statement, stmt_origin(function, stmt.span));
     if let StmtKind::Assembly(body) = &stmt.kind {
-        yul_stmts_spans(body, visit);
+        yul_stmts_origins(function, body, visit);
     }
 }
 
-fn yul_stmts_spans<'db>(stmts: &[YulStmt<'db>], visit: &mut impl FnMut(Span<'db>)) {
+fn yul_stmts_origins<'db>(
+    function: Option<&Function<'db>>,
+    stmts: &[YulStmt<'db>],
+    visit: &mut impl FnMut(Site, Origin<'db>),
+) {
     for stmt in stmts {
-        visit(stmt.span);
+        visit(Site::Statement, stmt_origin(function, stmt.span));
         match &stmt.kind {
             YulStmtKind::Block(body)
             | YulStmtKind::If { body, .. }
-            | YulStmtKind::FunctionDef { body, .. } => yul_stmts_spans(body, visit),
+            | YulStmtKind::FunctionDef { body, .. } => yul_stmts_origins(function, body, visit),
             YulStmtKind::For {
                 init, post, body, ..
             } => {
-                yul_stmts_spans(init, visit);
-                yul_stmts_spans(post, visit);
-                yul_stmts_spans(body, visit);
+                yul_stmts_origins(function, init, visit);
+                yul_stmts_origins(function, post, visit);
+                yul_stmts_origins(function, body, visit);
             }
             YulStmtKind::Switch { cases, default, .. } => {
                 for case in cases {
-                    yul_stmts_spans(&case.body, visit);
+                    yul_stmts_origins(function, &case.body, visit);
                 }
                 if let Some(default) = default {
-                    yul_stmts_spans(default, visit);
+                    yul_stmts_origins(function, default, visit);
                 }
             }
             YulStmtKind::Let { .. }

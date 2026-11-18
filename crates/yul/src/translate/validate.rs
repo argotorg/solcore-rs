@@ -7,16 +7,17 @@ use super::{
 };
 use crate::{
     ast::{Code, Expr, Inner, Literal, Object, Program, Stmt},
-    pretty::pretty_object,
+    pretty::pretty_object_with_sources,
 };
 
 pub(super) fn render_strict_assembly_program(
     program: &Program,
     object_name: Option<&str>,
+    sources: &[(u32, String)],
 ) -> Result<String, TranslationError> {
     let object = select_strict_object(program, object_name)?;
     validate_object(object)?;
-    Ok(pretty_object(object))
+    Ok(pretty_object_with_sources(object, sources))
 }
 
 fn select_strict_object<'a>(
@@ -150,7 +151,7 @@ fn validate_stmt(stmt: &Stmt, region: ControlRegion) -> Result<(), TranslationEr
         }
         Stmt::Break => validate_break_continue("break", region),
         Stmt::Continue => validate_break_continue("continue", region),
-        Stmt::Leave | Stmt::Comment(_) => Ok(()),
+        Stmt::Leave | Stmt::Comment(_) | Stmt::SrcLoc(_) => Ok(()),
         Stmt::Expr(expr) => validate_expr(expr),
     }
 }

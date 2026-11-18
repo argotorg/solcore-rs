@@ -53,6 +53,8 @@ pub(crate) struct Args {
     pub(crate) hull_origins: bool,
     /// Optional Yul output target.
     pub(crate) emit_yul: Option<EmitTarget>,
+    /// Annotates the Yul output with `@use-src` and `@src` source locations.
+    pub(crate) yul_locations: bool,
     /// Optional Sonatina IR output target.
     pub(crate) emit_sonatina: Option<EmitTarget>,
     /// Writes `<contract>.bin` and `<contract>.bin-runtime` for each contract.
@@ -131,6 +133,7 @@ pub(crate) fn parse_args(args: Vec<OsString>) -> Result<ParsedArgs, String> {
     let mut emit_hull = None;
     let mut hull_origins = false;
     let mut emit_yul = None;
+    let mut yul_locations = false;
     let mut emit_sonatina = None;
     let mut emit_bin = false;
     let mut opt_level = None;
@@ -276,6 +279,9 @@ pub(crate) fn parse_args(args: Vec<OsString>) -> Result<ParsedArgs, String> {
             Some("--emit-yul") => {
                 emit_yul = Some(EmitTarget::Stdout);
             }
+            Some("--yul-locations") => {
+                yul_locations = true;
+            }
             Some("--emit-sonatina") => {
                 emit_sonatina = Some(EmitTarget::Stdout);
             }
@@ -327,6 +333,15 @@ pub(crate) fn parse_args(args: Vec<OsString>) -> Result<ParsedArgs, String> {
                     return Err("--coverage= requires FILE".to_owned());
                 }
                 coverage = Some(EmitTarget::File(PathBuf::from(value)));
+            }
+            Some("--yul-locations=per-file") => {
+                yul_locations = true;
+            }
+            Some(arg) if arg.starts_with("--yul-locations=") => {
+                return Err(format!(
+                    "unknown mode `{}` for --yul-locations (expected per-file)",
+                    &arg["--yul-locations=".len()..]
+                ));
             }
             Some(arg) if arg.starts_with("--emit-yul-object=") => {
                 let value = &arg["--emit-yul-object=".len()..];
@@ -456,6 +471,9 @@ pub(crate) fn parse_args(args: Vec<OsString>) -> Result<ParsedArgs, String> {
     if hull_origins && emit_hull.is_none() {
         return Err("--hull-origins requires --emit-hull".to_owned());
     }
+    if yul_locations && emit_yul.is_none() {
+        return Err("--yul-locations requires --emit-yul".to_owned());
+    }
     if emit_yul_object.is_some() && emit_yul.is_none() {
         return Err("--emit-yul-object requires --emit-yul".to_owned());
     }
@@ -483,6 +501,7 @@ pub(crate) fn parse_args(args: Vec<OsString>) -> Result<ParsedArgs, String> {
         emit_hull,
         hull_origins,
         emit_yul,
+        yul_locations,
         emit_sonatina,
         emit_bin,
         opt_level: opt_level.unwrap_or_default(),
@@ -712,6 +731,12 @@ Options:
   --hull-origins                     With --emit-hull, list the origin of each Hull function and
                                       statement (source range or generated code) instead of the Hull text
   --emit-yul[=FILE]                  Emit Yul strict assembly to stdout or FILE
+  --yul-locations[=per-file]         Annotate --emit-yul output with a source location before each
+                                      statement (/// @src ID:START:END, with /// @use-src naming the
+                                      files), one id per source file. With --output-dir, also write
+                                      ethdebug_compilation.json to describe the ids. solc up to 0.8.38
+                                      ignores source ids in Yul input, so its ethdebug output for these
+                                      annotations attributes library ranges to source 0
   --emit-sonatina[=FILE]             Emit Sonatina IR to stdout or FILE
   --bin                              Compile through Sonatina and write <contract>.bin and
                                       <contract>.bin-runtime (hex) for each contract

@@ -2,7 +2,10 @@
 //! debug info does not change the bytes (law L8), and every mapped range names
 //! an origin of the program.
 
-use std::{collections::BTreeMap, path::PathBuf};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    path::PathBuf,
+};
 
 use hir::{
     diag::{DiagnosticLevel, Offset},
@@ -11,7 +14,7 @@ use hir::{
 };
 use hull::{
     Expr, ExprKind, Function, Program, Stmt, StmtKind, Ty,
-    origin::{GeneratedReason, ResolvedOrigin, SourceTable},
+    origin::{GeneratedReason, ResolvedOrigin, SourceTable, statement_origins},
 };
 use nameres::{Db as _, module_id_from_key};
 use parser::parse_file_to_hir;
@@ -102,6 +105,85 @@ fn origin_debug_info_does_not_change_the_bytes() {
                         assert!(len as usize <= section.bytes.len(), "{name} {opt_level:?}");
                     }
                 }
+            }
+        }
+    });
+}
+
+/// Law L3. The Yul annotations and the byte map of the Sonatina route at O0
+/// name ranges of the same statement origins: the ranges of both are origins of
+/// the program, and every range the byte map attributes to source is annotated in
+/// the Yul (the plan asks for it in the user's file; it holds for all files).
+#[test]
+fn origin_yul_annotations_and_the_byte_map_name_the_same_ranges() {
+    run_in_large_stack(|| {
+        for name in FIXTURES {
+            let (db, program) = lower_fixture(name);
+            let table = SourceTable::from_program(db, &program);
+            let paths: Vec<_> = table
+                .entries()
+                .map(|(id, url, _)| (id, url.to_owned()))
+                .collect();
+            let yul =
+                yul::render_hull_program_object_with_locations(db, &program, None, &table, &paths)
+                    .expect("Yul translation");
+            let annotated: BTreeSet<(u32, u32, u32)> = yul
+                .lines()
+                .filter_map(|line| line.trim().strip_prefix("/// @src "))
+                .filter(|range| *range != "-1:-1:-1")
+                .map(|range| {
+                    let parts: Vec<u32> = range.split(':').map(|n| n.parse().unwrap()).collect();
+                    (parts[0], parts[1], parts[2])
+                })
+                .collect();
+            let in_table = |origin: ResolvedOrigin| {
+                (origin.generated.is_none()).then(|| {
+                    let id = table.id(&origin.url).expect("a file of the table");
+                    (id, origin.start, origin.end)
+                })
+            };
+            let statements: BTreeSet<_> = statement_origins(db, &program)
+                .into_iter()
+                .filter_map(in_table)
+                .collect();
+            let mapped: BTreeSet<_> = compile(db, &program, OptLevel::O0, true)
+                .iter()
+                .flat_map(|object| [Some(&object.init), object.runtime.as_ref()])
+                .flatten()
+                .flat_map(|section| &section.map)
+                .filter_map(|range| range.origin.as_ref().ok())
+                .filter_map(|stamp| in_table(ResolvedOrigin::parse(stamp).expect("an origin")))
+                .collect();
+            let user = table
+                .entries()
+                .find(|(_, url, _)| url.ends_with(&format!("/{name}/main.sol")))
+                .map(|(id, ..)| id)
+                .expect("the program has its main file");
+            let mapped_in_user_file: BTreeSet<_> = mapped
+                .iter()
+                .copied()
+                .filter(|range| range.0 == user)
+                .collect();
+
+            println!(
+                "{name}: yul {} statements {} byte map {} (user file {})",
+                annotated.len(),
+                statements.len(),
+                mapped.len(),
+                mapped_in_user_file.len()
+            );
+            let outside = |set: &BTreeSet<_>, of: &BTreeSet<_>| -> Vec<(u32, u32, u32)> {
+                set.difference(of).copied().collect()
+            };
+            for (what, ranges) in [
+                (
+                    "annotated, not a statement",
+                    outside(&annotated, &statements),
+                ),
+                ("mapped, not a statement", outside(&mapped, &statements)),
+                ("mapped, not annotated", outside(&mapped, &annotated)),
+            ] {
+                assert!(ranges.is_empty(), "{name}: {what}: {ranges:?}");
             }
         }
     });

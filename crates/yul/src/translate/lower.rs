@@ -5,6 +5,7 @@ use hull::{
     Alt, CodeBlock as HullCodeBlock, Expr as HullExpr, ExprKind, Function as HullFunction,
     Object as HullObject, PatKind, Program as HullProgram, Stmt as HullStmt, StmtKind,
     Ty as HullTy, TyKind,
+    origin::{FunctionScope, SourceTable},
 };
 
 use super::{
@@ -41,7 +42,30 @@ pub fn render_hull_program_object<'db>(
     object_name: Option<&str>,
 ) -> Result<String, TranslationError> {
     let program = translate_hull_program(db, program)?;
-    render_strict_assembly_program(&program, object_name)
+    render_strict_assembly_program(&program, object_name, &[])
+}
+
+/// Like [`render_hull_program_object`], with a `/// @src` annotation before
+/// each Hull statement and inline Yul statement and a `/// @use-src` line
+/// before each object, so that solc reports ranges in the source files instead
+/// of ranges in its own normalized Yul text.
+///
+/// `table` gives the id of each source file. `sources` lists the `(id, path)`
+/// printed in the `@use-src` lines; it comes from the caller so that every
+/// output names a file the same way. An annotation is the range of the
+/// statement's origin when that is source text, and `-1:-1:-1` for generated
+/// code and for code that no statement made.
+pub fn render_hull_program_object_with_locations<'db>(
+    db: &'db dyn HirDb,
+    program: &HullProgram<'db>,
+    object_name: Option<&str>,
+    table: &SourceTable,
+    sources: &[(u32, String)],
+) -> Result<String, TranslationError> {
+    let mut translator = Translator::new(db);
+    translator.sources = Some(table.clone());
+    let program = translator.translate_program(program)?;
+    render_strict_assembly_program(&program, object_name, sources)
 }
 
 /// Renders a single-contract program so its runtime code calls `entry` and
@@ -95,7 +119,7 @@ pub fn render_hull_program_returning_runtime_entry<'db>(
         init: Some(Expr::call(yul_fun_name(entry), Vec::new())),
     });
     runtime.code.stmts.extend(main_result_return_block());
-    render_strict_assembly_program(&translated, None)
+    render_strict_assembly_program(&translated, None, &[])
 }
 
 impl<'db> Translator<'db> {
@@ -130,6 +154,7 @@ impl<'db> Translator<'db> {
                 )));
             }
             let mut code = self.translate_code_parts(&program.functions, &[])?;
+            code.stmts.extend(self.no_src_loc());
             code.stmts.push(Stmt::Let {
                 names: vec!["_mainresult".into()],
                 init: Some(Expr::call(yul_fun_name(entry.as_str()), Vec::new())),
@@ -190,6 +215,9 @@ impl<'db> Translator<'db> {
         let result = (|| {
             let mut out = Vec::new();
             for function in functions {
+                // The code of a definition (entry label, return jump) has no
+                // origin in the Sonatina route either.
+                out.extend(self.no_src_loc());
                 out.push(self.translate_function(function)?);
             }
             out.extend(self.gen_stmts(stmts)?);
@@ -206,6 +234,7 @@ impl<'db> Translator<'db> {
         function: &HullFunction<'db>,
     ) -> Result<Stmt, TranslationError> {
         let saved_vars = std::mem::replace(&mut self.vars, vec![BTreeMap::new()]);
+        let saved_scope = self.scope.replace(FunctionScope::of(function));
 
         let result = (|| {
             let mut params = Vec::new();
@@ -237,7 +266,8 @@ impl<'db> Translator<'db> {
                 }
             };
 
-            let body = self.gen_stmts(&function.body)?;
+            let mut body: Vec<Stmt> = self.no_src_loc().into_iter().collect();
+            body.extend(self.gen_stmts(&function.body)?);
             Ok(Stmt::Function {
                 name: yul_fun_name(function.name.as_str()),
                 params,
@@ -247,12 +277,14 @@ impl<'db> Translator<'db> {
         })();
 
         self.vars = saved_vars;
+        self.scope = saved_scope;
         result
     }
 
     fn gen_stmts(&mut self, stmts: &[HullStmt<'db>]) -> Result<Vec<Stmt>, TranslationError> {
         let mut out = Vec::new();
         for stmt in stmts {
+            out.extend(self.src_loc(stmt.span)?);
             out.extend(self.gen_stmt(stmt)?);
         }
         Ok(out)
@@ -289,11 +321,20 @@ impl<'db> Translator<'db> {
 
                 let (cond_allocs, cond_compute) = partition_allocs(cond_stmts);
                 let (post_allocs, post_compute) = partition_allocs(post_stmts);
+                // The condition code belongs to the loop. After nested
+                // statements it would inherit the range of the last of them.
+                let loop_loc = this.src_loc(stmt.span)?;
+                if !init_stmts.is_empty() {
+                    init_stmts.extend(loop_loc.clone());
+                }
                 init_stmts.extend(cond_allocs);
                 init_stmts.extend(post_allocs);
                 init_stmts.extend(cond_compute.clone());
 
                 let mut post = post_compute;
+                if !post.is_empty() {
+                    post.extend(loop_loc);
+                }
                 post.extend(cond_compute);
                 Ok(vec![Stmt::For {
                     init: init_stmts,

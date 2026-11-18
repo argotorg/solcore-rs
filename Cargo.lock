@@ -3670,6 +3670,7 @@ dependencies = [
  "solcore-parser",
  "solcore-specialize",
  "solcore-test-utils",
+ "solcore-yul",
  "sonatina-codegen",
  "sonatina-ir",
  "sonatina-triple",
