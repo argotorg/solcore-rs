@@ -25,17 +25,17 @@ use sonatina_ir::{
         evm::{
             EvmAddMod, EvmAddress, EvmBalance, EvmBaseFee, EvmBlobBaseFee, EvmBlobHash,
             EvmBlockHash, EvmByte, EvmCall, EvmCallCode, EvmCallValue, EvmCalldataCopy,
-            EvmCalldataLoad, EvmCalldataSize, EvmCaller, EvmChainId, EvmClz, EvmCodeCopy,
-            EvmCodeSize, EvmCoinBase, EvmCreate, EvmCreate2, EvmDelegateCall, EvmExp,
-            EvmExtCodeCopy, EvmExtCodeHash, EvmExtCodeSize, EvmGas, EvmGasLimit, EvmGasPrice,
-            EvmInvalid, EvmKeccak256, EvmLog0, EvmLog1, EvmLog2, EvmLog3, EvmLog4, EvmMalloc,
-            EvmMcopy, EvmMload, EvmMsize, EvmMstore, EvmMstore8, EvmMulMod, EvmNumber, EvmOrigin,
+            EvmCalldataLoad, EvmCalldataSize, EvmCaller, EvmChainId, EvmCodeCopy, EvmCodeSize,
+            EvmCoinBase, EvmCreate, EvmCreate2, EvmDelegateCall, EvmExp, EvmExtCodeCopy,
+            EvmExtCodeHash, EvmExtCodeSize, EvmGas, EvmGasLimit, EvmGasPrice, EvmInvalid,
+            EvmKeccak256, EvmLog0, EvmLog1, EvmLog2, EvmLog3, EvmLog4, EvmMalloc, EvmMcopy,
+            EvmMload, EvmMsize, EvmMstore, EvmMstore8, EvmMulMod, EvmNumber, EvmOrigin,
             EvmPrevRandao, EvmReturn, EvmReturnDataCopy, EvmReturnDataSize, EvmRevert, EvmSdiv,
             EvmSelfBalance, EvmSelfDestruct, EvmSignExtend, EvmSload, EvmSmod, EvmSstore,
             EvmStaticCall, EvmStop, EvmTimestamp, EvmTload, EvmTstore, EvmUdiv, EvmUmod,
             inst_set::EvmInstSet,
         },
-        logic::{And, Not, Or, Xor},
+        logic::{And, Clz, Not, Or, Xor},
     },
     isa::Isa,
     isa::evm::Evm,
@@ -2083,7 +2083,7 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
             )),
             "clz" => word(
                 self.fb
-                    .insert_inst(EvmClz::new(self.module.inst_set(), arg(0)?), Type::I256),
+                    .insert_inst(Clz::new(self.module.inst_set(), arg(0)?), Type::I256),
             ),
             "keccak256" => word(self.fb.insert_inst(
                 EvmKeccak256::new(self.module.inst_set(), arg(0)?, arg(1)?),

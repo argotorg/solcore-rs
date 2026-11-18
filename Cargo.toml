@@ -16,11 +16,11 @@ proptest = { version = "1.11.0", default-features = false, features = ["std"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 smallvec = "1"
-# Pin upstream main, including fixes for deleted inliner callsites and EVM phi copies.
-sonatina-codegen = { git = "https://github.com/fe-lang/sonatina", rev = "6bd0ce661ea327c149429b00fee3c8608616040f" }
-sonatina-ir = { git = "https://github.com/fe-lang/sonatina", rev = "6bd0ce661ea327c149429b00fee3c8608616040f" }
-sonatina-triple = { git = "https://github.com/fe-lang/sonatina", rev = "6bd0ce661ea327c149429b00fee3c8608616040f" }
-sonatina-verifier = { git = "https://github.com/fe-lang/sonatina", rev = "6bd0ce661ea327c149429b00fee3c8608616040f" }
+# Pin upstream main.
+sonatina-codegen = { git = "https://github.com/fe-lang/sonatina", rev = "498d6a17eb4d5261e6747a58312bae7a1c847c51" }
+sonatina-ir = { git = "https://github.com/fe-lang/sonatina", rev = "498d6a17eb4d5261e6747a58312bae7a1c847c51" }
+sonatina-triple = { git = "https://github.com/fe-lang/sonatina", rev = "498d6a17eb4d5261e6747a58312bae7a1c847c51" }
+sonatina-verifier = { git = "https://github.com/fe-lang/sonatina", rev = "498d6a17eb4d5261e6747a58312bae7a1c847c51" }
 parser = { path = "crates/parser", package = "solcore-parser" }
 hir = { path = "crates/hir", package = "solcore-hir" }
 nameres = { path = "crates/nameres", package = "solcore-nameres" }
