@@ -1204,9 +1204,10 @@ fn locations_capture_bindings_are_located_at_the_lambda(fixture: Fixture<&str>) 
     });
 }
 
-/// The helpers of string or revert literals are shared by content, so they are
-/// generated code: no use of the literal owns them.
-fn assert_literal_helpers_are_generated(listing: &str, prefix: &str) {
+/// Every listed function whose name starts with `prefix`, and each of its
+/// statements, has the generated reason `reason`.
+fn assert_helpers_are_generated(listing: &str, prefix: &str, reason: &str) {
+    let marker = format!(" gen {reason} ");
     let names = listing
         .lines()
         .filter_map(|line| line.trim_start().strip_prefix("fn "))
@@ -1219,7 +1220,7 @@ fn assert_literal_helpers_are_generated(listing: &str, prefix: &str) {
             .lines()
             .find(|line| line.trim_start().starts_with(&format!("fn {name} ")))
             .expect("listed function");
-        assert!(header.contains(" gen literal "), "{header}\n{listing}");
+        assert!(header.contains(&marker), "{header}\n{listing}");
         let function = listing_function(listing, name);
         let statements = function
             .iter()
@@ -1227,11 +1228,22 @@ fn assert_literal_helpers_are_generated(listing: &str, prefix: &str) {
             .collect::<Vec<_>>();
         assert!(!statements.is_empty(), "{name}\n{listing}");
         for statement in statements {
-            assert!(
-                statement.contains(" gen literal "),
-                "{statement}\n{listing}"
-            );
+            assert!(statement.contains(&marker), "{statement}\n{listing}");
         }
+    }
+}
+
+/// The statements of the listed function whose name starts with `prefix` are
+/// source: written code is not marked as generated.
+fn assert_statements_are_source(listing: &str, prefix: &str) {
+    let function = listing_function(listing, prefix);
+    let statements = function
+        .iter()
+        .filter(|line| line.trim_start().starts_with("S "))
+        .collect::<Vec<_>>();
+    assert!(!statements.is_empty(), "{prefix}\n{listing}");
+    for statement in statements {
+        assert!(statement.contains(" src "), "{statement}\n{listing}");
     }
 }
 
@@ -1239,7 +1251,7 @@ fn assert_literal_helpers_are_generated(listing: &str, prefix: &str) {
 fn locations_string_literal_helpers_are_generated(fixture: Fixture<&str>) {
     with_emission(fixture, FixtureOptions::default(), |db, emitted| {
         let listing = solcore_hull::origin_listing(db, &emitted.program);
-        assert_literal_helpers_are_generated(&listing, "__strlit_");
+        assert_helpers_are_generated(&listing, "__strlit_", "literal");
     });
 }
 
@@ -1247,6 +1259,32 @@ fn locations_string_literal_helpers_are_generated(fixture: Fixture<&str>) {
 fn locations_revert_literal_helpers_are_generated(fixture: Fixture<&str>) {
     with_emission(fixture, FixtureOptions::default(), |db, emitted| {
         let listing = solcore_hull::origin_listing(db, &emitted.program);
-        assert_literal_helpers_are_generated(&listing, "__revertlit_");
+        assert_helpers_are_generated(&listing, "__revertlit_", "literal");
+    });
+}
+
+/// Struct field getters and setters are shared per struct type and field, so
+/// they are generated code: no field access owns them.
+#[dir_test(dir: "$CARGO_MANIFEST_DIR/../../tests/e2e/struct-storage", glob: "main.sol")]
+fn locations_struct_accessors_are_generated(fixture: Fixture<&str>) {
+    with_emission(fixture, FixtureOptions::default(), |db, emitted| {
+        let listing = solcore_hull::origin_listing(db, &emitted.program);
+        assert_helpers_are_generated(&listing, "struct_get_", "derived");
+        assert_helpers_are_generated(&listing, "struct_set_", "derived");
+        // Silent: the functions that use the accessors are written code.
+        assert_statements_are_source(&listing, "main_C_getX_");
+        assert_statements_are_source(&listing, "main_C_setX_");
+    });
+}
+
+/// The function that decodes constructor arguments is made by the compiler for
+/// the whole constructor, so it is generated entry code. The constructor body
+/// is written code.
+#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/regressions/constructor_arguments", glob: "main.sol")]
+fn locations_constructor_argument_copy_is_generated(fixture: Fixture<&str>) {
+    with_emission(fixture, FixtureOptions::default(), |db, emitted| {
+        let listing = solcore_hull::origin_listing(db, &emitted.program);
+        assert_helpers_are_generated(&listing, "main_C_copy_arguments_for_constructor_", "entry");
+        assert_statements_are_source(&listing, "main_C_init__");
     });
 }

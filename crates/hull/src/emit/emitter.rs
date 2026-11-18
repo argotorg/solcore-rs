@@ -140,7 +140,17 @@ impl<'db> Emitter<'db> {
             let body = this.emit_stmts(&function.body);
             let generated = match function.origin {
                 MonoFunctionOrigin::DerivedGeneric { .. }
-                | MonoFunctionOrigin::DerivedClass { .. } => Some(GeneratedReason::Derived),
+                | MonoFunctionOrigin::DerivedClass { .. }
+                | MonoFunctionOrigin::StructAccessor => Some(GeneratedReason::Derived),
+                // The constructor-argument decoder is made by the compiler for
+                // the whole constructor, like the deployment entry that calls it.
+                _ if function
+                    .source
+                    .and_then(|def| hir_ty::contract_overlay_backend_name(this.db, def))
+                    == Some("copy_arguments_for_constructor") =>
+                {
+                    Some(GeneratedReason::Entry)
+                }
                 _ => None,
             };
             Function {
