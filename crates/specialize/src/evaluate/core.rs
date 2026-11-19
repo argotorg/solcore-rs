@@ -1161,7 +1161,22 @@ impl<'db> Evaluator<'db> {
             .as_ref()
             .is_some_and(|expr| self.value_contains_callable(expr))
         {
-            return (env, comptime_env, capture_bindings);
+            let mut out = capture_bindings;
+            if init
+                .as_ref()
+                .is_some_and(|expr| self.is_erasable_callable_init(expr))
+            {
+                // Uses of a static callable are substituted, so this
+                // declaration is normally pruned. It stays when the residual
+                // still refers to the variable, e.g. a template that assigns
+                // it a captured callable known only once the template is
+                // specialized.
+                out.push(MonoStmt {
+                    span,
+                    kind: MonoStmtKind::Let { mode, id, ty, init },
+                });
+            }
+            return (env, comptime_env, out);
         }
         let mut out = capture_bindings;
         out.push(MonoStmt {

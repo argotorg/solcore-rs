@@ -89,8 +89,14 @@ impl<'db> Evaluator<'db> {
     /// Uninitialized declarations carry lexical identity but no effects. Keep
     /// them only when a residual use requires the binding. In particular, an
     /// unused skipped static declaration needs no runtime representation.
+    /// The same holds for a declaration whose initializer is a pure static
+    /// callable value.
     pub(super) fn prune_unused_declarations(&self, body: &mut Vec<MonoStmt<'db>>) {
         self.prune_declarations_in_scope(body, &mut FxHashSet::default());
+    }
+
+    pub(super) fn is_erasable_callable_init(&self, init: &MonoExpr<'db>) -> bool {
+        self.value_contains_callable(init) && expr_is_pure(init, &self.pure_funs)
     }
 
     fn prune_declarations_in_scope(
@@ -103,7 +109,11 @@ impl<'db> Evaluator<'db> {
             match &mut stmt.kind {
                 MonoStmtKind::Let { id, init, .. } => {
                     let needed = used.remove(&id.name);
-                    if init.is_none() && !needed {
+                    if !needed
+                        && init
+                            .as_ref()
+                            .is_none_or(|init| self.is_erasable_callable_init(init))
+                    {
                         continue;
                     }
                 }
