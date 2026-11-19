@@ -370,7 +370,9 @@ impl<'db> Evaluator<'db> {
             expr => expr,
         };
         let MonoExprKind::Lambda { params, body, .. } = &expr.kind else {
-            if materialize_payload && !self.expr_is_known_value(&expr) {
+            // A poisoned value has nothing to snapshot, and a merge that meets
+            // it must see which failure it stands for.
+            if materialize_payload && !self.expr_is_known_value(&expr) && !self.is_poison(&expr) {
                 let (value, binding) = self.materialize_callable_payload(expr);
                 return (value, vec![binding]);
             }

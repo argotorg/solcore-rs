@@ -1,7 +1,6 @@
 pragma solcore;
 
-// Each iteration wraps the previous closure in a new one, so the number of
-// nested closures depends on the run-time trip count.
+// Each iteration wraps the previous closure in a new one.
 import * from std;
 import * from std.dispatch;
 

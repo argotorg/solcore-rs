@@ -28,10 +28,10 @@ use crate::{
     specialize::RuntimeFunctionChoiceIssue,
 };
 
-/// Candidate limit for one merged function value.
+/// Candidate limit for one merged function value. It also bounds how often a
+/// loop is evaluated while its header layout settles: every evaluation that
+/// does not settle adds a candidate to some variable or gives one up.
 const MAX_JOIN_CANDIDATES: usize = 32;
-/// Compile-time evaluations of one loop while its callable layout settles.
-const MAX_LOOP_JOIN_EVALUATIONS: usize = 8;
 
 /// Static structure of a callable value. Runtime leaves are left out, so two
 /// values with equal shapes differ only in their leaves.
@@ -141,16 +141,47 @@ pub(super) struct LoopFrame<'db> {
 struct LoopJoinVar<'db> {
     name: String,
     node: CellNode<'db>,
+    /// The value that reads `node` back at the loop header.
+    header: MonoExpr<'db>,
+    /// Values other than `header` that fit `node`, stored at the edges of
+    /// this evaluation.
+    stored: Vec<MonoExpr<'db>>,
     pending: Vec<MonoExpr<'db>>,
     failure: Option<RuntimeFunctionChoiceIssue>,
 }
 
+/// Why a loop stops merging a variable.
+enum LoopJoinFailure<'db> {
+    /// The variable's own failure, reported at the given span or, without
+    /// one, at its last static assignment in the loop.
+    Issue(RuntimeFunctionChoiceIssue, Option<Span<'db>>),
+    /// A candidate captured this poisoned value: report that failure.
+    Inherited(String),
+}
+
+/// Names of a loop's header cells: `{base}{tag}h{index}`, where the tag is a
+/// merge name allocated before the loop. Names that an evaluation attempt
+/// allocates end in `$j` and a number, so they never meet these.
+#[derive(Default)]
+pub(super) struct LoopHeaderNames {
+    tag: String,
+    next: usize,
+}
+
+/// State to restore before evaluating a region again. Every attempt starts
+/// from the same name counters, so an attempt that evaluates the same code
+/// creates the same closures and a loop's layout can settle. Names that a
+/// discarded attempt allocated can survive in shapes and functions, so the
+/// counters move past them once the region is done (`join_finish`).
 pub(super) struct JoinSnapshot {
     diagnostics: usize,
     erased_assignments: usize,
     fuel: usize,
     memory: BTreeMap<BigInt, u8>,
     next_clone_id: usize,
+    next_join_id: usize,
+    discarded_clone_id: usize,
+    discarded_join_id: usize,
 }
 
 /// The evaluation context that a lambda body or an inlined callee must not
@@ -181,17 +212,26 @@ impl<'db> Evaluator<'db> {
     }
 
     fn fresh_join_name(&mut self, base: &str) -> String {
+        if let Some(names) = &mut self.loop_header_names {
+            let name = format!("{base}{}h{}", names.tag, names.next);
+            names.next += 1;
+            return name;
+        }
         let name = format!("{base}$j{}", self.next_join_id);
         self.next_join_id += 1;
         name
     }
 
-    fn fresh_join_function_name(&mut self, base: &str) -> String {
+    /// Dispatchers are shared through their cache, so their names do not
+    /// come from the per-attempt counter.
+    fn fresh_dispatcher_name(&self) -> String {
+        let mut index = self.join_dispatchers.len();
         loop {
-            let name = self.fresh_join_name(base);
+            let name = format!("__dispatch$d{index}");
             if !self.functions.contains_key(&name) {
                 return name;
             }
+            index += 1;
         }
     }
 
@@ -201,6 +241,19 @@ impl<'db> Evaluator<'db> {
         MonoId { name, ty, span }
     }
 
+    /// Run `f` with merge names taken from a loop's header namespace.
+    fn with_loop_header_names<T>(
+        &mut self,
+        names: &mut LoopHeaderNames,
+        f: impl FnOnce(&mut Self) -> T,
+    ) -> T {
+        let outer = self.loop_header_names.replace(std::mem::take(names));
+        let result = f(self);
+        *names = std::mem::replace(&mut self.loop_header_names, outer)
+            .expect("loop header names are set while computing a header");
+        result
+    }
+
     pub(super) fn join_snapshot(&self) -> JoinSnapshot {
         JoinSnapshot {
             diagnostics: self.diagnostics.len(),
@@ -208,20 +261,32 @@ impl<'db> Evaluator<'db> {
             fuel: self.fuel,
             memory: self.memory.clone(),
             next_clone_id: self.next_clone_id,
+            next_join_id: self.next_join_id,
+            discarded_clone_id: self.next_clone_id,
+            discarded_join_id: self.next_join_id,
         }
     }
 
     /// Discard a compile-time evaluation attempt. Functions it registered stay
     /// registered (later attempts may reuse them through the caches); unused
-    /// ones are removed with the other dead functions. Merge cell names are
-    /// never reused, because a loop keeps its header cells across attempts.
-    pub(super) fn join_restore(&mut self, snapshot: &JoinSnapshot) {
+    /// ones are removed with the other dead functions.
+    pub(super) fn join_restore(&mut self, snapshot: &mut JoinSnapshot) {
+        snapshot.discarded_clone_id = snapshot.discarded_clone_id.max(self.next_clone_id);
+        snapshot.discarded_join_id = snapshot.discarded_join_id.max(self.next_join_id);
         self.diagnostics.truncate(snapshot.diagnostics);
         self.erased_assignments
             .truncate(snapshot.erased_assignments);
         self.fuel = snapshot.fuel;
         self.memory = snapshot.memory.clone();
         self.next_clone_id = snapshot.next_clone_id;
+        self.next_join_id = snapshot.next_join_id;
+    }
+
+    /// Finish a region that restored `snapshot`: later names must not repeat
+    /// a name that a discarded attempt allocated.
+    pub(super) fn join_finish(&mut self, snapshot: &JoinSnapshot) {
+        self.next_clone_id = self.next_clone_id.max(snapshot.discarded_clone_id);
+        self.next_join_id = self.next_join_id.max(snapshot.discarded_join_id);
     }
 
     pub(super) fn enter_join_context(&mut self) -> JoinContext<'db> {
@@ -264,8 +329,57 @@ impl<'db> Evaluator<'db> {
         var_expr(MonoId { name, ty, span })
     }
 
-    fn is_poison(&self, value: &MonoExpr<'db>) -> bool {
+    pub(super) fn is_poison(&self, value: &MonoExpr<'db>) -> bool {
         matches!(&value.kind, MonoExprKind::Var(id) if self.poisons.contains_key(&id.name))
+    }
+
+    /// The first poisoned value that `values` read. A merge that fails because
+    /// a candidate captured a poisoned variable reports that variable's
+    /// failure instead of one of its own.
+    fn poison_read_by(&self, values: &[MonoExpr<'db>]) -> Option<String> {
+        if self.poisons.is_empty() {
+            return None;
+        }
+        let mut reads = NameCollector::default();
+        for value in values {
+            reads.visit_expr(value);
+        }
+        reads
+            .names
+            .into_iter()
+            .filter(|name| self.poisons.contains_key(name))
+            .min_by_key(|name| {
+                name.strip_prefix("$poison")
+                    .and_then(|id| id.parse::<usize>().ok())
+            })
+    }
+
+    /// Poison a variable of type `ty` for the failure recorded by `cause`.
+    fn inherited_poison(&mut self, cause: &str, ty: MonoTy<'db>) -> MonoExpr<'db> {
+        let Poison {
+            variable,
+            span,
+            issue,
+        } = &self.poisons[cause];
+        let (variable, span, issue) = (variable.clone(), *span, *issue);
+        self.poison_value(&variable, ty, span, issue)
+    }
+
+    /// Why a static callable assignment to a variable that a region masks
+    /// cannot be kept.
+    pub(super) fn erased_assignment_issue(
+        &self,
+        mask: &RegionMask<'db>,
+        name: &str,
+        ty: MonoTy<'db>,
+    ) -> RuntimeFunctionChoiceIssue {
+        if mask.known.contains(name) {
+            RuntimeFunctionChoiceIssue::MixedStaticStructure
+        } else if ty_is_function(self.db, strip_comptime(self.db, ty.ty())) {
+            RuntimeFunctionChoiceIssue::NotAssignedOnEveryPath
+        } else {
+            RuntimeFunctionChoiceIssue::UninitializedAggregate
+        }
     }
 
     /// Start evaluating a run-time region that makes `writes` unknown. The
@@ -359,11 +473,7 @@ impl<'db> Evaluator<'db> {
             let Some(id) = type_reg.get(&name) else {
                 continue;
             };
-            let issue = if mask.known.contains(&name) {
-                RuntimeFunctionChoiceIssue::MixedStaticStructure
-            } else {
-                RuntimeFunctionChoiceIssue::NotAssignedOnEveryPath
-            };
+            let issue = self.erased_assignment_issue(&mask, &name, id.ty);
             let poison = self.poison_value(&name, id.ty, span, issue);
             env.insert(name.clone(), poison);
             comptime_env.remove(&name);
@@ -893,9 +1003,12 @@ impl<'db> Evaluator<'db> {
         }
     }
 
-    /// Whether a merged value nested in `value` reads the layout of `node`.
-    /// A loop candidate that does so wraps the previous iteration's value.
-    fn value_reads_node(&self, value: &MonoExpr<'db>, node: &CellNode<'db>) -> bool {
+    /// Where `value` reads the layout of `node`: the span of the closure that
+    /// does. A loop candidate that reads a header layout wraps a closure from
+    /// an earlier iteration. A merge inside the loop body copies the header
+    /// value into cells of its own, so the candidates of the dispatchers that
+    /// `value` calls are searched as well.
+    fn value_reads_node(&self, value: &MonoExpr<'db>, node: &CellNode<'db>) -> Option<Span<'db>> {
         let mut names = FxHashSet::default();
         collect_node_cells(node, &mut names);
         if let CellNode::Callable(CallableCells {
@@ -905,10 +1018,85 @@ impl<'db> Evaluator<'db> {
         {
             names.insert(dispatcher.name.clone());
         }
+        if names.is_empty() {
+            return None;
+        }
+        self.expr_reads_names(value, &names, &mut FxHashSet::default())
+    }
+
+    fn expr_reads_names(
+        &self,
+        value: &MonoExpr<'db>,
+        names: &FxHashSet<String>,
+        searched: &mut FxHashSet<usize>,
+    ) -> Option<Span<'db>> {
         let mut reads = NameCollector::default();
         reads.visit_expr(value);
-        reads.names.iter().any(|name| names.contains(name))
-            || reads.calls.iter().any(|name| names.contains(name))
+        if reads
+            .names
+            .iter()
+            .chain(&reads.calls)
+            .any(|name| names.contains(name))
+        {
+            return Some(value.span);
+        }
+        let mut dispatchers = reads
+            .names
+            .iter()
+            .chain(&reads.calls)
+            .filter_map(|name| self.join_dispatcher_index(name))
+            .collect::<Vec<_>>();
+        dispatchers.sort_unstable();
+        for index in dispatchers {
+            if !searched.insert(index) {
+                continue;
+            }
+            for &shape in &self.join_dispatchers[index].shapes {
+                let template = &self.join_shapes[shape - 1].template;
+                if let Some(span) = self.expr_reads_names(template, names, searched) {
+                    return Some(span);
+                }
+            }
+        }
+        None
+    }
+
+    /// For each loop variable, the closure through which its new values
+    /// capture, directly or through other variables of the loop, the value
+    /// it held at the loop header. Such a variable gains one more level of
+    /// nested closures per iteration, so its layout never settles.
+    fn self_capturing_loop_vars(&self, vars: &[LoopJoinVar<'db>]) -> Vec<Option<Span<'db>>> {
+        let reads = vars
+            .iter()
+            .map(|var| {
+                vars.iter()
+                    .enumerate()
+                    .filter_map(|(index, other)| {
+                        var.pending
+                            .iter()
+                            .find_map(|value| self.value_reads_node(value, &other.node))
+                            .map(|span| (index, span))
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+        (0..vars.len())
+            .map(|start| {
+                reads[start].iter().find_map(|&(next, span)| {
+                    let mut seen = vec![false; vars.len()];
+                    let mut stack = vec![next];
+                    while let Some(index) = stack.pop() {
+                        if index == start {
+                            return Some(span);
+                        }
+                        if !std::mem::replace(&mut seen[index], true) {
+                            stack.extend(reads[index].iter().map(|&(next, _)| next));
+                        }
+                    }
+                    None
+                })
+            })
+            .collect()
     }
 
     /// One generated function per (function type, candidate set). The body
@@ -1018,7 +1206,7 @@ impl<'db> Evaluator<'db> {
                 }],
             });
         }
-        let name = self.fresh_join_function_name("__dispatch");
+        let name = self.fresh_dispatcher_name();
         let function = MonoFunction {
             origin: MonoFunctionOrigin::Source,
             source: None,
@@ -1083,8 +1271,18 @@ impl<'db> Evaluator<'db> {
                     Some(env) => env.get(&var.name).cloned(),
                     None => var.pre.clone(),
                 })
-                .collect::<Option<Vec<_>>>();
-            let merged = match values {
+                .collect::<Vec<_>>();
+            let cause = self.poison_read_by(&values.iter().flatten().cloned().collect::<Vec<_>>());
+            if let Some(cause) = cause {
+                merge.failed.push((
+                    var.name.clone(),
+                    RuntimeFunctionChoiceIssue::NotAssignedOnEveryPath,
+                    Some(cause),
+                ));
+                merge.values.push((var.name.clone(), None));
+                continue;
+            }
+            let merged = match values.into_iter().collect::<Option<Vec<_>>>() {
                 None => Err(RuntimeFunctionChoiceIssue::NotAssignedOnEveryPath),
                 Some(values) => self
                     .merge_join_values(&values, var.ty, span, true)
@@ -1093,7 +1291,7 @@ impl<'db> Evaluator<'db> {
             let (values, node) = match merged {
                 Ok(merged) => merged,
                 Err(issue) => {
-                    merge.failed.push((var.name.clone(), issue));
+                    merge.failed.push((var.name.clone(), issue, None));
                     merge.values.push((var.name.clone(), None));
                     continue;
                 }
@@ -1119,6 +1317,7 @@ impl<'db> Evaluator<'db> {
                 merge.failed.push((
                     var.name.clone(),
                     RuntimeFunctionChoiceIssue::MixedStaticStructure,
+                    None,
                 ));
                 merge.values.push((var.name.clone(), None));
                 continue;
@@ -1159,7 +1358,9 @@ pub(super) struct RegionMerge<'db> {
     pub(super) values: Vec<(String, Option<MonoExpr<'db>>)>,
     pub(super) prefix: Vec<MonoStmt<'db>>,
     pub(super) path_stores: Vec<Vec<MonoStmt<'db>>>,
-    pub(super) failed: Vec<(String, RuntimeFunctionChoiceIssue)>,
+    /// Variables whose merge failed, why, and the poisoned value whose
+    /// failure they report instead (see `poison_read_by`).
+    pub(super) failed: Vec<(String, RuntimeFunctionChoiceIssue, Option<String>)>,
 }
 
 fn cell_store<'db>(cell: &MonoId<'db>, value: MonoExpr<'db>) -> Option<MonoStmt<'db>> {
@@ -1174,6 +1375,40 @@ fn cell_store<'db>(cell: &MonoId<'db>, value: MonoExpr<'db>) -> Option<MonoStmt<
             rhs: value,
         },
     })
+}
+
+/// Whether two layouts hold the same candidates, whatever their cells are
+/// named.
+fn same_layout(a: &CellNode<'_>, b: &CellNode<'_>) -> bool {
+    match (a, b) {
+        (CellNode::Static(a), CellNode::Static(b)) => a == b,
+        (CellNode::Leaf(_), CellNode::Leaf(_)) => true,
+        (CellNode::Tuple { elems: a, .. }, CellNode::Tuple { elems: b, .. }) => {
+            a.len() == b.len() && a.iter().zip(b).all(|(a, b)| same_layout(a, b))
+        }
+        (
+            CellNode::Con {
+                ctor: a_ctor,
+                args: a,
+                ..
+            },
+            CellNode::Con {
+                ctor: b_ctor,
+                args: b,
+                ..
+            },
+        ) => {
+            constructor_names_match(&a_ctor.name, &b_ctor.name)
+                && a.len() == b.len()
+                && a.iter().zip(b).all(|(a, b)| same_layout(a, b))
+        }
+        (CellNode::Callable(a), CellNode::Callable(b)) => a
+            .shapes
+            .iter()
+            .map(|(shape, _)| *shape)
+            .eq(b.shapes.iter().map(|(shape, _)| *shape)),
+        _ => false,
+    }
 }
 
 fn collect_node_cells(node: &CellNode<'_>, out: &mut FxHashSet<String>) {
@@ -1319,7 +1554,7 @@ impl<'db> Evaluator<'db> {
     fn apply_region_merge(
         &mut self,
         values: Vec<(String, Option<MonoExpr<'db>>)>,
-        failed: &[(String, RuntimeFunctionChoiceIssue)],
+        failed: &[(String, RuntimeFunctionChoiceIssue, Option<String>)],
         joins: &[JoinVar<'db>],
         spans_before: &[Option<Span<'db>>],
         span: Span<'db>,
@@ -1338,19 +1573,25 @@ impl<'db> Evaluator<'db> {
                 }
                 None => {
                     comptime_env.remove(&name);
-                    let issue = failed
+                    let failure = failed
                         .iter()
-                        .find(|(failed, _)| *failed == name)
-                        .map(|(_, issue)| *issue);
-                    match issue {
-                        Some(issue) => {
+                        .find(|(failed, ..)| *failed == name)
+                        .map(|(_, issue, cause)| (*issue, cause.clone()));
+                    match failure {
+                        Some((issue, cause)) => {
                             let ty = joins
                                 .iter()
                                 .find(|var| var.name == name)
                                 .map(|var| var.ty)
                                 .expect("a failed merge belongs to a join variable");
-                            let at = self.join_failure_span(joins, spans_before, &name, span);
-                            let poison = self.poison_value(&name, ty, at, issue);
+                            let poison = match cause {
+                                Some(cause) => self.inherited_poison(&cause, ty),
+                                None => {
+                                    let at =
+                                        self.join_failure_span(joins, spans_before, &name, span);
+                                    self.poison_value(&name, ty, at, issue)
+                                }
+                            };
                             env.insert(name, poison);
                         }
                         // No path reaches the end of the region.
@@ -1380,7 +1621,7 @@ impl<'db> Evaluator<'db> {
             effects,
             joins,
         } = input;
-        let snapshot = self.join_snapshot();
+        let mut snapshot = self.join_snapshot();
         let spans_before = self.assignment_spans(&joins);
         let join_names = joins
             .iter()
@@ -1436,7 +1677,7 @@ impl<'db> Evaluator<'db> {
             // A template is evaluated again once its captures are known.
             // Keep its assignments, so that evaluation can merge them.
             self.region_masks.pop();
-            self.join_restore(&snapshot);
+            self.join_restore(&mut snapshot);
             let mut out = self.restate_join_values(&joins, span);
             let (env, comptime_env, body) = self.eval_if_masked(
                 type_reg,
@@ -1451,6 +1692,7 @@ impl<'db> Evaluator<'db> {
                 scope,
             );
             out.extend(body);
+            self.join_finish(&snapshot);
             return (env, comptime_env, out);
         }
         let mut path_stores = merge.path_stores.into_iter();
@@ -1563,19 +1805,23 @@ impl<'db> Evaluator<'db> {
             effects,
             joins,
         } = input;
-        let snapshot = self.join_snapshot();
+        let mut header_names = LoopHeaderNames {
+            tag: self.fresh_join_name(""),
+            next: 0,
+        };
+        let mut snapshot = self.join_snapshot();
         let spans_before = self.assignment_spans(&joins);
         let original = joins.clone();
         let mut active = joins;
         let mut legacy = FxHashSet::default();
         let mut header_poison = FxHashMap::<String, MonoExpr<'db>>::default();
         let mut nodes = FxHashMap::<String, CellNode<'db>>::default();
-        let mut evaluations = 0;
+        let mut first = true;
+        let mut pruned = false;
         loop {
-            if evaluations > 0 {
-                self.join_restore(&snapshot);
+            if !std::mem::take(&mut first) {
+                self.join_restore(&mut snapshot);
             }
-            evaluations += 1;
             if active.is_empty() {
                 let mut out = self.restate_legacy_loop_values(&original, &legacy, span);
                 let (env, comptime_env, body) = self.eval_for_masked(
@@ -1593,6 +1839,7 @@ impl<'db> Evaluator<'db> {
                     scope,
                 );
                 out.extend(body);
+                self.join_finish(&snapshot);
                 return (env, comptime_env, out);
             }
             let active_names = active
@@ -1632,7 +1879,10 @@ impl<'db> Evaluator<'db> {
                         &original,
                         &spans_before,
                         &name,
-                        RuntimeFunctionChoiceIssue::NotAssignedOnEveryPath,
+                        LoopJoinFailure::Issue(
+                            RuntimeFunctionChoiceIssue::NotAssignedOnEveryPath,
+                            None,
+                        ),
                         span,
                         &mut active,
                         &mut legacy,
@@ -1655,16 +1905,19 @@ impl<'db> Evaluator<'db> {
             let mut frame = LoopFrame::default();
             for var in &active {
                 let node = nodes[&var.name].clone();
-                let value = self.join_node_value(&node);
+                let value = self
+                    .with_loop_header_names(&mut header_names, |this| this.join_node_value(&node));
                 if self.expr_is_comptime(&value, &header_comptime_env) {
                     header_comptime_env.insert(var.name.clone());
                 } else {
                     header_comptime_env.remove(&var.name);
                 }
-                header_env.insert(var.name.clone(), value);
+                header_env.insert(var.name.clone(), value.clone());
                 frame.vars.push(LoopJoinVar {
                     name: var.name.clone(),
                     node,
+                    header: value,
+                    stored: Vec::new(),
                     pending: Vec::new(),
                     failure: None,
                 });
@@ -1727,54 +1980,58 @@ impl<'db> Evaluator<'db> {
                     let Some(id) = type_reg.get(&name) else {
                         continue;
                     };
-                    let issue = if mask.known.contains(&name) {
-                        RuntimeFunctionChoiceIssue::MixedStaticStructure
-                    } else {
-                        RuntimeFunctionChoiceIssue::NotAssignedOnEveryPath
-                    };
+                    let issue = self.erased_assignment_issue(&mask, &name, id.ty);
                     let poison = self.poison_value(&name, id.ty, at, issue);
                     header_poison.insert(name, poison);
                     changed = true;
                 }
             }
-            for var in frame.vars {
+            let self_capturing = self.self_capturing_loop_vars(&frame.vars);
+            let stored = frame
+                .vars
+                .iter()
+                .map(|var| (var.name.clone(), var.stored.clone()))
+                .collect::<FxHashMap<_, _>>();
+            for (var, capture) in frame.vars.into_iter().zip(self_capturing) {
                 let ty = active
                     .iter()
                     .find(|active| active.name == var.name)
                     .map(|active| active.ty)
                     .expect("frame variable is active");
-                let issue = if let Some(issue) = var.failure {
-                    Some(issue)
-                } else if var.pending.is_empty() {
-                    None
-                } else if evaluations >= MAX_LOOP_JOIN_EVALUATIONS
-                    || var
-                        .pending
-                        .iter()
-                        .any(|value| self.value_reads_node(value, &var.node))
-                {
-                    // The new candidate wraps the header value itself: every
-                    // iteration nests one more closure.
-                    Some(RuntimeFunctionChoiceIssue::SelfCapturingLoop)
-                } else {
-                    let mut values = vec![self.join_node_value(&var.node)];
-                    values.extend(var.pending);
-                    match self.merge_join_values(&values, ty, span, false) {
-                        Ok(node) => {
-                            nodes.insert(var.name.clone(), node);
-                            changed = true;
-                            None
+                let mut failure = var.failure.map(|issue| LoopJoinFailure::Issue(issue, None));
+                if failure.is_none() && !var.pending.is_empty() {
+                    failure = if let Some(cause) = self.poison_read_by(&var.pending) {
+                        Some(LoopJoinFailure::Inherited(cause))
+                    } else if let Some(at) = capture {
+                        Some(LoopJoinFailure::Issue(
+                            RuntimeFunctionChoiceIssue::SelfCapturingLoop,
+                            Some(at),
+                        ))
+                    } else {
+                        let mut values = self.with_loop_header_names(&mut header_names, |this| {
+                            vec![this.join_node_value(&var.node)]
+                        });
+                        values.extend(var.pending);
+                        let merged = self.with_loop_header_names(&mut header_names, |this| {
+                            this.merge_join_values(&values, ty, span, false)
+                        });
+                        match merged {
+                            Ok(node) => {
+                                nodes.insert(var.name.clone(), node);
+                                changed = true;
+                                None
+                            }
+                            Err(issue) => Some(LoopJoinFailure::Issue(issue, None)),
                         }
-                        Err(issue) => Some(issue),
-                    }
-                };
-                if let Some(issue) = issue {
+                    };
+                }
+                if let Some(failure) = failure {
                     changed = true;
                     self.fail_loop_join(
                         &original,
                         &spans_before,
                         &var.name,
-                        issue,
+                        failure,
                         span,
                         &mut active,
                         &mut legacy,
@@ -1785,6 +2042,31 @@ impl<'db> Evaluator<'db> {
             if changed {
                 self.region_masks.pop();
                 continue;
+            }
+            // An earlier evaluation can add a candidate that no later one
+            // stores, for example before the caches it filled let later
+            // evaluations reuse their closures. Drop such candidates once and
+            // evaluate the loop again with the smaller layout.
+            if !pruned {
+                pruned = true;
+                let mut shrunk = false;
+                for (var, entry) in active.iter().zip(&entries) {
+                    let mut values = vec![entry.clone()];
+                    values.extend(stored.get(&var.name).into_iter().flatten().cloned());
+                    let minimal = self.with_loop_header_names(&mut header_names, |this| {
+                        this.merge_join_values(&values, var.ty, span, false)
+                    });
+                    if let Ok(minimal) = minimal
+                        && !same_layout(&minimal, &nodes[&var.name])
+                    {
+                        nodes.insert(var.name.clone(), minimal);
+                        shrunk = true;
+                    }
+                }
+                if shrunk {
+                    self.region_masks.pop();
+                    continue;
+                }
             }
             let mut out = self.restate_legacy_loop_values(&original, &legacy, span);
             for (var, entry) in active.iter().zip(&entries) {
@@ -1805,6 +2087,7 @@ impl<'db> Evaluator<'db> {
                 },
             });
             self.leave_region_mask(mask, type_reg, &mut header_env, &mut header_comptime_env);
+            self.join_finish(&snapshot);
             return (header_env, header_comptime_env, out);
         }
     }
@@ -1818,7 +2101,7 @@ impl<'db> Evaluator<'db> {
         joins: &[JoinVar<'db>],
         spans_before: &[Option<Span<'db>>],
         name: &str,
-        issue: RuntimeFunctionChoiceIssue,
+        failure: LoopJoinFailure<'db>,
         span: Span<'db>,
         active: &mut Vec<JoinVar<'db>>,
         legacy: &mut FxHashSet<String>,
@@ -1834,8 +2117,14 @@ impl<'db> Evaluator<'db> {
             .find(|var| var.name == name)
             .map(|var| var.ty)
             .expect("a failed loop merge belongs to a join variable");
-        let at = self.join_failure_span(joins, spans_before, name, span);
-        let poison = self.poison_value(name, ty, at, issue);
+        let poison = match failure {
+            LoopJoinFailure::Issue(issue, at) => {
+                let at =
+                    at.unwrap_or_else(|| self.join_failure_span(joins, spans_before, name, span));
+                self.poison_value(name, ty, at, issue)
+            }
+            LoopJoinFailure::Inherited(cause) => self.inherited_poison(&cause, ty),
+        };
         header_poison.insert(name.to_owned(), poison);
     }
 
@@ -1870,7 +2159,13 @@ impl<'db> Evaluator<'db> {
             match env.get(&var.name) {
                 None => var.failure = Some(RuntimeFunctionChoiceIssue::NotAssignedOnEveryPath),
                 Some(value) => match self.join_node_stores(&var.node, value) {
-                    Some(value_stores) => stores.extend(value_stores),
+                    Some(value_stores) => {
+                        stores.extend(value_stores);
+                        // Keeping the header value adds no candidate.
+                        if *value != var.header {
+                            var.stored.push(value.clone());
+                        }
+                    }
                     None => var.pending.push(value.clone()),
                 },
             }

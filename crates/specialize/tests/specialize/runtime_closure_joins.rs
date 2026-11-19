@@ -213,3 +213,135 @@ contract C {
         vec![RuntimeFunctionChoiceIssue::MixedStaticStructure]
     );
 }
+
+#[test]
+fn a_loop_closure_with_its_own_merge_settles() {
+    let output = specialize_src_with_std(
+        r#"
+pragma solcore;
+import * from std;
+import * from std.dispatch;
+contract C {
+    function run(input: uint256) public returns (uint256) {
+        let x: word = Typedef.rep(input);
+        let f: function (word) returns (word) = lam (a: word) -> word { return a; };
+        let i: word = 0;
+        while (i < x) {
+            let k: word = i;
+            f = lam (a: word) -> word {
+                let g: function (word) returns (word) = lam (b: word) -> word { return b + k; };
+                if (a < 5) {
+                    g = lam (b: word) -> word { return b + 2; };
+                }
+                return g(a);
+            };
+            i = i + 1;
+        }
+        return uint256(f(x));
+    }
+}
+"#,
+    );
+    assert_eq!(output.diagnostics, Vec::new());
+    assert!(!has_closure_dispatch(&output));
+}
+
+#[test]
+fn a_loop_closure_that_captures_itself_with_a_static_trip_count_is_rejected() {
+    let output = specialize_src_with_std(
+        r#"
+pragma solcore;
+import * from std;
+import * from std.dispatch;
+contract C {
+    function run(input: uint256) public returns (uint256) {
+        let f: function (uint256) returns (uint256) = lam (v: uint256) -> uint256 { return v; };
+        for (let i: uint256 = 0; i < 3; i = i + 1) {
+            f = lam (v: uint256) -> uint256 { return f(v) + 1; };
+        }
+        return f(input);
+    }
+}
+"#,
+    );
+    assert_eq!(
+        runtime_function_choice_issues(&output),
+        vec![RuntimeFunctionChoiceIssue::SelfCapturingLoop]
+    );
+}
+
+#[test]
+fn closures_that_capture_each_other_in_a_loop_are_rejected_once() {
+    let output = specialize_src_with_std(
+        r#"
+pragma solcore;
+import * from std;
+import * from std.dispatch;
+contract C {
+    function run(input: uint256) public returns (uint256) {
+        let x: word = Typedef.rep(input);
+        let f: function (word) returns (word) = lam (a: word) -> word { return a; };
+        let g: function (word) returns (word) = lam (a: word) -> word { return a; };
+        let i: word = 0;
+        while (i < x) {
+            f = lam (a: word) -> word { return g(a) + 1; };
+            g = lam (a: word) -> word { return f(a) + 1; };
+            i = i + 1;
+        }
+        return uint256(f(x) + g(x));
+    }
+}
+"#,
+    );
+    let variables = output
+        .diagnostics
+        .iter()
+        .filter_map(|diagnostic| match &diagnostic.kind {
+            SpecializeDiagnosticKind::UnsupportedRuntimeFunctionChoice { variable, issue } => {
+                Some((variable.clone(), *issue))
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        variables,
+        vec![(
+            "g".to_owned(),
+            RuntimeFunctionChoiceIssue::SelfCapturingLoop
+        )]
+    );
+}
+
+#[test]
+fn an_aggregate_without_a_value_before_the_branch_is_rejected() {
+    let output = specialize_src_with_std(
+        r#"
+pragma solcore;
+import * from std;
+import * from std.dispatch;
+enum Maybe {
+    Nothing,
+    Just(function (word) returns (word))
+}
+contract C {
+    function run(input: uint256) public returns (uint256) {
+        let x: word = Typedef.rep(input);
+        let m: Maybe;
+        if (x < 100) {
+            m = Maybe.Just(lam (a: word) -> word { return a + 1; });
+        } else {
+            m = Maybe.Just(lam (a: word) -> word { return a + 2; });
+        }
+        match (m) {
+            case Maybe.Just(g) { return uint256(g(x)); }
+            case Maybe.Nothing { return uint256(0); }
+        }
+    }
+}
+"#,
+    );
+    assert_eq!(
+        runtime_function_choice_issues(&output),
+        vec![RuntimeFunctionChoiceIssue::UninitializedAggregate]
+    );
+}

@@ -859,4 +859,103 @@ contract ClosureReassignment {
         }
         return uint256(f(x));
     }
+
+    // #[(0) -> 0]
+    // #[(1) -> 3]
+    // #[(9) -> 10]
+    function loopClosureWithInnerBranch(input: uint256) public returns (uint256) {
+        let x: word = Typedef.rep(input);
+        let f: function (word) returns (word) = lam (a: word) -> word {
+            return a;
+        };
+        let i: word = 0;
+        while (i < x) {
+            f = lam (a: word) -> word {
+                let g: function (word) returns (word) = lam (b: word) -> word {
+                    return b + 1;
+                };
+                if (a < 5) {
+                    g = lam (b: word) -> word {
+                        return b + 2;
+                    };
+                }
+                return g(a);
+            };
+            i = i + 1;
+        }
+        return uint256(f(x));
+    }
+
+    // #[(0) -> 0]
+    // #[(1) -> 3]
+    // #[(3) -> 5]
+    function loopClosureWithInnerLoop(input: uint256) public returns (uint256) {
+        let x: word = Typedef.rep(input);
+        let f: function (word) returns (word) = lam (a: word) -> word {
+            return a;
+        };
+        let i: word = 0;
+        while (i < x) {
+            f = lam (a: word) -> word {
+                let g: function (word) returns (word) = lam (b: word) -> word {
+                    return b + 1;
+                };
+                let j: word = 0;
+                while (j < a) {
+                    g = lam (b: word) -> word {
+                        return b + 2;
+                    };
+                    j = j + 1;
+                }
+                return g(a);
+            };
+            i = i + 1;
+        }
+        return uint256(f(x));
+    }
+
+    // #[(0) -> 0]
+    // #[(1) -> 3]
+    // #[(6) -> 11]
+    // #[(9) -> 17]
+    function loopCapturingClosureWithInnerBranch(input: uint256) public returns (uint256) {
+        let x: word = Typedef.rep(input);
+        let f: function (word) returns (word) = lam (a: word) -> word {
+            return a;
+        };
+        let i: word = 0;
+        while (i < x) {
+            let k: word = i;
+            f = lam (a: word) -> word {
+                let g: function (word) returns (word) = lam (b: word) -> word {
+                    return b + k;
+                };
+                if (a < 5) {
+                    g = lam (b: word) -> word {
+                        return b + 2;
+                    };
+                }
+                return g(a);
+            };
+            i = i + 1;
+        }
+        return uint256(f(x));
+    }
+
+    // #[(1) -> 4]
+    // #[(10) -> 13]
+    function loopClosureOverCounter(input: uint256) public returns (uint256) {
+        let x: word = Typedef.rep(input);
+        let f: function (word) returns (word) = lam (a: word) -> word {
+            return a;
+        };
+        let n: word = 0;
+        for (let k: word = 0; k < 3; k = k + 1) {
+            n = n + 1;
+            f = lam (a: word) -> word {
+                return a + n;
+            };
+        }
+        return uint256(f(x));
+    }
 }

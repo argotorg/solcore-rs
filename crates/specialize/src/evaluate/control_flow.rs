@@ -109,7 +109,11 @@ impl<'db> Evaluator<'db> {
             match &mut stmt.kind {
                 MonoStmtKind::Let { id, init, .. } => {
                     let needed = used.remove(&id.name);
+                    // A merge cell can be read after the scope that declares
+                    // it ends; the function-level pass that hoists such
+                    // declarations also drops unread cells.
                     if !needed
+                        && !self.join_cells.contains(&id.name)
                         && init
                             .as_ref()
                             .is_none_or(|init| self.is_erasable_callable_init(init))

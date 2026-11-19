@@ -47,7 +47,7 @@ use crate::{
         MonoIntrinsic, MonoItem, MonoModule, MonoPat, MonoPatKind, MonoStmt, MonoStmtKind, MonoTy,
         visit::{Visitor, walk_stmt},
     },
-    specialize::{RuntimeFunctionChoiceIssue, SpecializeDiagnostic, SpecializeDiagnosticKind},
+    specialize::{SpecializeDiagnostic, SpecializeDiagnosticKind},
 };
 
 #[path = "closures.rs"]
@@ -64,7 +64,8 @@ mod staged_patterns;
 
 use closures::{ClosureCloneKey, ClosureFactory, LiftedClosure};
 use joins::{
-    ForJoinInput, IfJoinInput, JoinDispatcher, JoinShapeEntry, JoinVar, LoopFrame, Poison,
+    ForJoinInput, IfJoinInput, JoinDispatcher, JoinShapeEntry, JoinVar, LoopFrame, LoopHeaderNames,
+    Poison,
 };
 
 struct LetInput<'db> {
@@ -213,6 +214,9 @@ pub(super) struct Evaluator<'db> {
     join_dispatchers: Vec<JoinDispatcher<'db>>,
     join_cells: FxHashSet<String>,
     next_join_id: usize,
+    // Set while a loop computes its header layout: names allocated then belong
+    // to that loop, not to the evaluation attempt that is about to restart.
+    loop_header_names: Option<LoopHeaderNames>,
     loop_frames: Vec<LoopFrame<'db>>,
     // Names that the run-time regions being evaluated make unknown at their
     // end. A static callable assignment to one of them would be lost there.
@@ -386,6 +390,7 @@ impl<'db> Evaluator<'db> {
             join_dispatchers: Vec::new(),
             join_cells: FxHashSet::default(),
             next_join_id: 0,
+            loop_header_names: None,
             loop_frames: Vec::new(),
             region_masks: Vec::new(),
             erased_assignments: Vec::new(),
@@ -1179,7 +1184,7 @@ impl<'db> Evaluator<'db> {
         ret_comptime: bool,
         scope: &mut ScopeBindings<'db>,
     ) -> (VEnv<'db>, CEnv, Vec<MonoStmt<'db>>) {
-        let snapshot = self.join_snapshot();
+        let mut snapshot = self.join_snapshot();
         loop {
             // Poisoned variables stay poisoned in and after the loop: the
             // loop may run zero times.
@@ -1238,7 +1243,7 @@ impl<'db> Evaluator<'db> {
                     .collect::<Vec<_>>();
                 if !erased.is_empty() {
                     self.region_masks.pop();
-                    self.join_restore(&snapshot);
+                    self.join_restore(&mut snapshot);
                     for (name, at) in erased {
                         if header_poison.contains_key(&name) {
                             continue;
@@ -1246,11 +1251,7 @@ impl<'db> Evaluator<'db> {
                         let Some(id) = type_reg.get(&name) else {
                             continue;
                         };
-                        let issue = if mask.known.contains(&name) {
-                            RuntimeFunctionChoiceIssue::MixedStaticStructure
-                        } else {
-                            RuntimeFunctionChoiceIssue::NotAssignedOnEveryPath
-                        };
+                        let issue = self.erased_assignment_issue(&mask, &name, id.ty);
                         let poison = self.poison_value(&name, id.ty, at, issue);
                         header_poison.insert(name, poison);
                     }
@@ -1263,6 +1264,7 @@ impl<'db> Evaluator<'db> {
             }
             self.leave_region_mask(mask, type_reg, &mut loop_env, &mut loop_comptime_env);
             self.memory.clear();
+            self.join_finish(&snapshot);
             return (
                 loop_env,
                 loop_comptime_env,
@@ -1480,7 +1482,7 @@ impl<'db> Evaluator<'db> {
                 )
                 .unwrap_or_else(|()| unreachable!("no callable merge to fail"));
         }
-        let snapshot = self.join_snapshot();
+        let mut snapshot = self.join_snapshot();
         let retry =
             (self.template_depth > 0).then(|| (env.clone(), comptime_env.clone(), input.clone()));
         match self.eval_residual_match_with(
@@ -1498,7 +1500,7 @@ impl<'db> Evaluator<'db> {
                 // merge, for the evaluation that knows its captures.
                 let (env, comptime_env, input) =
                     retry.expect("only templates retry an unmerged match");
-                self.join_restore(&snapshot);
+                self.join_restore(&mut snapshot);
                 let mut out = self.restate_join_values(&joins, input.span);
                 let (env, comptime_env, body) = self
                     .eval_residual_match_with(
@@ -1512,6 +1514,7 @@ impl<'db> Evaluator<'db> {
                     )
                     .unwrap_or_else(|()| unreachable!("a match without callables to merge"));
                 out.extend(body);
+                self.join_finish(&snapshot);
                 (env, comptime_env, out)
             }
         }

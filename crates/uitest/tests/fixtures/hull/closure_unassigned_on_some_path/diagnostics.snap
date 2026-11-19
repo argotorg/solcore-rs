@@ -14,4 +14,4 @@ error[SC0417]: `f` does not hold a known function value on every path
 15 |           }
    |
    = note: function values have no run-time representation: a value chosen by run-time control flow is compiled to a selector over a finite set of closures known at compile time
-   = note: help: give `f` a function value before the branch or loop, so that every path holds a known function
+   = note: help: give `f` a known function value before the branch or loop, so that every path holds one
