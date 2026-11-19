@@ -86,7 +86,9 @@ mod soundness;
 use canonical::{
     GoalRenaming, RigidVar, TableKey, actualize_answer, canonicalize_goal, canonicalize_local_given,
 };
-pub(crate) use coherence::{default_skipped_for_type_parameter, without_comptime};
+pub(crate) use coherence::{
+    default_skipped_for_type_parameter, instance_head_source, without_comptime,
+};
 pub(crate) use derived_abi::{
     AbiEvidenceRole, definition_supports_derived_abi, derived_abi_delegated_evidence,
     ty_mentions_adt as derived_abi_rep_mentions_adt,
@@ -486,6 +488,33 @@ pub struct SolverReport<'db> {
     pub fuel_remaining: usize,
     /// Tabled-engine counters, exposed for solver regression tests.
     pub stats: SolverStats,
+    /// Why the proof the solver found was rejected: it relies on a default
+    /// impl that another default impl may take precedence over, or tie with,
+    /// once the type parameters are instantiated. The solution is then
+    /// [`Solution::NoSolution`].
+    pub undecided_default: Option<UndecidedDefault<'db>>,
+}
+
+/// A default impl that generic code cannot rule out.
+///
+/// A proof decided `goal`, a goal that mentions type parameters of the
+/// checked body, with a default impl. `competitor` takes precedence over that
+/// default or has its priority, does not apply to `goal` here, and may apply
+/// once the type parameters are instantiated, so the instantiated goal could
+/// resolve to a different impl than the generic code chose.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
+pub struct UndecidedDefault<'db> {
+    /// The goal the proof decided with a default impl, in the solved goal's
+    /// variables.
+    pub goal: Pred<'db>,
+    /// The default impl that may apply once the type parameters are known.
+    pub competitor: DefId<'db>,
+    /// The competitor's conditions for `goal` that mention a type parameter
+    /// and are not local assumptions.
+    pub conditions: Vec<Pred<'db>>,
+    /// Whether the competitor has the selected default's priority, so the
+    /// goal would be ambiguous where both apply.
+    pub ties: bool,
 }
 
 /// Internal tabled-engine counters.
@@ -592,6 +621,7 @@ impl<'db> SolverReport<'db> {
             exhausted,
             fuel_remaining: 0,
             stats: SolverStats::default(),
+            undecided_default: None,
         }
     }
 }
@@ -643,6 +673,8 @@ impl<'db> Solver<'db> {
     /// The engine admits a default only when no non-default clause head can
     /// unify with that particular subgoal, so defaults do not mask specific
     /// instances but can still discharge conditions of a non-default parent.
+    /// A selected proof is then rejected if a default it uses for a goal on
+    /// type parameters may be overtaken once they are instantiated.
     fn solve_pred_with_allowed(
         &mut self,
         goal: Pred<'db>,
@@ -653,10 +685,30 @@ impl<'db> Solver<'db> {
         self.fuel = result.fuel_remaining;
         self.stats.add(result.stats);
 
+        // Variables of the checked body that the solver never instantiates:
+        // goal variables it may not bind, and those of local assumptions.
+        let mut type_params = FxHashSet::default();
+        collect_pred_vars(self.db, goal, &mut type_params);
+        type_params.retain(|var| !allowed_goal_vars.contains(var));
+        for given in self.env.local_givens(self.db) {
+            collect_pred_vars(self.db, *given, &mut type_params);
+        }
+        let answers =
+            (!type_params.is_empty() && !result.exhausted).then(|| result.answers.clone());
         let mut report = SolverReport::new(
             solution_from_answers(self.db, self.env, result.answers),
             result.exhausted,
         );
+        let undecided_default = match (answers, &report.solution) {
+            (Some(answers), Solution::Unique { evidence, .. }) => {
+                coherence::undecided_default(self.db, self.env, &answers, evidence, &type_params)
+            }
+            _ => None,
+        };
+        if undecided_default.is_some() {
+            report.solution = Solution::NoSolution;
+        }
+        report.undecided_default = undecided_default;
         report.fuel_remaining = self.fuel;
         report.stats = self.stats;
         report

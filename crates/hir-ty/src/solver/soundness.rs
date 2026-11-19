@@ -172,6 +172,10 @@ fn check_superclass_instances<'db>(
                 {
                     continue;
                 }
+                // A default impl proves it for every instantiation; which one
+                // may depend on the instantiation, but specialization solves
+                // the superclass again for the instantiated impl.
+                Solution::NoSolution if report.undecided_default.is_some() => continue,
                 Solution::Unique { .. } => "its proof leaves a type undetermined",
                 Solution::Ambiguous { .. } => "more than one impl or condition provides it",
                 Solution::NoSolution => "no impl provides it",
