@@ -1133,9 +1133,46 @@ contract CrossFile {
     let ops_id = source("ops.sol", ops);
     assert_ne!(main_id, ops_id);
 
-    for (suffix, environment) in [("", "create"), ("-runtime", "call")] {
-        let program = json(&format!("CrossFile_ethdebug{suffix}.json"));
-        assert_eq!(program["environment"], environment);
+    let expected = serde_json::json!({
+        "source": {"id": ops_id},
+        "range": {"offset": start, "length": anchor.len()}
+    });
+    let check_add = |program: &serde_json::Value, environment: &str, bin: &str| {
+        if program["environment"] != environment {
+            return Err("wrong program environment");
+        }
+        let add = program["instructions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["operation"]["mnemonic"] == "ADD" && row["context"]["code"] == expected)
+            .ok_or("missing ADD at the exact source span")?;
+        let pc = add["offset"].as_u64().unwrap() as usize;
+        if evm_opcode_at(bin, pc) != Some(0x01) {
+            return Err("ADD offset is not an ADD instruction boundary");
+        }
+        let range = &add["context"]["code"]["range"];
+        let start = range["offset"].as_u64().unwrap() as usize;
+        let end = start + range["length"].as_u64().unwrap() as usize;
+        Ok(format!(
+            "{environment} ADD ops.sol:{start}..{end} {}",
+            &ops[start..end]
+        ))
+    };
+
+    let creation = read("CrossFile.bin");
+    let runtime = read("CrossFile.bin-runtime");
+    let init = creation.strip_suffix(&runtime).expect("embedded runtime");
+    let programs = [
+        json("CrossFile_ethdebug.json"),
+        json("CrossFile_ethdebug-runtime.json"),
+    ];
+    let mut locations = Vec::new();
+    for (index, (environment, bin)) in [("create", init), ("call", runtime.as_str())]
+        .into_iter()
+        .enumerate()
+    {
+        let program = &programs[index];
         assert_eq!(program["compilation"]["id"], compilation["id"]);
         let def_start = main.find("contract CrossFile").unwrap();
         assert_eq!(
@@ -1145,20 +1182,36 @@ contract CrossFile {
                 "range": {"offset": def_start, "length": main.trim_end().len() - def_start}
             })
         );
-        let expected = serde_json::json!({
-            "source": {"id": ops_id},
-            "range": {"offset": start, "length": anchor.len()}
-        });
-        let add = program["instructions"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|row| row["operation"]["mnemonic"] == "ADD" && row["context"]["code"] == expected)
-            .unwrap_or_else(|| panic!("{environment}: no ADD at ops.sol:{start}..{end}"));
-        let pc = add["offset"].as_u64().unwrap() as usize;
-        let bin = read(&format!("CrossFile.bin{suffix}"));
-        assert_eq!(&bin[pc * 2..pc * 2 + 2], "01");
+        locations.push(
+            check_add(program, environment, bin)
+                .unwrap_or_else(|err| panic!("{environment}: {err}")),
+        );
+
+        let mut wrong_file = program.clone();
+        for row in wrong_file["instructions"].as_array_mut().unwrap() {
+            if row["context"]["code"] == expected {
+                row["context"]["code"]["source"]["id"] = main_id.into();
+            }
+        }
+        assert_eq!(
+            check_add(&wrong_file, environment, bin),
+            Err("missing ADD at the exact source span")
+        );
+        assert_eq!(
+            check_add(&programs[1 - index], environment, bin),
+            Err("wrong program environment")
+        );
     }
+    assert_eq!(
+        locations,
+        [
+            "create ADD ops.sol:153..168 y := add(x, 13)",
+            "call ADD ops.sol:153..168 y := add(x, 13)"
+        ]
+    );
+    // PUSH1's immediate has the same value as ADD's opcode.
+    assert_eq!(evm_opcode_at("600101", 1), None);
+    assert_eq!(evm_opcode_at("600101", 2), Some(0x01));
 
     // solc uses the source table of each object. Check the helper's
     // annotation is attached to its ADD separately in both objects.
@@ -1187,6 +1240,21 @@ contract CrossFile {
     }
 
     let _ = fs::remove_dir_all(&dir);
+}
+
+fn evm_opcode_at(hex: &str, target: usize) -> Option<u8> {
+    let mut pc = 0;
+    while pc <= target {
+        let opcode = u8::from_str_radix(hex.get(pc * 2..pc * 2 + 2)?, 16).ok()?;
+        if pc == target {
+            return Some(opcode);
+        }
+        pc += match opcode {
+            0x60..=0x7f => usize::from(opcode - 0x5f) + 1,
+            _ => 1,
+        };
+    }
+    None
 }
 
 #[test]
