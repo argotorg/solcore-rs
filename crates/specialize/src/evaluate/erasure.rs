@@ -81,6 +81,17 @@ pub(super) fn ty_is_function<'db>(db: &'db dyn Db, ty: Ty<'db>) -> bool {
     matches!(ty.kind(db), TyKind::Function { .. })
 }
 
+/// Whether a function type occurs in `ty` or its type arguments.
+pub(super) fn ty_contains_function<'db>(db: &'db dyn Db, ty: Ty<'db>) -> bool {
+    match ty.kind(db) {
+        TyKind::Function { .. } => true,
+        TyKind::Comptime(inner) => ty_contains_function(db, *inner),
+        TyKind::Named { args, .. } => args.iter().any(|arg| ty_contains_function(db, *arg)),
+        TyKind::Tuple(elems) => elems.iter().any(|elem| ty_contains_function(db, *elem)),
+        TyKind::Error | TyKind::Unknown | TyKind::BoundVar(_) => false,
+    }
+}
+
 pub(super) fn lambda_ret_is_comptime<'db>(db: &'db dyn Db, ty: Ty<'db>) -> bool {
     matches!(
         ty.kind(db),
@@ -99,7 +110,7 @@ pub(super) fn ty_is_builtin<'db>(db: &'db dyn Db, ty: Ty<'db>, builtin: BuiltinT
     )
 }
 
-fn ty_needs_erasure<'db>(db: &'db dyn Db, ty: Ty<'db>) -> bool {
+pub(super) fn ty_needs_erasure<'db>(db: &'db dyn Db, ty: Ty<'db>) -> bool {
     if ty_is_comptime_string(db, ty) {
         return true;
     }

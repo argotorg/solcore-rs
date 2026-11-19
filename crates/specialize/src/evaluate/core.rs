@@ -47,13 +47,15 @@ use crate::{
         MonoIntrinsic, MonoItem, MonoModule, MonoPat, MonoPatKind, MonoStmt, MonoStmtKind, MonoTy,
         visit::{Visitor, walk_stmt},
     },
-    specialize::{SpecializeDiagnostic, SpecializeDiagnosticKind},
+    specialize::{RuntimeFunctionChoiceIssue, SpecializeDiagnostic, SpecializeDiagnosticKind},
 };
 
 #[path = "closures.rs"]
 mod closures;
 #[path = "control_flow.rs"]
 mod control_flow;
+#[path = "joins.rs"]
+mod joins;
 #[cfg(test)]
 #[path = "pattern_tests.rs"]
 mod pattern_tests;
@@ -61,6 +63,9 @@ mod pattern_tests;
 mod staged_patterns;
 
 use closures::{ClosureCloneKey, ClosureFactory, LiftedClosure};
+use joins::{
+    ForJoinInput, IfJoinInput, JoinDispatcher, JoinShapeEntry, JoinVar, LoopFrame, Poison,
+};
 
 struct LetInput<'db> {
     span: Span<'db>,
@@ -70,6 +75,7 @@ struct LetInput<'db> {
     init: Option<MonoExpr<'db>>,
 }
 
+#[derive(Clone)]
 struct MatchInput<'db> {
     span: Span<'db>,
     scrutinees: Vec<MonoExpr<'db>>,
@@ -202,8 +208,27 @@ pub(super) struct Evaluator<'db> {
     memory: BTreeMap<BigInt, u8>,
     comptime_mode: bool,
     enforce_comptime: bool,
+    // Callable values merged at run-time control-flow joins (see `joins.rs`).
+    join_shapes: Vec<JoinShapeEntry<'db>>,
+    join_dispatchers: Vec<JoinDispatcher<'db>>,
+    join_cells: FxHashSet<String>,
+    next_join_id: usize,
+    loop_frames: Vec<LoopFrame<'db>>,
+    // Names that the run-time regions being evaluated make unknown at their
+    // end. A static callable assignment to one of them would be lost there.
+    region_masks: Vec<FxHashSet<String>>,
+    erased_assignments: Vec<(String, Span<'db>)>,
+    // Lambda bodies are evaluated once as templates and again after lifting
+    // or cloning. A template keeps the static callable assignments that a
+    // region would lose, for the evaluation that knows its captures.
+    template_depth: usize,
+    callable_assignment_spans: FxHashMap<String, Span<'db>>,
+    poisons: FxHashMap<String, Poison<'db>>,
+    next_poison_id: usize,
+    deferred_diagnostics: Vec<(String, SpecializeDiagnostic<'db>)>,
 }
 
+#[derive(Clone)]
 struct StmtEffects {
     // Writes before a declaration refer to outer bindings.
     writes: AssignedNames,
@@ -357,6 +382,18 @@ impl<'db> Evaluator<'db> {
             memory: BTreeMap::new(),
             comptime_mode: false,
             enforce_comptime: true,
+            join_shapes: Vec::new(),
+            join_dispatchers: Vec::new(),
+            join_cells: FxHashSet::default(),
+            next_join_id: 0,
+            loop_frames: Vec::new(),
+            region_masks: Vec::new(),
+            erased_assignments: Vec::new(),
+            template_depth: 0,
+            callable_assignment_spans: FxHashMap::default(),
+            poisons: FxHashMap::default(),
+            next_poison_id: 0,
+            deferred_diagnostics: Vec::new(),
         }
     }
 
@@ -403,6 +440,7 @@ impl<'db> Evaluator<'db> {
                     .then_some(name.clone())
             }))
             .collect::<CEnv>();
+        let context = self.enter_join_context();
         let (_, _, mut body) = self.eval_stmts(
             &type_reg,
             initial_env,
@@ -410,7 +448,8 @@ impl<'db> Evaluator<'db> {
             function.body,
             ret_comptime,
         );
-        self.repair_fresh_binding_scopes(&function.params, &mut body);
+        self.finish_function_joins(&function.name, &function.params, &mut body);
+        self.leave_join_context(context);
         function.body = body;
         self.functions
             .insert(function.name.clone(), function.clone());
@@ -751,6 +790,20 @@ impl<'db> Evaluator<'db> {
                         .as_ref()
                         .is_some_and(|id| type_reg.contains_key(&id.name))
                     && self.value_contains_callable(&rhs);
+                // A run-time region that masks the variable loses a static
+                // assignment at its end: a template keeps it in the residual,
+                // a final evaluation poisons the variable after the region.
+                let masked_static_assignment = static_assignment
+                    && target
+                        .as_ref()
+                        .is_some_and(|id| self.is_region_masked(&id.name));
+                let keep_static_assignment = masked_static_assignment && self.template_depth > 0;
+                if static_assignment && let Some(id) = &target {
+                    self.callable_assignment_spans.insert(id.name.clone(), span);
+                    if masked_static_assignment && self.template_depth == 0 {
+                        self.erased_assignments.push((id.name.clone(), span));
+                    }
+                }
                 let mut env = env;
                 let mut comptime_env = comptime_env;
                 let mut effects = lhs_effects;
@@ -779,7 +832,7 @@ impl<'db> Evaluator<'db> {
                         }
                     }
                 }
-                if !static_assignment {
+                if !static_assignment || keep_static_assignment {
                     capture_bindings.push(MonoStmt {
                         span,
                         kind: MonoStmtKind::Assign {
@@ -834,50 +887,35 @@ impl<'db> Evaluator<'db> {
                         collector.visit_stmt(stmt);
                     }
                 });
-                let (mut branch_env, mut branch_comptime_env) =
-                    self.prepare_control_flow_env(env, comptime_env, effects, scope);
-                let then_bindings = self.stmts_binding_effects(&then_body);
-                let (_, _, then_body) = self.eval_stmts_in_scope(
-                    type_reg,
-                    branch_env.clone(),
-                    branch_comptime_env.clone(),
-                    then_body,
-                    ret_comptime,
-                    scope,
-                );
-                self.invalidate_assigned_effects(
-                    &then_bindings,
-                    &mut branch_env,
-                    &mut branch_comptime_env,
-                );
-                let else_body = else_body.map(|body| {
-                    let else_bindings = self.stmts_binding_effects(&body);
-                    let (_, _, body) = self.eval_stmts_in_scope(
+                let joins = self.join_vars(&env, type_reg, &effects.writes, &effects.declarations);
+                if !joins.is_empty() {
+                    return self.eval_if_join(
                         type_reg,
-                        branch_env.clone(),
-                        branch_comptime_env.clone(),
-                        body,
-                        ret_comptime,
-                        scope,
-                    );
-                    self.invalidate_assigned_effects(
-                        &else_bindings,
-                        &mut branch_env,
-                        &mut branch_comptime_env,
-                    );
-                    body
-                });
-                (
-                    branch_env,
-                    branch_comptime_env,
-                    vec![MonoStmt {
-                        span,
-                        kind: MonoStmtKind::If {
+                        env,
+                        comptime_env,
+                        IfJoinInput {
+                            span,
                             cond,
                             then_body,
                             else_body,
+                            effects,
+                            joins,
                         },
-                    }],
+                        ret_comptime,
+                        scope,
+                    );
+                }
+                self.eval_if_masked(
+                    type_reg,
+                    env,
+                    comptime_env,
+                    span,
+                    cond,
+                    then_body,
+                    else_body,
+                    effects,
+                    ret_comptime,
+                    scope,
                 )
             }
             MonoStmtKind::Match { scrutinees, arms } => {
@@ -946,67 +984,38 @@ impl<'db> Evaluator<'db> {
                         collector.visit_stmt(stmt);
                     }
                 });
-                let (mut loop_env, mut loop_comptime_env) =
-                    self.prepare_control_flow_env(env, comptime_env, effects, scope);
-                let init_bindings = self.stmts_binding_effects(&init);
-                let post_bindings = self.stmts_binding_effects(&post);
-                let body_bindings = self.stmts_binding_effects(&body);
-                let (_, _, init) = self.eval_stmts_in_scope(
-                    type_reg,
-                    loop_env.clone(),
-                    loop_comptime_env.clone(),
-                    init,
-                    ret_comptime,
-                    scope,
-                );
-                self.invalidate_assigned_effects(
-                    &init_bindings,
-                    &mut loop_env,
-                    &mut loop_comptime_env,
-                );
-                self.memory.clear();
-                let cond = self.eval_expr(&loop_env, &loop_comptime_env, cond);
-                self.memory.clear();
-                let (_, _, post) = self.eval_stmts_in_scope(
-                    type_reg,
-                    loop_env.clone(),
-                    loop_comptime_env.clone(),
-                    post,
-                    ret_comptime,
-                    scope,
-                );
-                self.invalidate_assigned_effects(
-                    &post_bindings,
-                    &mut loop_env,
-                    &mut loop_comptime_env,
-                );
-                self.memory.clear();
-                let (_, _, body) = self.eval_stmts_in_scope(
-                    type_reg,
-                    loop_env.clone(),
-                    loop_comptime_env.clone(),
-                    body,
-                    ret_comptime,
-                    scope,
-                );
-                self.invalidate_assigned_effects(
-                    &body_bindings,
-                    &mut loop_env,
-                    &mut loop_comptime_env,
-                );
-                self.memory.clear();
-                (
-                    loop_env,
-                    loop_comptime_env,
-                    vec![MonoStmt {
-                        span,
-                        kind: MonoStmtKind::For {
+                let joins = self.join_vars(&env, type_reg, &effects.writes, &effects.declarations);
+                if !joins.is_empty() {
+                    return self.eval_for_join(
+                        type_reg,
+                        env,
+                        comptime_env,
+                        ForJoinInput {
+                            span,
                             init,
                             cond,
                             post,
                             body,
+                            effects,
+                            joins,
                         },
-                    }],
+                        ret_comptime,
+                        scope,
+                    );
+                }
+                self.eval_for_masked(
+                    type_reg,
+                    env,
+                    comptime_env,
+                    span,
+                    init,
+                    cond,
+                    post,
+                    body,
+                    effects,
+                    FxHashMap::default(),
+                    ret_comptime,
+                    scope,
                 )
             }
             MonoStmtKind::Assembly(body) => {
@@ -1048,22 +1057,22 @@ impl<'db> Evaluator<'db> {
                     )
                 }
             }
-            MonoStmtKind::Break => (
-                env,
-                comptime_env,
-                vec![MonoStmt {
+            MonoStmtKind::Break => {
+                let mut out = self.loop_edge_stores(&env);
+                out.push(MonoStmt {
                     span,
                     kind: MonoStmtKind::Break,
-                }],
-            ),
-            MonoStmtKind::Continue => (
-                env,
-                comptime_env,
-                vec![MonoStmt {
+                });
+                (env, comptime_env, out)
+            }
+            MonoStmtKind::Continue => {
+                let mut out = self.loop_edge_stores(&env);
+                out.push(MonoStmt {
                     span,
                     kind: MonoStmtKind::Continue,
-                }],
-            ),
+                });
+                (env, comptime_env, out)
+            }
             MonoStmtKind::Error => (
                 env,
                 comptime_env,
@@ -1072,6 +1081,201 @@ impl<'db> Evaluator<'db> {
                     kind: MonoStmtKind::Error,
                 }],
             ),
+        }
+    }
+
+    /// A run-time `if`: every name its branches assign is unknown afterwards.
+    #[allow(clippy::too_many_arguments)]
+    fn eval_if_masked(
+        &mut self,
+        type_reg: &mut TypeReg<'db>,
+        env: VEnv<'db>,
+        comptime_env: CEnv,
+        span: Span<'db>,
+        cond: MonoExpr<'db>,
+        then_body: Vec<MonoStmt<'db>>,
+        else_body: Option<Vec<MonoStmt<'db>>>,
+        effects: StmtEffects,
+        ret_comptime: bool,
+        scope: &mut ScopeBindings<'db>,
+    ) -> (VEnv<'db>, CEnv, Vec<MonoStmt<'db>>) {
+        let mut effects = effects;
+        let mask = self.enter_region_mask(&env, &mut effects.writes);
+        let (mut branch_env, mut branch_comptime_env) =
+            self.prepare_control_flow_env(env, comptime_env, effects, scope);
+        let then_bindings = self.stmts_binding_effects(&then_body);
+        let (then_env, _, then_body) = self.eval_stmts_in_scope(
+            type_reg,
+            branch_env.clone(),
+            branch_comptime_env.clone(),
+            then_body,
+            ret_comptime,
+            scope,
+        );
+        self.invalidate_assigned_effects(&then_bindings, &mut branch_env, &mut branch_comptime_env);
+        let mut else_env = None;
+        let else_body = else_body.map(|body| {
+            let else_bindings = self.stmts_binding_effects(&body);
+            let (env_after, _, body) = self.eval_stmts_in_scope(
+                type_reg,
+                branch_env.clone(),
+                branch_comptime_env.clone(),
+                body,
+                ret_comptime,
+                scope,
+            );
+            self.invalidate_assigned_effects(
+                &else_bindings,
+                &mut branch_env,
+                &mut branch_comptime_env,
+            );
+            else_env = Some(env_after);
+            body
+        });
+        let mut reaching = Vec::new();
+        if !joins::stmts_diverge(&then_body) {
+            reaching.push(Some(&then_env));
+        }
+        if else_body
+            .as_deref()
+            .is_none_or(|body| !joins::stmts_diverge(body))
+        {
+            reaching.push(else_env.as_ref());
+        }
+        self.settle_region_poison(&mask, &reaching, &mut branch_env, &mut branch_comptime_env);
+        self.leave_region_mask(mask, type_reg, &mut branch_env, &mut branch_comptime_env);
+        (
+            branch_env,
+            branch_comptime_env,
+            vec![MonoStmt {
+                span,
+                kind: MonoStmtKind::If {
+                    cond,
+                    then_body,
+                    else_body,
+                },
+            }],
+        )
+    }
+
+    /// A run-time loop: every name it assigns is unknown in and after it.
+    /// `header_poison` holds variables whose value at the loop header cannot
+    /// be represented; a variable that receives a static callable assignment
+    /// in the loop joins them, since a later iteration would read a stale
+    /// value.
+    #[allow(clippy::too_many_arguments)]
+    fn eval_for_masked(
+        &mut self,
+        type_reg: &mut TypeReg<'db>,
+        env: VEnv<'db>,
+        comptime_env: CEnv,
+        span: Span<'db>,
+        init: Vec<MonoStmt<'db>>,
+        cond: MonoExpr<'db>,
+        post: Vec<MonoStmt<'db>>,
+        body: Vec<MonoStmt<'db>>,
+        effects: StmtEffects,
+        mut header_poison: FxHashMap<String, MonoExpr<'db>>,
+        ret_comptime: bool,
+        scope: &mut ScopeBindings<'db>,
+    ) -> (VEnv<'db>, CEnv, Vec<MonoStmt<'db>>) {
+        let snapshot = self.join_snapshot();
+        loop {
+            // Poisoned variables stay poisoned in and after the loop: the
+            // loop may run zero times.
+            let mut masked = effects.clone();
+            let mask = self.enter_region_mask(&env, &mut masked.writes);
+            let (mut loop_env, mut loop_comptime_env) =
+                self.prepare_control_flow_env(env.clone(), comptime_env.clone(), masked, scope);
+            let init_bindings = self.stmts_binding_effects(&init);
+            let post_bindings = self.stmts_binding_effects(&post);
+            let body_bindings = self.stmts_binding_effects(&body);
+            // Break and continue in this loop leave no callable to store.
+            self.loop_frames.push(LoopFrame::default());
+            let (_, _, init_out) = self.eval_stmts_in_scope(
+                type_reg,
+                loop_env.clone(),
+                loop_comptime_env.clone(),
+                init.clone(),
+                ret_comptime,
+                scope,
+            );
+            self.invalidate_assigned_effects(&init_bindings, &mut loop_env, &mut loop_comptime_env);
+            for (name, value) in &header_poison {
+                loop_env.insert(name.clone(), value.clone());
+                loop_comptime_env.remove(name);
+            }
+            self.memory.clear();
+            let cond_out = self.eval_expr(&loop_env, &loop_comptime_env, cond.clone());
+            self.memory.clear();
+            let (_, _, post_out) = self.eval_stmts_in_scope(
+                type_reg,
+                loop_env.clone(),
+                loop_comptime_env.clone(),
+                post.clone(),
+                ret_comptime,
+                scope,
+            );
+            self.invalidate_assigned_effects(&post_bindings, &mut loop_env, &mut loop_comptime_env);
+            self.memory.clear();
+            let (_, _, body_out) = self.eval_stmts_in_scope(
+                type_reg,
+                loop_env.clone(),
+                loop_comptime_env.clone(),
+                body.clone(),
+                ret_comptime,
+                scope,
+            );
+            self.invalidate_assigned_effects(&body_bindings, &mut loop_env, &mut loop_comptime_env);
+            self.loop_frames.pop();
+            if self.template_depth == 0 {
+                let erased = self.erased_assignments[mask.erased_from..]
+                    .iter()
+                    .filter(|(name, _)| {
+                        mask.names.contains(name) && !header_poison.contains_key(name)
+                    })
+                    .cloned()
+                    .collect::<Vec<_>>();
+                if !erased.is_empty() {
+                    self.region_masks.pop();
+                    self.join_restore(&snapshot);
+                    for (name, at) in erased {
+                        if header_poison.contains_key(&name) {
+                            continue;
+                        }
+                        let Some(id) = type_reg.get(&name) else {
+                            continue;
+                        };
+                        let issue = if mask.known.contains(&name) {
+                            RuntimeFunctionChoiceIssue::MixedStaticStructure
+                        } else {
+                            RuntimeFunctionChoiceIssue::NotAssignedOnEveryPath
+                        };
+                        let poison = self.poison_value(&name, id.ty, at, issue);
+                        header_poison.insert(name, poison);
+                    }
+                    continue;
+                }
+            }
+            for (name, value) in &header_poison {
+                loop_env.insert(name.clone(), value.clone());
+                loop_comptime_env.remove(name);
+            }
+            self.leave_region_mask(mask, type_reg, &mut loop_env, &mut loop_comptime_env);
+            self.memory.clear();
+            return (
+                loop_env,
+                loop_comptime_env,
+                vec![MonoStmt {
+                    span,
+                    kind: MonoStmtKind::For {
+                        init: init_out,
+                        cond: cond_out,
+                        post: post_out,
+                        body: body_out,
+                    },
+                }],
+            );
         }
     }
 
@@ -1262,11 +1466,113 @@ impl<'db> Evaluator<'db> {
         ret_comptime: bool,
         scope: &mut ScopeBindings<'db>,
     ) -> (VEnv<'db>, CEnv, Vec<MonoStmt<'db>>) {
+        let joins = self.match_join_vars(&env, type_reg, &input);
+        if joins.is_empty() {
+            return self
+                .eval_residual_match_with(
+                    type_reg,
+                    env,
+                    comptime_env,
+                    input,
+                    &[],
+                    ret_comptime,
+                    scope,
+                )
+                .unwrap_or_else(|()| unreachable!("no callable merge to fail"));
+        }
+        let snapshot = self.join_snapshot();
+        let retry =
+            (self.template_depth > 0).then(|| (env.clone(), comptime_env.clone(), input.clone()));
+        match self.eval_residual_match_with(
+            type_reg,
+            env,
+            comptime_env,
+            input,
+            &joins,
+            ret_comptime,
+            scope,
+        ) {
+            Ok(result) => result,
+            Err(()) => {
+                // As for `if`: a template keeps the assignments it cannot
+                // merge, for the evaluation that knows its captures.
+                let (env, comptime_env, input) =
+                    retry.expect("only templates retry an unmerged match");
+                self.join_restore(&snapshot);
+                let mut out = self.restate_join_values(&joins, input.span);
+                let (env, comptime_env, body) = self
+                    .eval_residual_match_with(
+                        type_reg,
+                        env,
+                        comptime_env,
+                        input,
+                        &[],
+                        ret_comptime,
+                        scope,
+                    )
+                    .unwrap_or_else(|()| unreachable!("a match without callables to merge"));
+                out.extend(body);
+                (env, comptime_env, out)
+            }
+        }
+    }
+
+    /// Callable variables that the arms of a residual match assign.
+    fn match_join_vars(
+        &self,
+        env: &VEnv<'db>,
+        type_reg: &TypeReg<'db>,
+        input: &MatchInput<'db>,
+    ) -> Vec<JoinVar<'db>> {
+        let storage_fields = self.visible_storage_fields();
+        let mut writes = AssignedNames::empty();
+        let mut excluded = FxHashSet::default();
+        for arm in &input.arms {
+            let locals = pattern_bindings(&arm.pats)
+                .into_iter()
+                .map(|id| id.name)
+                .collect::<FxHashSet<_>>();
+            excluded.extend(locals.iter().cloned());
+            if let AssignedNames::Names(names) = self.stmts_binding_effects(&arm.body) {
+                excluded.extend(names);
+            }
+            let mut collector = StmtEffectsCollector {
+                db: self.db,
+                call_effects: &self.write_effects,
+                storage_fields: &storage_fields,
+                if_stmt_spans: &self.if_stmt_spans,
+                locals,
+                invalidates_memory: false,
+                effects: AssignedNames::empty(),
+            };
+            for stmt in &arm.body {
+                collector.visit_stmt(stmt);
+            }
+            writes.merge(collector.effects);
+        }
+        self.join_vars(env, type_reg, &writes, &excluded)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn eval_residual_match_with(
+        &mut self,
+        type_reg: &mut TypeReg<'db>,
+        env: VEnv<'db>,
+        comptime_env: CEnv,
+        input: MatchInput<'db>,
+        joins: &[JoinVar<'db>],
+        ret_comptime: bool,
+        scope: &mut ScopeBindings<'db>,
+    ) -> Result<(VEnv<'db>, CEnv, Vec<MonoStmt<'db>>), ()> {
         let MatchInput {
             span,
             scrutinees,
             arms,
         } = input;
+        let join_names = joins
+            .iter()
+            .map(|var| var.name.clone())
+            .collect::<FxHashSet<_>>();
         // Desugared `if` regions preserve any unscoped IR declarations in
         // traversal order. Source declarations are enclosed in explicit blocks.
         // Only actual matches can discard their static columns here.
@@ -1301,24 +1607,41 @@ impl<'db> Evaluator<'db> {
                 }
             }
         }
-        let (mut env, mut comptime_env, assigned) = if source_if {
-            let effects = self.collect_stmt_effects(FxHashSet::default(), |collector| {
+        let spans_before = self.assignment_spans(joins);
+        let (masked, source_effects) = if source_if {
+            let mut effects = self.collect_stmt_effects(FxHashSet::default(), |collector| {
                 for (arm, _) in &arms {
                     for stmt in &arm.body {
                         collector.visit_stmt(stmt);
                     }
                 }
             });
-            let (env, comptime_env) =
-                self.prepare_control_flow_env(env, comptime_env, effects, scope);
-            (env, comptime_env, AssignedNames::empty())
+            self.remove_join_names(&mut effects.writes, &join_names);
+            (effects.writes.clone(), Some(effects))
         } else {
             let mut assigned = AssignedNames::empty();
             for (arm, _) in &arms {
                 assigned.merge(self.arm_write_effects(arm));
             }
-            (env, comptime_env, assigned)
+            self.remove_join_names(&mut assigned, &join_names);
+            (assigned, None)
         };
+        let mut masked = masked;
+        let mask = self.enter_region_mask(&env, &mut masked);
+        let poisoned = mask
+            .poisoned_names()
+            .cloned()
+            .collect::<FxHashSet<String>>();
+        let (mut env, mut comptime_env, assigned) = match source_effects {
+            Some(mut effects) => {
+                effects.writes = masked;
+                let (env, comptime_env) =
+                    self.prepare_control_flow_env(env, comptime_env, effects, scope);
+                (env, comptime_env, AssignedNames::empty())
+            }
+            None => (env, comptime_env, masked),
+        };
+        let mut arm_envs = Vec::with_capacity(arms.len());
         let arms = arms
             .into_iter()
             .map(|(arm, known)| {
@@ -1333,7 +1656,9 @@ impl<'db> Evaluator<'db> {
                     // hide the previous bindings after their initializers.
                     (env.clone(), comptime_env.clone())
                 } else {
-                    let masked = self.arm_write_effects(&arm);
+                    let mut masked = self.arm_write_effects(&arm);
+                    self.remove_join_names(&mut masked, &join_names);
+                    self.remove_join_names(&mut masked, &poisoned);
                     self.mask_assigned_env(env.clone(), comptime_env.clone(), &masked)
                 };
                 // Patterns bind simultaneously, using the scrutinees'
@@ -1345,7 +1670,7 @@ impl<'db> Evaluator<'db> {
                     &mut arm_env,
                     &mut arm_comptime_env,
                 );
-                let (_, _, body) = if source_if {
+                let (arm_end_env, _, body) = if source_if {
                     self.eval_stmts_in_scope(
                         type_reg,
                         arm_env,
@@ -1385,6 +1710,9 @@ impl<'db> Evaluator<'db> {
                     }
                 };
                 self.invalidate_assigned_effects(&introduced, &mut env, &mut comptime_env);
+                if !joins.is_empty() || !poisoned.is_empty() {
+                    arm_envs.push(arm_end_env);
+                }
                 let pats = arm
                     .pats
                     .into_iter()
@@ -1396,16 +1724,44 @@ impl<'db> Evaluator<'db> {
                 MonoArm { body, pats, ..arm }
             })
             .collect::<Vec<_>>();
+        let mut arms = arms;
         let scrutinees = scrutinees
             .into_iter()
             .filter(|expr| !specialize_columns || !self.expr_is_known_value(expr))
             .collect();
-        let (env, comptime_env) = self.mask_assigned_env(env, comptime_env, &assigned);
+        let (mut env, mut comptime_env) = self.mask_assigned_env(env, comptime_env, &assigned);
+        let mut prefix = Vec::new();
+        if !joins.is_empty()
+            && !self.finish_match_join(
+                joins,
+                &spans_before,
+                &arm_envs,
+                &mut arms,
+                span,
+                &mut env,
+                &mut comptime_env,
+                &mut prefix,
+            )
+        {
+            self.region_masks.pop();
+            return Err(());
+        }
+        if !poisoned.is_empty() {
+            let paths = arm_envs
+                .iter()
+                .zip(&arms)
+                .filter(|(_, arm)| !joins::stmts_diverge(&arm.body))
+                .map(|(env, _)| Some(env))
+                .collect::<Vec<_>>();
+            self.settle_region_poison(&mask, &paths, &mut env, &mut comptime_env);
+        }
+        self.leave_region_mask(mask, type_reg, &mut env, &mut comptime_env);
+        captures.extend(prefix);
         captures.push(MonoStmt {
             span,
             kind: MonoStmtKind::Match { scrutinees, arms },
         });
-        (env, comptime_env, captures)
+        Ok((env, comptime_env, captures))
     }
 
     fn eval_compound_assign(
@@ -2790,7 +3146,10 @@ impl<'db> Evaluator<'db> {
         }
         let type_reg = build_type_reg(&function.params, &[]);
         let saved_types = std::mem::replace(&mut self.capture_types, type_reg.clone());
+        // The callee's loops and callables are its own.
+        let context = self.enter_join_context();
         let (_, _, mut body) = self.eval_stmts(&type_reg, env, comptime_env, function.body, false);
+        self.leave_join_context(context);
         self.capture_types = saved_types;
         let frame = self.inline_stack.pop();
         debug_assert!(frame.is_some_and(|frame| frame.name == callee.name));
