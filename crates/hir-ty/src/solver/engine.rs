@@ -135,6 +135,13 @@ impl<'db> TabledEngine<'db> {
     /// projection's condition is a `givens_only` goal, which admits only local
     /// givens and further projections.
     fn applicable_clauses(&self, key: &TableKey<'db>) -> Vec<ProgramClause<'db>> {
+        // A predicate that failed to lower names no class or type, so no
+        // clause can prove it. Matching it against other failed predicates
+        // would let an impl with an unresolved head prove every unresolved
+        // condition, its own included, and wrap its answers forever.
+        if matches!(key.pred.kind(self.db), PredKind::Error) {
+            return Vec::new();
+        }
         // This is a one-way prefilter. Variables and their correlations are
         // deliberately ignored, so impossible clauses may remain but an
         // applicable clause is never discarded.

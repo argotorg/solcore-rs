@@ -1,0 +1,55 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/solver/unresolved_trait_in_recursive_impl/main.sol
+---
+error[SC0105]: undefined trait: Missing
+  --> /main/main.sol:11:6
+   |
+10 |
+11 | impl Missing<Foo> {
+   |      ^^^^^^^ undefined trait
+12 |     function size(x: Foo) returns (word) {
+   |
+---
+
+error[SC0105]: undefined trait: Missing
+  --> /main/main.sol:17:9
+   |
+16 |
+17 | impl<a> Missing<Wrap<a>> where a: Missing {
+   |         ^^^^^^^ undefined trait
+18 |     function size(x: Wrap<a>) returns (word) {
+   |
+---
+
+error[SC0105]: undefined trait: Missing
+  --> /main/main.sol:17:35
+   |
+16 |
+17 | impl<a> Missing<Wrap<a>> where a: Missing {
+   |                                   ^^^^^^^ undefined trait
+18 |     function size(x: Wrap<a>) returns (word) {
+   |
+---
+
+error[SC0105]: undefined trait: Missing
+  --> /main/main.sol:27:29
+   |
+26 |
+27 | impl<a> R<Wrap<a>> where a: Missing {
+   |                             ^^^^^^^ undefined trait
+28 |     function r(x: Wrap<a>) returns (word) {
+   |
+---
+
+error[SC0207]: cannot satisfy trait constraint: Wrap<Foo>: R
+  --> /main/main.sol:34:12
+   |
+33 | function site() returns (word) {
+34 |     return R.r(Wrap(Foo.Foo));
+   |            ^^^^^^^^^^^^^^^^^^ constraint originates here
+35 | }
+   |
+   = note: no visible impl matches `Wrap<Foo>: R`
+   = help: add a matching impl or strengthen the surrounding type context

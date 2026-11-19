@@ -1411,6 +1411,38 @@ fn solver_budget_bounds_successful_and_answerless_work(fixture: Fixture<&str>) {
     }
 }
 
+#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/solver/unresolved_predicates_prove_nothing", glob: "main.sol")]
+fn unresolved_predicates_prove_nothing(fixture: Fixture<&str>) {
+    let db = TestDb::default();
+    let module = parse_module(&db, fixture.content());
+    let resolution = hir_nameres::resolve_module(&db, module);
+    let env = trait_env(&db, module, &resolution);
+    let goal = canonical_goal(
+        &db,
+        Pred::in_class(
+            &db,
+            class_id(&db, module, "R"),
+            adt_ty(
+                &db,
+                module,
+                "Wrap",
+                vec![adt_ty(&db, module, "Foo", Vec::new())],
+            ),
+            Vec::new(),
+        ),
+    );
+    // The impl's unresolved condition has no clauses, so the goal fails at
+    // once. Were failed predicates interchangeable, `Missing<Foo>` would seed
+    // the condition and `Missing<Wrap<a>>` would wrap it until the fuel ran out.
+    let report = crate::solver::solve_report_with_fuel(&db, env, goal, 64);
+    assert!(!report.exhausted, "{report:?}");
+    assert!(
+        matches!(report.solution, Solution::NoSolution),
+        "{report:?}"
+    );
+    assert_eq!(report.stats.answers_found, 0, "{report:?}");
+}
+
 #[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/solver/direct_superclass_predicates_instantiate_aliases_and_secondary_arguments", glob: "main.sol")]
 fn direct_superclass_predicates_instantiate_aliases_and_secondary_arguments(
     fixture: Fixture<&str>,
