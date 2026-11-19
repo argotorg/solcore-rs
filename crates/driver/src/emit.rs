@@ -408,6 +408,19 @@ fn write_outputs(
             *path = destination;
         }
     }
+    for destination in &destinations {
+        if let Some(parent) = destination
+            .ancestors()
+            .skip(1)
+            .find(|parent| destinations.contains(*parent))
+        {
+            return Err(format!(
+                "output `{}` needs `{}` as a directory, but another output would write it as a file",
+                destination.display(),
+                parent.display(),
+            ));
+        }
+    }
     for (target, content) in outputs {
         match target {
             EmitTarget::Stdout => print!("{content}"),

@@ -1085,6 +1085,44 @@ fn cli_rejects_output_aliases_before_writing_artifacts() {
 }
 
 #[test]
+fn cli_rejects_an_output_that_is_also_a_directory() {
+    let dir = temp_dir("ethdebug-output-directory-conflict");
+    fs::create_dir_all(&dir).unwrap();
+    let input = dir.join("main.sol");
+    fs::write(
+        &input,
+        "pragma solcore; contract C { function main() public returns (word) { return 7; } }",
+    )
+    .unwrap();
+    let resources = dir.join("ethdebug_resources.json");
+    fs::write(&resources, "sentinel").unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_solcore-driver"))
+        .args([
+            "--ethdebug",
+            "--abi",
+            "--coverage=C.bin/report.json",
+            "--std-root",
+        ])
+        .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std"))
+        .arg("-o")
+        .arg(&dir)
+        .arg(&input)
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("needs") && stderr.contains("as a directory"),
+        "{stderr}"
+    );
+    assert_eq!(fs::read_to_string(resources).unwrap(), "sentinel");
+    assert!(!dir.join("C.bin").exists());
+    assert!(!dir.join("C.abi").exists());
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn cli_escapes_unicode_source_paths_in_annotated_yul() {
     let dir = temp_dir("yul-locations-unicode-path");
     let external = dir.join("π");
