@@ -2,7 +2,7 @@
 
 use ethdebug::{Compilation, Context, Environment, Program, Range, Source};
 use hir::keccak::keccak256;
-use hull::origin::{Origin, SourceCatalog, SourceTable};
+use hull::origin::{SourceCatalog, SourceTable};
 use sonatina::{CompiledObject, CompiledSection, OptLevel};
 
 use crate::{
@@ -148,30 +148,42 @@ fn compilation_id(opt_level: OptLevel, sources: &[Source<'_>]) -> String {
     format!("solcore-{}", hex(&keccak256(&data)))
 }
 
-/// Source id, offset and length of the contract's definition, the span of its
-/// Hull object.
+/// Source range of a declared contract or the synthetic standalone program.
 fn definition(
     db: &DriverDb,
     table: &SourceTable,
     program: &hull::Program<'_>,
     object: &CompiledObject,
 ) -> Result<(u32, u32, u32), String> {
-    let contract = program
-        .objects
-        .iter()
-        .find(|hull_object| hull_object.name.as_str() == object.object)
-        .map(|hull_object| hull_object.inners.first().unwrap_or(hull_object))
-        .ok_or_else(|| format!("the program has no object `{}`", object.object))?;
-    let origin = Origin::Source(contract.span)
-        .resolve(db)
-        .ok_or_else(|| format!("`{}` has an empty source range", object.contract))?;
-    let source = table.id(&origin.url).ok_or_else(|| {
+    let span = if program.objects.is_empty() {
+        if let Some(entry) = program.entry_points.first() {
+            program
+                .functions
+                .iter()
+                .find(|function| function.name == *entry)
+                .ok_or_else(|| format!("the program has no entry function `{entry}`"))?
+                .span
+        } else {
+            program.span
+        }
+    } else {
+        program
+            .objects
+            .iter()
+            .find(|hull_object| hull_object.name.as_str() == object.object)
+            .map(|hull_object| hull_object.inners.first().unwrap_or(hull_object).span)
+            .ok_or_else(|| format!("the program has no object `{}`", object.object))?
+    };
+    let location = span.resolve_to_absolute(db);
+    let url = location.file.url(db).as_str();
+    let source = table.id(url).ok_or_else(|| {
         format!(
             "`{}` is defined in `{}`, which is not a source of the program",
-            object.contract, origin.url
+            object.contract, url
         )
     })?;
-    Ok((source, origin.start, origin.end - origin.start))
+    let start = location.start.as_u32();
+    Ok((source, start, location.end.as_u32() - start))
 }
 
 /// The ethdebug context of every range of the section's byte map.

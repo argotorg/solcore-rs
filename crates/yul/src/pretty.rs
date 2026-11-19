@@ -295,17 +295,19 @@ fn line(out: &mut String, indent: usize, text: &str) {
 
 fn escape_string(value: &str) -> String {
     let mut out = String::new();
-    for ch in value.chars() {
-        match ch {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            ch if ch.is_control() => {
-                let _ = write!(out, "\\x{:02x}", ch as u32);
+    for byte in value.bytes() {
+        match byte {
+            b'"' => out.push_str("\\\""),
+            b'\\' => out.push_str("\\\\"),
+            b'\n' => out.push_str("\\n"),
+            b'\r' => out.push_str("\\r"),
+            b'\t' => out.push_str("\\t"),
+            b' '..=b'~' => out.push(char::from(byte)),
+            // Yul ordinary string literals accept ASCII; hex escapes preserve
+            // the original UTF-8 bytes, including in @use-src filenames.
+            _ => {
+                let _ = write!(out, "\\x{byte:02x}");
             }
-            ch => out.push(ch),
         }
     }
     out

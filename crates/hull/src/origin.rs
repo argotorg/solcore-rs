@@ -291,6 +291,11 @@ impl SourceTable {
     /// Edge-only, like [`Span::resolve_to_absolute`].
     pub fn from_program<'db>(db: &'db dyn HirDb, program: &Program<'db>) -> Self {
         let mut files = BTreeMap::<String, SourceFile>::new();
+        if program.objects.is_empty() && program.entry_points.is_empty() {
+            // A synthetic object without an entry function is defined by the module.
+            let file = program.span.source_file(db);
+            files.insert(file.url(db).as_str().to_owned(), file);
+        }
         walk_origins(program, &mut |_, origin| {
             let span = origin.parts().1;
             if span.begin() == span.end() {

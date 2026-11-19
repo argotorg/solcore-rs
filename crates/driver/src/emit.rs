@@ -1,9 +1,9 @@
 use std::{
     cell::LazyCell,
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     fmt::Write as _,
-    fs,
-    path::{Path, PathBuf},
+    fs, io,
+    path::{Component, Path, PathBuf},
 };
 
 use hir::{diag::Diagnostic, input::SourceFile};
@@ -25,16 +25,30 @@ pub(crate) enum BackendFailure {
     Message(String),
 }
 
-pub(crate) fn maybe_emit_abi_outputs(
+pub(crate) fn emit_outputs(
+    db: &DriverDb,
+    entry: ModuleId<'_>,
+    entry_file: SourceFile,
+    args: &Args,
+) -> Result<Vec<Diagnostic>, BackendFailure> {
+    let mut outputs = Vec::new();
+    collect_abi_outputs(db, entry, args, &mut outputs).map_err(BackendFailure::Message)?;
+    let diagnostics = collect_backend_outputs(db, entry_file, args, &mut outputs)?;
+    write_outputs(outputs, args.output_dir.as_deref()).map_err(BackendFailure::Message)?;
+    Ok(diagnostics)
+}
+
+fn collect_abi_outputs(
     db: &DriverDb,
     entry: ModuleId<'_>,
     args: &Args,
+    outputs: &mut Vec<(EmitTarget, String)>,
 ) -> Result<(), String> {
     if !args.emit_abi {
         return Ok(());
     }
 
-    let outputs = compiler::collect_contract_abis(db, entry, compiler::AbiLibraryScope::Main)
+    let abis = compiler::collect_contract_abis(db, entry, compiler::AbiLibraryScope::Main)
         .map_err(|errors| {
             errors
                 .into_iter()
@@ -42,9 +56,8 @@ pub(crate) fn maybe_emit_abi_outputs(
                 .collect::<Vec<_>>()
                 .join("\n")
         })?;
-    for (name, abi) in outputs {
-        let filename = format!("{name}.abi");
-        write_output_file(&PathBuf::from(filename), args.output_dir.as_deref(), &abi)?;
+    for (name, abi) in abis {
+        outputs.push((EmitTarget::File(format!("{name}.abi").into()), abi));
     }
     Ok(())
 }
@@ -73,10 +86,11 @@ fn format_abi_collection_error(error: compiler::AbiCollectionError) -> String {
     }
 }
 
-pub(crate) fn maybe_emit_backend_outputs(
+fn collect_backend_outputs(
     db: &DriverDb,
     entry_file: SourceFile,
     args: &Args,
+    outputs: &mut Vec<(EmitTarget, String)>,
 ) -> Result<Vec<Diagnostic>, BackendFailure> {
     if args.emit_hull.is_none()
         && args.emit_yul.is_none()
@@ -116,7 +130,7 @@ pub(crate) fn maybe_emit_backend_outputs(
         } else {
             hull::pretty_program(db, &program)
         };
-        write_emit_output(target, args.output_dir.as_deref(), &text)?;
+        outputs.push((target.clone(), text));
     }
     // One table per compile, shared by every output that names source files.
     let table = LazyCell::new(|| SourceTable::from_program(db, &program));
@@ -129,7 +143,7 @@ pub(crate) fn maybe_emit_backend_outputs(
             let catalog = catalog
                 .as_ref()
                 .map_err(|err| BackendFailure::Message(err.clone()))?;
-            if args.output_dir.is_some() {
+            if args.output_dir.is_some() && !args.ethdebug {
                 // Describes the source ids that the annotations use.
                 compilation = Some(
                     compilation_file(db, catalog, args.opt_level)
@@ -141,17 +155,16 @@ pub(crate) fn maybe_emit_backend_outputs(
             yul::render_hull_program_object(db, &program, object)
         }
         .map_err(failed)?;
-        write_emit_output(target, args.output_dir.as_deref(), &yul)?;
+        outputs.push((target.clone(), yul));
         if let Some((name, text)) = compilation {
-            write_output_file(Path::new(&name), args.output_dir.as_deref(), &text)
-                .map_err(BackendFailure::Message)?;
+            outputs.push((EmitTarget::File(name.into()), text));
         }
     }
     if let Some(target) = &args.emit_sonatina {
         let sonatina = sonatina::render_hull_program(db, &program).map_err(|err| {
             BackendFailure::Message(format!("Sonatina translation failed:\n  {err}"))
         })?;
-        write_emit_output(target, args.output_dir.as_deref(), &sonatina)?;
+        outputs.push((target.clone(), sonatina));
     }
     if args.emit_bin || args.coverage.is_some() {
         let objects = sonatina::compile_hull_program(
@@ -182,34 +195,33 @@ pub(crate) fn maybe_emit_backend_outputs(
         };
         if args.emit_bin {
             for object in &objects {
-                write_bin_output(object, args.output_dir.as_deref())
-                    .map_err(BackendFailure::Message)?;
+                collect_bin_output(object, outputs);
             }
         }
-        for (name, text) in ethdebug {
-            write_output_file(Path::new(&name), args.output_dir.as_deref(), &text)
-                .map_err(BackendFailure::Message)?;
-        }
+        outputs.extend(
+            ethdebug
+                .into_iter()
+                .map(|(name, text)| (EmitTarget::File(name.into()), text)),
+        );
         if let Some((target, json)) = coverage {
-            write_emit_output(target, args.output_dir.as_deref(), &json)?;
+            outputs.push((target.clone(), json));
         }
     }
     Ok(diagnostics)
 }
 
-/// Writes `<contract>.bin` (creation code) and `<contract>.bin-runtime` as one
+/// Prepares `<contract>.bin` (creation code) and `<contract>.bin-runtime` as one
 /// line of lower-case hex without prefix or line end, like `solc --bin -o`.
-fn write_bin_output(object: &CompiledObject, output_dir: Option<&Path>) -> Result<(), String> {
+fn collect_bin_output(object: &CompiledObject, outputs: &mut Vec<(EmitTarget, String)>) {
     let sections = [
         ("bin", Some(&object.init)),
         ("bin-runtime", object.runtime.as_ref()),
     ];
     for (extension, section) in sections {
         let Some(section) = section else { continue };
-        let filename = format!("{}.{extension}", object.contract);
-        write_output_file(&PathBuf::from(filename), output_dir, &hex(&section.bytes))?;
+        let filename = EmitTarget::File(format!("{}.{extension}", object.contract).into());
+        outputs.push((filename, hex(&section.bytes)));
     }
-    Ok(())
 }
 
 /// Lower-case hex without prefix.
@@ -359,28 +371,86 @@ pub(crate) fn display_path(db: &DriverDb, url: &str) -> String {
     path.display().to_string()
 }
 
-fn write_emit_output(
-    target: &EmitTarget,
+fn write_outputs(
+    mut outputs: Vec<(EmitTarget, String)>,
     output_dir: Option<&Path>,
-    content: &str,
-) -> Result<(), BackendFailure> {
-    match target {
-        EmitTarget::Stdout => {
-            print!("{content}");
-            Ok(())
-        }
-        EmitTarget::File(path) => {
-            write_output_file(path, output_dir, content).map_err(BackendFailure::Message)
+) -> Result<(), String> {
+    let mut destinations = BTreeSet::new();
+    #[cfg(unix)]
+    let mut existing_files = BTreeSet::new();
+    for (target, _) in &mut outputs {
+        if let EmitTarget::File(path) = target {
+            let destination = emit_file_path(path, output_dir);
+            let identity = std::path::absolute(&destination)
+                .and_then(|absolute| output_identity(&absolute, 0))
+                .map_err(|err| {
+                    format!(
+                        "failed to resolve output `{}`: {err}",
+                        destination.display()
+                    )
+                })?;
+            let collision = || {
+                format!(
+                    "multiple outputs would write to `{}`",
+                    destination.display()
+                )
+            };
+            if !destinations.insert(identity.clone()) {
+                return Err(collision());
+            }
+            #[cfg(unix)]
+            if let Ok(metadata) = fs::metadata(&identity) {
+                use std::os::unix::fs::MetadataExt;
+                if !existing_files.insert((metadata.dev(), metadata.ino())) {
+                    return Err(collision());
+                }
+            }
+            *path = destination;
         }
     }
+    for (target, content) in outputs {
+        match target {
+            EmitTarget::Stdout => print!("{content}"),
+            EmitTarget::File(path) => write_output_file(&path, &content)?,
+        }
+    }
+    Ok(())
 }
 
-pub(crate) fn write_output_file(
-    path: &Path,
-    output_dir: Option<&Path>,
-    content: &str,
-) -> Result<(), String> {
-    let path = emit_file_path(path, output_dir);
+/// Resolve aliases even when the output or a symlink target does not exist yet.
+fn output_identity(absolute: &Path, symlinks: u32) -> io::Result<PathBuf> {
+    if symlinks >= 40 {
+        return Err(io::Error::other("too many output symlinks"));
+    }
+    let mut identity = PathBuf::new();
+    for component in absolute.components() {
+        match component {
+            Component::ParentDir => {
+                identity.pop();
+            }
+            Component::CurDir => {}
+            Component::RootDir | Component::Prefix(_) => identity.push(component.as_os_str()),
+            Component::Normal(name) => {
+                identity.push(name);
+                match fs::read_link(&identity) {
+                    Ok(target) => {
+                        identity.pop();
+                        identity = output_identity(&identity.join(target), symlinks + 1)?;
+                    }
+                    Err(err)
+                        if matches!(
+                            err.kind(),
+                            io::ErrorKind::NotFound | io::ErrorKind::InvalidInput
+                        ) => {}
+                    Err(err) => return Err(err),
+                }
+            }
+        }
+    }
+    Ok(identity)
+}
+
+fn write_output_file(path: &Path, content: &str) -> Result<(), String> {
     if let Some(parent) = path
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
@@ -388,7 +458,7 @@ pub(crate) fn write_output_file(
         fs::create_dir_all(parent)
             .map_err(|err| format!("failed to create `{}`: {err}", parent.display()))?;
     }
-    fs::write(&path, content).map_err(|err| format!("failed to write `{}`: {err}", path.display()))
+    fs::write(path, content).map_err(|err| format!("failed to write `{}`: {err}", path.display()))
 }
 
 fn emit_file_path(path: &Path, output_dir: Option<&Path>) -> PathBuf {

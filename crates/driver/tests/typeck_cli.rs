@@ -988,6 +988,157 @@ contract C {
 }
 
 #[test]
+fn cli_ethdebug_describes_the_standalone_entry() {
+    let dir = temp_dir("ethdebug-standalone");
+    fs::create_dir_all(&dir).unwrap();
+    let input = dir.join("main.sol");
+    let entry = "function main() returns (word) { return 7; }";
+    let text = format!("pragma solcore;\n// Entry for the generated object.\n{entry}\n");
+    fs::write(&input, &text).unwrap();
+    let std_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std");
+    for (flag, output) in [("--bin", "bin"), ("--ethdebug", "debug")] {
+        let result = Command::new(env!("CARGO_BIN_EXE_solcore-driver"))
+            .arg(flag)
+            .arg("--std-root")
+            .arg(&std_root)
+            .arg("-o")
+            .arg(dir.join(output))
+            .arg(&input)
+            .output()
+            .unwrap();
+        assert!(
+            result.status.success(),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+    }
+    let read_program = |file: &str| {
+        serde_json::from_slice::<serde_json::Value>(
+            &fs::read(dir.join("debug").join(file)).unwrap(),
+        )
+        .unwrap()
+    };
+    let compilation = read_program("ethdebug_compilation.json");
+    for (extension, suffix, environment) in
+        [("bin", "", "create"), ("bin-runtime", "-runtime", "call")]
+    {
+        let filename = format!("OutputDeploy.{extension}");
+        assert_eq!(
+            fs::read(dir.join("debug").join(&filename)).unwrap(),
+            fs::read(dir.join("bin").join(&filename)).unwrap(),
+        );
+        let program = read_program(&format!("OutputDeploy_ethdebug{suffix}.json"));
+        assert_eq!(program["environment"], environment);
+        let definition = &program["contract"]["definition"];
+        let source = compilation["sources"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|source| source["id"] == definition["source"]["id"])
+            .unwrap();
+        assert_eq!(source["path"], "main.sol");
+        let offset = definition["range"]["offset"].as_u64().unwrap() as usize;
+        let length = definition["range"]["length"].as_u64().unwrap() as usize;
+        assert_eq!(&text[offset..offset + length], entry);
+    }
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn cli_rejects_output_aliases_before_writing_artifacts() {
+    let dir = temp_dir("ethdebug-output-alias");
+    let out = dir.join("out");
+    fs::create_dir_all(out.join("subdir")).unwrap();
+    let input = dir.join("main.sol");
+    fs::write(
+        &input,
+        "pragma solcore; contract C { function main() public returns (word) { return 7; } }",
+    )
+    .unwrap();
+    fs::write(out.join("C.bin"), "sentinel").unwrap();
+
+    let mut aliases = vec![out.join("subdir/../C.bin")];
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink("C.bin", out.join("symbolic")).unwrap();
+        fs::hard_link(out.join("C.bin"), out.join("hardlink")).unwrap();
+        aliases.extend([out.join("symbolic"), out.join("hardlink")]);
+    }
+    for alias in aliases {
+        let result = Command::new(env!("CARGO_BIN_EXE_solcore-driver"))
+            .args(["--abi", "--ethdebug", "--std-root"])
+            .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std"))
+            .arg(format!("--coverage={}", alias.display()))
+            .arg("-o")
+            .arg(&out)
+            .arg(&input)
+            .output()
+            .unwrap();
+        assert!(!result.status.success(), "{}", alias.display());
+        let stderr = String::from_utf8_lossy(&result.stderr);
+        assert!(stderr.contains("multiple outputs would write"), "{stderr}");
+        assert_eq!(fs::read_to_string(out.join("C.bin")).unwrap(), "sentinel");
+        assert!(!out.join("C.abi").exists());
+        assert!(!out.join("ethdebug_resources.json").exists());
+    }
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn cli_escapes_unicode_source_paths_in_annotated_yul() {
+    let dir = temp_dir("yul-locations-unicode-path");
+    let external = dir.join("π");
+    let local = dir.join("src");
+    fs::create_dir_all(&external).unwrap();
+    fs::create_dir_all(&local).unwrap();
+    fs::write(
+        external.join("ops.sol"),
+        "pragma solcore; function plus(x: word) returns (word) { let y: word; assembly { y := add(x, 13) } return y; } export { plus };",
+    )
+    .unwrap();
+    let input = local.join("main.sol");
+    fs::write(
+        &input,
+        "pragma solcore; import { plus } from @pkg.ops; contract C { function main() public returns (word) { let x: word; assembly { x := calldatasize() } return plus(x); } }",
+    )
+    .unwrap();
+    let out = dir.join("out");
+    let result = Command::new(env!("CARGO_BIN_EXE_solcore-driver"))
+        .args(["--emit-yul=C.yul", "--yul-locations", "--std-root"])
+        .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std"))
+        .arg(format!("--external-lib=pkg={}", external.display()))
+        .arg("-o")
+        .arg(&out)
+        .arg(&input)
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let yul = fs::read_to_string(out.join("C.yul")).unwrap();
+    let headers: Vec<_> = yul
+        .lines()
+        .filter(|line| line.contains("@use-src"))
+        .collect();
+    assert_eq!(headers.len(), 2);
+    assert!(headers.iter().all(|line| line.contains(r"\xcf\x80")));
+    let compilation: serde_json::Value =
+        serde_json::from_slice(&fs::read(out.join("ethdebug_compilation.json")).unwrap()).unwrap();
+    assert!(
+        compilation["sources"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|source| {
+                source["path"].as_str().map(Path::new) == Some(external.join("ops.sol").as_path())
+            })
+    );
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn cli_annotates_yul_with_source_locations() {
     let dir = temp_dir("yul-locations");
     fs::create_dir_all(&dir).expect("create temp dir");
