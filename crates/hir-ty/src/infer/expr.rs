@@ -514,6 +514,10 @@ impl<'db> InferCtx<'db> {
         }
     }
 
+    /// Reports a conditional whose integer-literal branch meets a branch type
+    /// without an `Int` instance before the branches are unified, blaming the
+    /// non-literal branch and poisoning the conditional so the mismatch does
+    /// not cascade into the expression's uses.
     fn report_numeric_if_branch_mismatch(
         &mut self,
         body: FuncBody<'db>,
@@ -524,7 +528,7 @@ impl<'db> InferCtx<'db> {
         else_ty: InferTy<'db>,
     ) -> bool {
         if self.expr_has_integer_literal_obligation(body, then_expr)
-            && self.is_concrete_non_numeric(else_ty.clone())
+            && self.lacks_int_instance(else_ty.clone())
         {
             let actual = self.display_infer_ty(else_ty);
             self.emit_error_with_poison(
@@ -541,7 +545,7 @@ impl<'db> InferCtx<'db> {
             return true;
         }
         if self.expr_has_integer_literal_obligation(body, else_expr)
-            && self.is_concrete_non_numeric(then_ty.clone())
+            && self.lacks_int_instance(then_ty.clone())
         {
             let actual = self.display_infer_ty(then_ty);
             self.emit_error_with_poison(

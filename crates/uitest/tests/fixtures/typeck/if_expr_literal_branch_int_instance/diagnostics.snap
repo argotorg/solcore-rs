@@ -1,0 +1,39 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/typeck/if_expr_literal_branch_int_instance/main.sol
+---
+error[SC0201]: type mismatch: expected numeric, found bool
+  --> /main/main.sol:16:17
+   |
+15 | function boolBranch(c: bool, b: bool) returns (bool) {
+16 |     let x = c ? b : 0;
+   |                 ^ expression has mismatched type
+17 |     return x;
+   |
+   = note: expected type: numeric
+   = note: found type: bool
+---
+
+error[SC0201]: type mismatch: expected numeric, found Meters
+  --> /main/main.sol:21:21
+   |
+20 | function userTypeBranch(c: bool, m: Meters) returns (Meters) {
+21 |     let x = c ? 1 : m;
+   |                     ^ expression has mismatched type
+22 |     return x;
+   |
+   = note: expected type: numeric
+   = note: found type: Meters
+---
+
+error[SC0207]: cannot satisfy trait constraint: t: Int
+  --> /main/main.sol:25:33
+   |
+24 |
+25 | function unconstrainedParameter<t>(c: bool, a: t) returns (t) {
+   |                                 ^ constraint originates here
+26 |     return c ? a : 0;
+   |
+   = note: no visible impl matches `t: Int`
+   = help: add a matching impl or strengthen the surrounding type context
