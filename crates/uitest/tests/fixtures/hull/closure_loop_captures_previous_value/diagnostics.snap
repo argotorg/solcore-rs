@@ -1,0 +1,18 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/hull/closure_loop_captures_previous_value/main.sol
+---
+error[SC0417]: `f` is rebound in a loop to a closure that captures its previous value
+  --> /main/main.sol:16:13
+   |
+15 |           while (i < x) {
+16 | /             f = lam (a: word) -> word {
+17 | |                 return f(a) + 1;
+18 | |             };
+   | |______________^ each iteration wraps the previous closure in a new one
+19 |               i = i + 1;
+   |
+   = note: function values have no run-time representation: a value chosen by run-time control flow is compiled to a selector over a finite set of closures known at compile time
+   = note: `f` captures its own previous value, so the number of nested closures depends on the run-time trip count and the set is not finite
+   = note: help: keep the changing state in an ordinary variable (for example a counter) and call a closure that does not capture itself, or give the loop a compile-time trip count so it is unrolled
