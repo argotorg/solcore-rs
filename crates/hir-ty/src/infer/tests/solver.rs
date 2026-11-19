@@ -1443,6 +1443,54 @@ fn unresolved_predicates_prove_nothing(fixture: Fixture<&str>) {
     assert_eq!(report.stats.answers_found, 0, "{report:?}");
 }
 
+#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/solver/recursive_answers_stop_at_the_answer_quota", glob: "main.sol")]
+fn recursive_answers_stop_at_the_answer_quota(fixture: Fixture<&str>) {
+    let db = TestDb::default();
+    let module = parse_module(&db, fixture.content());
+    let resolution = hir_nameres::resolve_module(&db, module);
+    let class = class_id(&db, module, "M");
+    let rigid = Ty::bound(&db, 4);
+    let env = trait_env_with_givens(
+        &db,
+        trait_env(&db, module, &resolution),
+        vec![Pred::in_class(&db, class, Ty::word(&db), vec![rigid])],
+    );
+    let goal = crate::canonical_goal_with_allowed(
+        &db,
+        Pred::in_class(&db, class, Ty::word(&db), vec![Ty::bound(&db, 0)]),
+        vec![0],
+    );
+    // Each answer takes about one unit of fuel, so twice the quota leaves
+    // fuel over once the quota stops resolution. Without the quota this fuel
+    // runs out instead, after twice as many ever larger answers.
+    let quota = crate::solver::MAX_TABLE_ANSWERS;
+    let report = crate::solver::solve_report_with_fuel(&db, env, goal, 2 * quota);
+    assert!(report.exhausted, "{report:?}");
+    assert!(report.fuel_remaining > 0, "{report:?}");
+    assert!(report.stats.answers_found <= quota + 1, "{report:?}");
+}
+
+#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/solver/duplicated_variables_stop_at_the_term_size_bound", glob: "main.sol")]
+fn duplicated_variables_stop_at_the_term_size_bound(fixture: Fixture<&str>) {
+    let db = TestDb::default();
+    let module = parse_module(&db, fixture.content());
+    let resolution = hir_nameres::resolve_module(&db, module);
+    let env = trait_env(&db, module, &resolution);
+    let goal = canonical_goal(
+        &db,
+        Pred::in_class(&db, class_id(&db, module, "C"), Ty::word(&db), Vec::new()),
+    );
+    // Each subgoal doubles the last and costs one unit of fuel, so the bound
+    // stops resolution after log2 of it subgoals. Two more units of fuel
+    // leave some over, yet stop a solver without the bound two doublings
+    // later, before rebuilding the subgoals gets slow.
+    let doublings = crate::solver::MAX_TERM_SIZE.ilog2() as usize;
+    let report = crate::solver::solve_report_with_fuel(&db, env, goal, doublings + 2);
+    assert!(report.exhausted, "{report:?}");
+    assert!(report.fuel_remaining > 0, "{report:?}");
+    assert!(report.stats.table_size <= doublings, "{report:?}");
+}
+
 #[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/solver/direct_superclass_predicates_instantiate_aliases_and_secondary_arguments", glob: "main.sol")]
 fn direct_superclass_predicates_instantiate_aliases_and_secondary_arguments(
     fixture: Fixture<&str>,
