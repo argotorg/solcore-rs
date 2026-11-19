@@ -140,7 +140,8 @@ pub fn resources_json(compilation: &Compilation<'_>) -> Value {
 /// Each instruction gets the context of the range that contains its offset.
 /// Refused: ranges that are empty, unsorted, overlapping, leave a gap, pass the
 /// end of the code or start inside an instruction; a code context or the
-/// definition naming a source that is not in `sources` or text outside it.
+/// definition naming a source that is not in `sources` or a range that cannot
+/// be sliced as UTF-8 text.
 pub fn program_json(program: &Program<'_>, sources: &[Source<'_>]) -> Result<Value, Error> {
     let (def_source, def_offset, def_length) = program.definition;
     check_source(sources, def_source, def_offset, def_length).map_err(|why| {
@@ -256,6 +257,13 @@ fn check_source(sources: &[Source<'_>], id: u32, offset: u32, length: u32) -> Re
         return Err(format!(
             "source {id} has {} bytes, but the range is {offset}..{end}",
             source.contents.len()
+        ));
+    }
+    if !source.contents.is_char_boundary(offset as usize)
+        || !source.contents.is_char_boundary(end as usize)
+    {
+        return Err(format!(
+            "range {offset}..{end} of source {id} splits a UTF-8 character"
         ));
     }
     Ok(())
@@ -445,6 +453,33 @@ mod tests {
             "{message}"
         );
         assert!(write(&CODE, (0, 7, 3), &[range(0, 6, code(0, 8, 2))]).is_ok());
+    }
+
+    #[test]
+    fn program_requires_source_ranges_to_end_at_utf8_boundaries() {
+        let sources = [source(0, "main.sol", "aπb\r\n")];
+        for (offset, length, valid) in [(1, 2, true), (2, 1, false), (1, 1, false)] {
+            let ranges = [range(0, 1, code(0, offset, length))];
+            let program = Program {
+                contract: "C",
+                definition: (0, 0, 6),
+                environment: Environment::Call,
+                compilation_id: "solcore-1",
+                code: &[0x00],
+                ranges: &ranges,
+            };
+            let result = program_json(&program, &sources);
+            if valid {
+                assert!(result.is_ok(), "{result:?}");
+            } else {
+                assert!(
+                    result
+                        .unwrap_err()
+                        .message()
+                        .contains("splits a UTF-8 character")
+                );
+            }
+        }
     }
 
     #[test]

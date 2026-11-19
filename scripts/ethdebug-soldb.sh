@@ -9,7 +9,7 @@
 # on SolDB's local chain, the function is called, execution stops at FILE:LINE,
 # continues, and the source around the stop is listed.
 #
-# SOLDB names the soldb binary. Needs cast and jq.
+# SOLDB overrides the soldb binary on PATH. Needs cast and jq.
 set -euo pipefail
 
 [[ $# -ge 4 ]] || { sed -n '4p' "$0" >&2; exit 2; }
@@ -17,7 +17,7 @@ dir=$1 contract=$2 signature=$3
 shift 3
 where=${!#}
 args=("${@:1:$#-1}")
-soldb=${SOLDB:-/lab/argot/scratch/ethdebug-driver/bin/soldb}
+soldb=${SOLDB:-soldb}
 # Where SolDB's local chain puts a contract deployed from its default account.
 address=0x5FbDB2315678afecB367f032d93F642f64180aa3
 

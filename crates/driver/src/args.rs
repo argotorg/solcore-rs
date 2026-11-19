@@ -485,6 +485,12 @@ pub(crate) fn parse_args(args: Vec<OsString>) -> Result<ParsedArgs, String> {
     if opt_level.is_some() && !emit_bin && coverage.is_none() {
         return Err("--opt-level requires --bin, --coverage or --ethdebug".to_owned());
     }
+    // Sonatina's late optimized block merging can keep one branch's origin
+    // for instructions shared by several branches with different origins.
+    let opt_level = opt_level.unwrap_or_default();
+    if ethdebug && opt_level != sonatina::OptLevel::O0 {
+        return Err("--ethdebug requires --opt-level 0 for accurate source locations".to_owned());
+    }
     Ok(ParsedArgs::Run(Box::new(Args {
         input,
         main_root,
@@ -504,7 +510,7 @@ pub(crate) fn parse_args(args: Vec<OsString>) -> Result<ParsedArgs, String> {
         yul_locations,
         emit_sonatina,
         emit_bin,
-        opt_level: opt_level.unwrap_or_default(),
+        opt_level,
         coverage,
         ethdebug,
         emit_yul_object,
@@ -734,20 +740,21 @@ Options:
   --yul-locations[=per-file]         Annotate --emit-yul output with a source location before each
                                       statement (/// @src ID:START:END, with /// @use-src naming the
                                       files), one id per source file. With --output-dir, also write
-                                      ethdebug_compilation.json to describe the ids. solc up to 0.8.38
-                                      ignores source ids in Yul input, so its ethdebug output for these
-                                      annotations attributes library ranges to source 0
+                                      ethdebug_compilation.json to describe the ids. solc 0.8.38
+                                      reports these ranges under source id 0 in its ETHDebug output
+                                      and can report a previous case's location for a switch test
   --emit-sonatina[=FILE]             Emit Sonatina IR to stdout or FILE
   --bin                              Compile through Sonatina and write <contract>.bin and
                                       <contract>.bin-runtime (hex) for each contract
   --opt-level 0|1|2|s                Optimization level for --bin, --coverage and --ethdebug (default: 0)
   --coverage[=FILE]                  Report, per contract and section, how many code bytes come from
                                       source, from compiler-generated code, or from no origin, as JSON
-                                      on stdout or in FILE
+                                      on stdout or in FILE. Optimized attribution is approximate
   --ethdebug                         Write ethdebug debug info and the .bin files for each contract
                                       into --output-dir: <contract>_ethdebug.json (creation),
                                       <contract>_ethdebug-runtime.json, ethdebug_resources.json and
-                                      ethdebug_compilation.json
+                                      ethdebug_compilation.json. Requires --opt-level 0 because
+                                      optimizations can merge code with different source locations
   --emit-yul-object NAME             Select one top-level Yul object for --emit-yul
   --pe-fuel N                        Set partial-evaluation total work fuel (default: 8192)
   --pe-depth N                       Set specialization/evaluator depth (default: 128)

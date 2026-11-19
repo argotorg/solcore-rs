@@ -934,6 +934,21 @@ contract C {
     assert!(String::from_utf8_lossy(&rejected.stderr).contains("--ethdebug requires --output-dir"));
 
     let debug_dir = dir.join("debug");
+    for level in ["1", "2", "s"] {
+        let rejected = driver(&[
+            "--ethdebug",
+            "--opt-level",
+            level,
+            "-o",
+            debug_dir.to_str().unwrap(),
+        ]);
+        assert_eq!(rejected.status.code(), Some(2));
+        assert!(
+            String::from_utf8_lossy(&rejected.stderr).contains("--ethdebug requires --opt-level 0")
+        );
+    }
+    assert!(!debug_dir.exists());
+
     let output = driver(&["--ethdebug", "-o", debug_dir.to_str().unwrap()]);
     assert!(
         output.status.success(),
@@ -1041,6 +1056,135 @@ contract C {
     );
     let rejected = driver(&["--emit-yul", "--yul-locations=flat"]);
     assert_eq!(rejected.status.code(), Some(2));
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn cli_attributes_cross_file_add_in_creation_and_runtime() {
+    let dir = temp_dir("cross-file-debug");
+    fs::create_dir_all(&dir).expect("create temp dir");
+    let main = "pragma solcore;
+import * from std;
+import * from std.dispatch;
+import { bump } from ops;
+contract CrossFile {
+    seeded: word;
+    constructor(x: uint256) { seeded = bump(toWord(x)); }
+    function run(x: uint256) public returns (uint256) { return uint256(bump(toWord(x))); }
+}
+";
+    let ops = concat!(
+        "pragma solcore;\r\n",
+        "// π before the target distinguishes bytes from characters.\r\n",
+        "function bump(x: word) returns (word) {\r\n",
+        "    let y: word;\r\n",
+        "    assembly { y := add(x, 13) }\r\n",
+        "    return y;\r\n",
+        "}\r\n",
+        "export { bump };\r\n",
+    );
+    fs::write(dir.join("main.sol"), main).expect("write main.sol");
+    fs::write(dir.join("ops.sol"), ops).expect("write ops.sol");
+    let anchor = "y := add(x, 13)";
+    let start = ops.find(anchor).expect("offset in the written file");
+    let end = start + anchor.len();
+    // A contract-file ID substitution would still pass a bounds check.
+    assert!(end <= main.len());
+    let std_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std");
+
+    let out = dir.join("out");
+    let result = Command::new(env!("CARGO_BIN_EXE_solcore-driver"))
+        .current_dir(&dir)
+        .args([
+            "--ethdebug",
+            "--opt-level",
+            "0",
+            "--emit-yul=CrossFile.yul",
+            "--yul-locations",
+            "-o",
+        ])
+        .arg(&out)
+        .arg("--std-root")
+        .arg(&std_root)
+        .arg("main.sol")
+        .output()
+        .expect("run driver");
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let read = |name: &str| fs::read_to_string(out.join(name)).expect(name);
+    let json = |name: &str| -> serde_json::Value { serde_json::from_str(&read(name)).expect(name) };
+    let compilation = json("ethdebug_compilation.json");
+    assert_eq!(json("ethdebug_resources.json")["compilation"], compilation);
+    let source = |name: &str, contents: &str| {
+        let entry = compilation["sources"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|source| source["path"] == name)
+            .expect(name);
+        assert_eq!(entry["contents"], contents);
+        entry["id"].as_u64().expect("numeric source ID")
+    };
+    let main_id = source("main.sol", main);
+    let ops_id = source("ops.sol", ops);
+    assert_ne!(main_id, ops_id);
+
+    for (suffix, environment) in [("", "create"), ("-runtime", "call")] {
+        let program = json(&format!("CrossFile_ethdebug{suffix}.json"));
+        assert_eq!(program["environment"], environment);
+        assert_eq!(program["compilation"]["id"], compilation["id"]);
+        let def_start = main.find("contract CrossFile").unwrap();
+        assert_eq!(
+            program["contract"]["definition"],
+            serde_json::json!({
+                "source": {"id": main_id},
+                "range": {"offset": def_start, "length": main.trim_end().len() - def_start}
+            })
+        );
+        let expected = serde_json::json!({
+            "source": {"id": ops_id},
+            "range": {"offset": start, "length": anchor.len()}
+        });
+        let add = program["instructions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["operation"]["mnemonic"] == "ADD" && row["context"]["code"] == expected)
+            .unwrap_or_else(|| panic!("{environment}: no ADD at ops.sol:{start}..{end}"));
+        let pc = add["offset"].as_u64().unwrap() as usize;
+        let bin = read(&format!("CrossFile.bin{suffix}"));
+        assert_eq!(&bin[pc * 2..pc * 2 + 2], "01");
+    }
+
+    // solc uses the source table of each object. Check the helper's
+    // annotation is attached to its ADD separately in both objects.
+    let yul = read("CrossFile.yul");
+    let objects: Vec<_> = yul.split("/// @use-src ").skip(1).collect();
+    assert_eq!(objects.len(), 2);
+    for (object, name) in objects.into_iter().zip(["CrossFileDeploy", "CrossFile"]) {
+        let mut lines = object.lines();
+        let table = lines.next().unwrap();
+        assert!(table.contains(&format!("{main_id}:\"main.sol\"")));
+        assert!(table.contains(&format!("{ops_id}:\"ops.sol\"")));
+        assert_eq!(
+            lines.next().unwrap().trim(),
+            format!("object \"{name}\" {{")
+        );
+        let annotation = format!("/// @src {ops_id}:{start}:{end}");
+        let body: Vec<_> = lines.collect();
+        assert!(
+            body.windows(2).any(|pair| {
+                pair[0].trim() == annotation
+                    && pair[1].contains(" := add(")
+                    && pair[1].ends_with(", 13)")
+            }),
+            "{name}: no annotated ADD"
+        );
+    }
 
     let _ = fs::remove_dir_all(&dir);
 }

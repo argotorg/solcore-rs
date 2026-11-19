@@ -744,7 +744,7 @@ fn unmarked_generators(listing: &str) -> Vec<String> {
             function = Some((indent, tail(text)));
         } else if let Some((_, range)) = &function
             && text.starts_with("S ")
-            && text.rsplitn(4, ' ').nth(2) == Some("src")
+            && text.rsplit(' ').nth(2) == Some("src")
             && tail(text) == *range
         {
             found.push(text.to_owned());
