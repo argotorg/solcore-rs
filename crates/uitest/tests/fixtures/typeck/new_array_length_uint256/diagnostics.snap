@@ -1,0 +1,71 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/typeck/new_array_length_uint256/main.sol
+---
+error[SC0201]: type mismatch: expected uint256, found word
+ --> /main/main.sol:8:26
+  |
+7 | function wordLength(n: word) returns (uint256[]) {
+8 |     return new uint256[](n);
+  |                          ^ expression has mismatched type
+9 | }
+  |
+  = note: expected type: uint256
+  = note: found type: word
+---
+
+error[SC0201]: type mismatch: expected uint256, found bool
+  --> /main/main.sol:12:26
+   |
+11 | function boolLength() returns (uint256[]) {
+12 |     return new uint256[](true);
+   |                          ^^^^ expression has mismatched type
+13 | }
+   |
+   = note: expected type: uint256
+   = note: found type: bool
+---
+
+error[SC0201]: type mismatch: expected uint256, found uint8
+  --> /main/main.sol:16:26
+   |
+15 | function narrowLength(n: uint8) returns (uint256[]) {
+16 |     return new uint256[](n);
+   |                          ^ expression has mismatched type
+17 | }
+   |
+   = note: expected type: uint256
+   = note: found type: uint8
+---
+
+error[SC0201]: type mismatch: expected uint256, found word
+  --> /main/main.sol:20:28
+   |
+19 | function nestedWordLength(n: word) returns (uint256[][]) {
+20 |     return new uint256[][](n);
+   |                            ^ expression has mismatched type
+21 | }
+   |
+   = note: expected type: uint256
+   = note: found type: word
+---
+
+error[SC0201]: argument type mismatch in call to `add`
+   --> /main/main.sol:24:26
+    |
+ 23 | function wordSumLength(n: word) returns (uint256[]) {
+ 24 |     return new uint256[](n + 1);
+    |                          ^ argument has mismatched type
+ 25 | }
+    |
+   ::: /std/std.sol:569
+    |
+569 | trait Add<t> {
+570 |     function add(l: t, r: t) returns (t);
+    |                  - parameter `l` defined here
+571 | }
+    |
+    = note: expected `t` because parameter `l` of `add` has type `t`
+    = note: found type: word
+    = note: `add` has signature `add(l: t, r: t) returns (t)`
