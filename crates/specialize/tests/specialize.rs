@@ -5520,6 +5520,66 @@ contract C {
 }
 
 #[test]
+fn leading_dot_constructors_fold_like_qualified_constructors() {
+    // Inference resolves `.A` from the expected type. It must lower to the
+    // same constructor as `E.A`; `.U_A` must not be read as `U.A`, whose
+    // lowered name is `U_A`.
+    for (body, expected) in [
+        (
+            "let e: E = .A; match (e) { case E.A { return 1; } default { return 9; } }",
+            "1",
+        ),
+        (
+            "let e: E = E.A; match (e) { case .A { return 2; } default { return 9; } }",
+            "2",
+        ),
+        (
+            "let p: P = .S(3); match (p) { case P.S(y) { return y; } default { return 9; } }",
+            "3",
+        ),
+        (
+            "let u: U = .U_A; match (u) { case U.A { return 9; } case U.U_A { return 4; } }",
+            "4",
+        ),
+        (
+            "let u: U = U.U_A; match (u) { case .A { return 9; } case .U_A { return 5; } }",
+            "5",
+        ),
+        ("return pick(E.B);", "6"),
+    ] {
+        let (_db, output) = specialize_src(&format!(
+            r#"
+pragma solcore;
+enum E {{ A, B }}
+enum P {{ N, S(word) }}
+enum U {{ A, U_A }}
+
+function pick(comptime e: E) returns (word) {{
+  match (e) {{
+    case .A {{ return 9; }}
+    case .B {{ return 6; }}
+  }}
+}}
+
+contract C {{
+  function main() returns (word) {{
+    {body}
+  }}
+}}
+"#
+        ));
+
+        assert_eq!(output.diagnostics, Vec::new(), "{body}");
+        assert_eq!(
+            main_return_number(&output).as_deref(),
+            Some(expected),
+            "{body}: {:?}",
+            output.module
+        );
+    }
+}
+
+#[test]
 fn for_loop_post_assignments_are_not_folded_to_preloop_constants() {
     let (_db, output) = specialize_src(
         r#"
