@@ -561,13 +561,17 @@ impl<'db> InferCtx<'db> {
                 }
                 let span = self.unsatisfied_constraint_label_span(&pending.source, pred.pred);
                 let pred_text = self.display_pred(pred.pred);
+                // The diagnostic suggests the constraint as a where clause,
+                // which the solver matches through `comptime`.
+                let where_pred = crate::solver::without_comptime(self.db, pred.pred);
+                let where_pred_text = self.display_pred(where_pred);
                 let diagnostic = self.classify_no_solution(pending).unwrap_or_else(|| {
                     if crate::solver::default_skipped_for_type_parameter(
                         self.db, trait_env, pred.pred,
                     ) {
                         TypeckDiagnostic::DefaultNotUsedForTypeParameter {
                             span,
-                            pred: pred_text,
+                            pred: where_pred_text,
                         }
                     } else {
                         TypeckDiagnostic::UnsatisfiedConstraint {

@@ -86,7 +86,7 @@ mod soundness;
 use canonical::{
     GoalRenaming, RigidVar, TableKey, actualize_answer, canonicalize_goal, canonicalize_local_given,
 };
-pub(crate) use coherence::default_skipped_for_type_parameter;
+pub(crate) use coherence::{default_skipped_for_type_parameter, without_comptime};
 pub(crate) use derived_abi::{
     AbiEvidenceRole, definition_supports_derived_abi, derived_abi_delegated_evidence,
     ty_mentions_adt as derived_abi_rep_mentions_adt,

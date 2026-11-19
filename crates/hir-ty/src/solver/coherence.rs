@@ -19,7 +19,8 @@
 //! A tuple is transparent the same way through its first element. A trait
 //! with several input types takes them as one tuple, like std's
 //! `RValueIdxAccess<(collection, index), value>`, so
-//! `impl RValueIdxAccess<(T, i), v>` belongs next to `T`.
+//! `impl RValueIdxAccess<(T, i), v>` belongs next to `T`. So is `comptime<t>`,
+//! which the solver matches as `t`.
 
 use hir::input::SourceFile;
 
@@ -61,8 +62,8 @@ fn is_coherence_wrapper<'db>(db: &'db dyn Db, def: DefId<'db>) -> bool {
 }
 
 /// The type that stands for `ty` in both rules when `ty` is transparent: the
-/// first type argument of a coherence wrapper, or the first element of a
-/// tuple.
+/// first type argument of a coherence wrapper, the first element of a tuple,
+/// or the type of a `comptime` value.
 fn coherence_inner<'db>(db: &'db dyn Db, ty: Ty<'db>) -> Option<Ty<'db>> {
     match ty.kind(db) {
         TyKind::Named {
@@ -74,13 +75,16 @@ fn coherence_inner<'db>(db: &'db dyn Db, ty: Ty<'db>) -> Option<Ty<'db>> {
             args,
         }
         | TyKind::Tuple(args) => args.first().copied(),
+        // Matching and unification see through `comptime<t>`, so a goal on
+        // it is a goal on `t`.
+        TyKind::Comptime(inner) => Some(*inner),
         _ => None,
     }
 }
 
 /// The argument of `ty` that decides impl placement and default selection:
-/// `ty` itself, or for a coherence wrapper or a tuple the coherence head of
-/// its first type argument.
+/// `ty` itself, or for a coherence wrapper, a tuple or a `comptime` type the
+/// coherence head of its first type argument.
 pub(crate) fn coherence_head<'db>(db: &'db dyn Db, ty: Ty<'db>) -> Ty<'db> {
     let mut ty = ty;
     while let Some(inner) = coherence_inner(db, ty) {
@@ -115,6 +119,75 @@ pub(crate) fn default_skipped_for_type_parameter<'db>(
         && env.clauses_for_pred(db, goal).iter().any(|clause| {
             clause.origin.is_default() && head_can_unify(db, clause, goal, &FxHashSet::default())
         })
+}
+
+/// `pred` without `comptime` wrappers, which the solver matches through: the
+/// constraint to state in a `where` clause.
+pub(crate) fn without_comptime<'db>(db: &'db dyn Db, pred: Pred<'db>) -> Pred<'db> {
+    instantiate_pred(db, pred, &[])
+}
+
+/// `pred` with clause binder `i` replaced by `args[i]`, without `comptime`
+/// wrappers.
+fn instantiate_pred<'db>(db: &'db dyn Db, pred: Pred<'db>, args: &[Ty<'db>]) -> Pred<'db> {
+    match pred.kind(db) {
+        PredKind::InClass {
+            class,
+            main,
+            args: class_args,
+        } => Pred::in_class(
+            db,
+            *class,
+            instantiate_ty(db, *main, args),
+            class_args
+                .iter()
+                .map(|arg| instantiate_ty(db, *arg, args))
+                .collect(),
+        ),
+        PredKind::Eq { lhs, rhs } => Pred::eq(
+            db,
+            instantiate_ty(db, *lhs, args),
+            instantiate_ty(db, *rhs, args),
+        ),
+        PredKind::Error => pred,
+    }
+}
+
+fn instantiate_ty<'db>(db: &'db dyn Db, ty: Ty<'db>, args: &[Ty<'db>]) -> Ty<'db> {
+    match ty.kind(db) {
+        TyKind::BoundVar(var) => match args.get(var.index as usize) {
+            Some(arg) => instantiate_ty(db, *arg, &[]),
+            None => ty,
+        },
+        TyKind::Named {
+            ctor,
+            args: ty_args,
+        } => Ty::named(
+            db,
+            *ctor,
+            ty_args
+                .iter()
+                .map(|arg| instantiate_ty(db, *arg, args))
+                .collect(),
+        ),
+        TyKind::Function { params, ret } => Ty::function(
+            db,
+            params
+                .iter()
+                .map(|param| instantiate_ty(db, *param, args))
+                .collect(),
+            instantiate_ty(db, *ret, args),
+        ),
+        TyKind::Tuple(elems) => Ty::tuple(
+            db,
+            elems
+                .iter()
+                .map(|elem| instantiate_ty(db, *elem, args))
+                .collect(),
+        ),
+        TyKind::Comptime(inner) => instantiate_ty(db, *inner, args),
+        TyKind::Error | TyKind::Unknown => ty,
+    }
 }
 
 /// Who may define an impl: the definitions it can be placed next to.
