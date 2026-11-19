@@ -243,8 +243,11 @@ impl<'db> Evaluator<'db> {
         }
         let type_reg = build_type_reg(&params, &[]);
         let ret_comptime = lambda_ret_is_comptime(self.db, ty.ty());
-        let (_, _, body) =
+        let (_, _, mut body) =
             self.eval_stmts(&type_reg, closed_env, local_comptime, body, ret_comptime);
+        // A closure created in a nested scope can leave a snapshot binding
+        // that the rest of the body reads; it is not a capture.
+        self.repair_fresh_binding_scopes(&params, &mut body);
         // Dead branches may discard unavailable captures. Reject only uses
         // that survive evaluation, including assignment and assembly targets.
         if self
@@ -971,7 +974,7 @@ fn function_ty<'db>(db: &'db dyn Db, params: &[MonoParam<'db>], ret: MonoTy<'db>
     ))
 }
 
-fn var_expr(id: MonoId<'_>) -> MonoExpr<'_> {
+pub(super) fn var_expr(id: MonoId<'_>) -> MonoExpr<'_> {
     MonoExpr {
         span: id.span,
         ty: id.ty,

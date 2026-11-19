@@ -403,13 +403,14 @@ impl<'db> Evaluator<'db> {
                     .then_some(name.clone())
             }))
             .collect::<CEnv>();
-        let (_, _, body) = self.eval_stmts(
+        let (_, _, mut body) = self.eval_stmts(
             &type_reg,
             initial_env,
             comptime_env,
             function.body,
             ret_comptime,
         );
+        self.repair_fresh_binding_scopes(&function.params, &mut body);
         function.body = body;
         self.functions
             .insert(function.name.clone(), function.clone());
