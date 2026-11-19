@@ -52,6 +52,7 @@ fn identity_function_snapshot() {
         entry_points: Vec::new(),
         functions: vec![Function {
             span: sp,
+            generated: None,
             name: "id".into(),
             args: vec![Arg {
                 span: sp,
@@ -87,6 +88,7 @@ fn maybe_option_snapshot() {
         entry_points: Vec::new(),
         functions: vec![Function {
             span: sp,
+            generated: None,
             name: "maybe$Word".into(),
             args: vec![
                 Arg {
@@ -202,6 +204,7 @@ fn color_enum_snapshot() {
         entry_points: Vec::new(),
         functions: vec![Function {
             span: sp,
+            generated: None,
             name: "fromEnum".into(),
             args: vec![Arg {
                 span: sp,
@@ -352,6 +355,7 @@ fn add1_contract_object_snapshot() {
     };
     let main = Function {
         span: sp,
+        generated: None,
         name: "main".into(),
         args: Vec::new(),
         ret: word.clone(),
@@ -435,6 +439,7 @@ fn for_condition_must_be_bool_like() {
         entry_points: Vec::new(),
         functions: vec![Function {
             span: sp,
+            generated: None,
             name: "main".into(),
             args: Vec::new(),
             ret: Ty::unit(sp),
@@ -472,6 +477,7 @@ fn assembly_checker_rejects_bad_assignments_and_usr_call_arity() {
         functions: vec![
             Function {
                 span: sp,
+                generated: None,
                 name: "id".into(),
                 args: vec![Arg {
                     span: sp,
@@ -486,6 +492,7 @@ fn assembly_checker_rejects_bad_assignments_and_usr_call_arity() {
             },
             Function {
                 span: sp,
+                generated: None,
                 name: "main".into(),
                 args: Vec::new(),
                 ret: word.clone(),
@@ -589,6 +596,7 @@ fn assembly_checker_rejects_multi_return_arity_mismatch() {
         entry_points: Vec::new(),
         functions: vec![Function {
             span: sp,
+            generated: None,
             name: "main".into(),
             args: Vec::new(),
             ret: word.clone(),
@@ -667,6 +675,7 @@ fn assembly_functions_do_not_overwrite_same_named_hull_functions() {
     let word = Ty::word(sp);
     let global = Function {
         span: sp,
+        generated: None,
         name: "foo".into(),
         args: vec![Arg {
             span: sp,
@@ -681,6 +690,7 @@ fn assembly_functions_do_not_overwrite_same_named_hull_functions() {
     };
     let main = Function {
         span: sp,
+        generated: None,
         name: "main".into(),
         args: Vec::new(),
         ret: word.clone(),
@@ -785,6 +795,7 @@ fn assembly_function_bodies_cannot_capture_outer_hull_values() {
         entry_points: Vec::new(),
         functions: vec![Function {
             span: sp,
+            generated: None,
             name: "main".into(),
             args: Vec::new(),
             ret: word.clone(),
@@ -849,6 +860,7 @@ fn assembly_for_post_values_do_not_leak_into_the_body_block() {
         entry_points: Vec::new(),
         functions: vec![Function {
             span: sp,
+            generated: None,
             name: "main".into(),
             args: Vec::new(),
             ret: word.clone(),
@@ -906,6 +918,7 @@ fn terminal_yul_return_satisfies_terminator_analysis() {
         entry_points: Vec::new(),
         functions: vec![Function {
             span: sp,
+            generated: None,
             name: "main".into(),
             args: Vec::new(),
             ret: Ty::word(sp),
@@ -934,6 +947,7 @@ fn expression_type_annotations_must_match_inferred_type() {
         entry_points: Vec::new(),
         functions: vec![Function {
             span: sp,
+            generated: None,
             name: "main".into(),
             args: Vec::new(),
             ret: Ty::unit(sp),

@@ -86,6 +86,7 @@ impl<'db> Emitter<'db> {
         let word = Ty::word(span);
         Function {
             span,
+            generated: Some(GeneratedReason::StorageHelper),
             name: name.into(),
             args: vec![
                 Arg {
@@ -190,6 +191,7 @@ impl<'db> Emitter<'db> {
         };
         Function {
             span,
+            generated: Some(GeneratedReason::StorageHelper),
             name: name.into(),
             args: vec![
                 Arg {
@@ -269,6 +271,7 @@ impl<'db> Emitter<'db> {
         let word = Ty::word(span);
         Function {
             span,
+            generated: Some(GeneratedReason::StorageHelper),
             name: name.into(),
             args: vec![Arg {
                 span,

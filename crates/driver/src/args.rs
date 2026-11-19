@@ -6,6 +6,14 @@ use std::{
 
 const DEFAULT_DIAGNOSTIC_WIDTH: usize = 100;
 
+/// The spellings of `--opt-level` and the levels they name.
+pub(crate) const OPT_LEVELS: [(&str, sonatina::OptLevel); 4] = [
+    ("0", sonatina::OptLevel::O0),
+    ("1", sonatina::OptLevel::O1),
+    ("2", sonatina::OptLevel::O2),
+    ("s", sonatina::OptLevel::Os),
+];
+
 pub(crate) enum ParsedArgs {
     Run(Box<Args>),
     StandardJson,
@@ -41,10 +49,22 @@ pub(crate) struct Args {
     pub(crate) emit_abi: bool,
     /// Optional Hull output target.
     pub(crate) emit_hull: Option<EmitTarget>,
+    /// Makes `--emit-hull` print the origin listing instead of the Hull text.
+    pub(crate) hull_origins: bool,
     /// Optional Yul output target.
     pub(crate) emit_yul: Option<EmitTarget>,
+    /// Annotates the Yul output with `@use-src` and `@src` source locations.
+    pub(crate) yul_locations: bool,
     /// Optional Sonatina IR output target.
     pub(crate) emit_sonatina: Option<EmitTarget>,
+    /// Writes `<contract>.bin` and `<contract>.bin-runtime` for each contract.
+    pub(crate) emit_bin: bool,
+    /// Optimization level of the bytecode compiled for `--bin`, `--coverage` and `--ethdebug`.
+    pub(crate) opt_level: sonatina::OptLevel,
+    /// Optional bytecode-to-origin coverage report target.
+    pub(crate) coverage: Option<EmitTarget>,
+    /// Writes ethdebug debug info for each contract into the output directory.
+    pub(crate) ethdebug: bool,
     /// Optional top-level Yul object selection for strict-assembly output.
     pub(crate) emit_yul_object: Option<String>,
     /// Resource limits used by monomorphization and partial evaluation.
@@ -111,8 +131,14 @@ pub(crate) fn parse_args(args: Vec<OsString>) -> Result<ParsedArgs, String> {
     let mut output_dir = None;
     let mut emit_abi = false;
     let mut emit_hull = None;
+    let mut hull_origins = false;
     let mut emit_yul = None;
+    let mut yul_locations = false;
     let mut emit_sonatina = None;
+    let mut emit_bin = false;
+    let mut opt_level = None;
+    let mut coverage = None;
+    let mut ethdebug = false;
     let mut emit_yul_object = None;
     let mut specialize_options = specialize::SpecializeOptions::default();
     let mut iter = args.into_iter();
@@ -144,6 +170,13 @@ pub(crate) fn parse_args(args: Vec<OsString>) -> Result<ParsedArgs, String> {
                     return Err("--emit-sonatina= requires FILE".to_owned());
                 }
                 emit_sonatina = Some(EmitTarget::File(PathBuf::from(value)));
+                continue;
+            }
+            if let Some(value) = strip_os_prefix(&arg, "--coverage=") {
+                if value.as_os_str().is_empty() {
+                    return Err("--coverage= requires FILE".to_owned());
+                }
+                coverage = Some(EmitTarget::File(PathBuf::from(value)));
                 continue;
             }
             if let Some(value) = strip_os_prefix(&arg, "--root=") {
@@ -240,11 +273,30 @@ pub(crate) fn parse_args(args: Vec<OsString>) -> Result<ParsedArgs, String> {
             Some("--emit-hull") => {
                 emit_hull = Some(EmitTarget::Stdout);
             }
+            Some("--hull-origins") => {
+                hull_origins = true;
+            }
             Some("--emit-yul") => {
                 emit_yul = Some(EmitTarget::Stdout);
             }
+            Some("--yul-locations") => {
+                yul_locations = true;
+            }
             Some("--emit-sonatina") => {
                 emit_sonatina = Some(EmitTarget::Stdout);
+            }
+            Some("--bin") => {
+                emit_bin = true;
+            }
+            Some("--opt-level") => {
+                let value = next_string_option_value(&mut iter, "--opt-level", "0|1|2|s")?;
+                opt_level = Some(parse_opt_level(&value)?);
+            }
+            Some("--coverage") => {
+                coverage = Some(EmitTarget::Stdout);
+            }
+            Some("--ethdebug") => {
+                ethdebug = true;
             }
             Some("--emit-yul-object") => {
                 let value = next_string_option_value(&mut iter, "--emit-yul-object", "NAME")?;
@@ -271,6 +323,25 @@ pub(crate) fn parse_args(args: Vec<OsString>) -> Result<ParsedArgs, String> {
             Some(option @ ("--external-lib" | "--lib")) => {
                 let value = next_os_option_value(&mut iter, option, "NAME=PATH")?;
                 external_roots.push(parse_external_root(value)?);
+            }
+            Some(arg) if arg.starts_with("--opt-level=") => {
+                opt_level = Some(parse_opt_level(&arg["--opt-level=".len()..])?);
+            }
+            Some(arg) if arg.starts_with("--coverage=") => {
+                let value = &arg["--coverage=".len()..];
+                if value.is_empty() {
+                    return Err("--coverage= requires FILE".to_owned());
+                }
+                coverage = Some(EmitTarget::File(PathBuf::from(value)));
+            }
+            Some("--yul-locations=per-file") => {
+                yul_locations = true;
+            }
+            Some(arg) if arg.starts_with("--yul-locations=") => {
+                return Err(format!(
+                    "unknown mode `{}` for --yul-locations (expected per-file)",
+                    &arg["--yul-locations=".len()..]
+                ));
             }
             Some(arg) if arg.starts_with("--emit-yul-object=") => {
                 let value = &arg["--emit-yul-object=".len()..];
@@ -397,8 +468,28 @@ pub(crate) fn parse_args(args: Vec<OsString>) -> Result<ParsedArgs, String> {
             input.display()
         ));
     }
+    if hull_origins && emit_hull.is_none() {
+        return Err("--hull-origins requires --emit-hull".to_owned());
+    }
+    if yul_locations && emit_yul.is_none() {
+        return Err("--yul-locations requires --emit-yul".to_owned());
+    }
     if emit_yul_object.is_some() && emit_yul.is_none() {
         return Err("--emit-yul-object requires --emit-yul".to_owned());
+    }
+    if ethdebug && output_dir.is_none() {
+        return Err("--ethdebug requires --output-dir".to_owned());
+    }
+    // A debugger needs the bytecode the debug info describes.
+    let emit_bin = emit_bin || ethdebug;
+    if opt_level.is_some() && !emit_bin && coverage.is_none() {
+        return Err("--opt-level requires --bin, --coverage or --ethdebug".to_owned());
+    }
+    // Sonatina's late optimized block merging can keep one branch's origin
+    // for instructions shared by several branches with different origins.
+    let opt_level = opt_level.unwrap_or_default();
+    if ethdebug && opt_level != sonatina::OptLevel::O0 {
+        return Err("--ethdebug requires --opt-level 0 for accurate source locations".to_owned());
     }
     Ok(ParsedArgs::Run(Box::new(Args {
         input,
@@ -414,8 +505,14 @@ pub(crate) fn parse_args(args: Vec<OsString>) -> Result<ParsedArgs, String> {
         output_dir,
         emit_abi,
         emit_hull,
+        hull_origins,
         emit_yul,
+        yul_locations,
         emit_sonatina,
+        emit_bin,
+        opt_level,
+        coverage,
+        ethdebug,
         emit_yul_object,
         specialize_options,
     })))
@@ -575,6 +672,13 @@ fn parse_positive_limit(option: &str, value: &str) -> Result<usize, String> {
     Ok(limit)
 }
 
+fn parse_opt_level(value: &str) -> Result<sonatina::OptLevel, String> {
+    OPT_LEVELS
+        .iter()
+        .find_map(|&(name, level)| (name == value).then_some(level))
+        .ok_or_else(|| format!("--opt-level must be one of 0, 1, 2, or s, got `{value}`"))
+}
+
 fn parse_diagnostic_format(value: &str) -> Result<DiagnosticFormat, String> {
     match value {
         "human" => Ok(DiagnosticFormat::Human),
@@ -630,8 +734,27 @@ Options:
   -o, --output-dir DIR               Directory for emitted artifact and ABI files
   --abi                              Emit a JSON ABI file for each contract
   --emit-hull[=FILE]                 Emit Hull to stdout or FILE
+  --hull-origins                     With --emit-hull, list the origin of each Hull function and
+                                      statement (source range or generated code) instead of the Hull text
   --emit-yul[=FILE]                  Emit Yul strict assembly to stdout or FILE
+  --yul-locations[=per-file]         Annotate --emit-yul output with a source location before each
+                                      statement (/// @src ID:START:END, with /// @use-src naming the
+                                      files), one id per source file. With --output-dir, also write
+                                      ethdebug_compilation.json to describe the ids. solc 0.8.38
+                                      reports these ranges under source id 0 in its ETHDebug output
+                                      and can report a previous case's location for a switch test
   --emit-sonatina[=FILE]             Emit Sonatina IR to stdout or FILE
+  --bin                              Compile through Sonatina and write <contract>.bin and
+                                      <contract>.bin-runtime (hex) for each contract
+  --opt-level 0|1|2|s                Optimization level for --bin, --coverage and --ethdebug (default: 0)
+  --coverage[=FILE]                  Report, per contract and section, how many code bytes come from
+                                      source, from compiler-generated code, or from no origin, as JSON
+                                      on stdout or in FILE. Optimized attribution is approximate
+  --ethdebug                         Write ethdebug debug info and the .bin files for each contract
+                                      into --output-dir: <contract>_ethdebug.json (creation),
+                                      <contract>_ethdebug-runtime.json, ethdebug_resources.json and
+                                      ethdebug_compilation.json. Requires --opt-level 0 because
+                                      optimizations can merge code with different source locations
   --emit-yul-object NAME             Select one top-level Yul object for --emit-yul
   --pe-fuel N                        Set partial-evaluation total work fuel (default: 8192)
   --pe-depth N                       Set specialization/evaluator depth (default: 128)

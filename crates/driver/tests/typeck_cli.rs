@@ -840,6 +840,613 @@ contract C {
 }
 
 #[test]
+fn cli_emits_bytecode_a_coverage_report_and_ethdebug_files() {
+    let dir = temp_dir("emit-bin");
+    fs::create_dir_all(&dir).expect("create temp dir");
+    let input = dir.join("main.sol");
+    let coverage = dir.join("coverage.json");
+    fs::write(
+        &input,
+        r#"
+pragma solcore;
+import * from std;
+import * from std.dispatch;
+
+contract C {
+    function twice(x: uint256) public returns (uint256) {
+        return x + x;
+    }
+}
+"#,
+    )
+    .expect("write source");
+    let std_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std");
+    let driver = |args: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_solcore-driver"))
+            .args(args)
+            .arg("--std-root")
+            .arg(&std_root)
+            .arg(&input)
+            .output()
+            .expect("run driver")
+    };
+
+    // Bytecode and a coverage report.
+    let bin_dir = dir.join("bin");
+    let output = driver(&[
+        "--bin",
+        "--opt-level",
+        "2",
+        &format!("--coverage={}", coverage.display()),
+        "-o",
+        bin_dir.to_str().unwrap(),
+    ]);
+    assert!(
+        output.status.success(),
+        "driver failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    for file in ["C.bin", "C.bin-runtime"] {
+        let hex = fs::read_to_string(bin_dir.join(file)).expect("read bytecode");
+        assert!(
+            !hex.is_empty() && hex.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')),
+            "{file}: {hex}"
+        );
+    }
+    let report: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&coverage).expect("read coverage"))
+            .expect("valid coverage JSON");
+    let sections: Vec<_> = report
+        .as_array()
+        .expect("one object per contract and section")
+        .iter()
+        .map(|row| row["section"].as_str().expect("section name"))
+        .collect();
+    assert_eq!(sections, ["init", "runtime"]);
+    for row in report.as_array().unwrap() {
+        let bytes = |key: &str| row[key].as_u64().expect(key);
+        assert_eq!(row["contract"], "C");
+        assert_eq!(row["opt"], "2");
+        assert_eq!(
+            bytes("source_bytes") + bytes("generated_bytes") + bytes("unmapped_bytes"),
+            bytes("code_bytes")
+        );
+        // Files are named relative to the project root and the library root.
+        let files = row["by_file"].as_object().expect("by_file");
+        assert!(
+            files
+                .keys()
+                .all(|path| path == "main.sol" || path.starts_with("std/"))
+        );
+    }
+
+    let rejected = driver(&["--opt-level", "2"]);
+    assert_eq!(rejected.status.code(), Some(2));
+    assert!(
+        String::from_utf8_lossy(&rejected.stderr)
+            .contains("--opt-level requires --bin, --coverage or --ethdebug")
+    );
+
+    // Stock ethdebug files next to the bytecode.
+    let rejected = driver(&["--ethdebug"]);
+    assert_eq!(rejected.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&rejected.stderr).contains("--ethdebug requires --output-dir"));
+
+    let debug_dir = dir.join("debug");
+    for level in ["1", "2", "s"] {
+        let rejected = driver(&[
+            "--ethdebug",
+            "--opt-level",
+            level,
+            "-o",
+            debug_dir.to_str().unwrap(),
+        ]);
+        assert_eq!(rejected.status.code(), Some(2));
+        assert!(
+            String::from_utf8_lossy(&rejected.stderr).contains("--ethdebug requires --opt-level 0")
+        );
+    }
+    assert!(!debug_dir.exists());
+
+    let output = driver(&["--ethdebug", "-o", debug_dir.to_str().unwrap()]);
+    assert!(
+        output.status.success(),
+        "driver failed\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let read = |name: &str| -> serde_json::Value {
+        let text = fs::read_to_string(debug_dir.join(name)).unwrap_or_else(|_| panic!("{name}"));
+        serde_json::from_str(&text).expect("valid JSON")
+    };
+    for file in ["C.bin", "C.bin-runtime"] {
+        assert!(debug_dir.join(file).is_file(), "{file}");
+    }
+    let resources = read("ethdebug_resources.json");
+    assert_eq!(resources["compilation"], read("ethdebug_compilation.json"));
+    let sources = resources["compilation"]["sources"].as_array().unwrap();
+    let main = sources.iter().find(|source| source["path"] == "main.sol");
+    let main = main.expect("main.sol is a source")["id"].clone();
+
+    for (file, environment) in [
+        ("C_ethdebug.json", "create"),
+        ("C_ethdebug-runtime.json", "call"),
+    ] {
+        let program = read(file);
+        assert_eq!(program["environment"], environment);
+        assert_eq!(program["compilation"]["id"], resources["compilation"]["id"]);
+    }
+    let runtime = read("C_ethdebug-runtime.json");
+    let instructions = runtime["instructions"].as_array().unwrap();
+    assert!(
+        instructions
+            .iter()
+            .any(|instruction| instruction["context"]["code"]["source"]["id"] == main)
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn cli_ethdebug_describes_the_standalone_entry() {
+    let dir = temp_dir("ethdebug-standalone");
+    fs::create_dir_all(&dir).unwrap();
+    let input = dir.join("main.sol");
+    let entry = "function main() returns (word) { return 7; }";
+    let text = format!("pragma solcore;\n// Entry for the generated object.\n{entry}\n");
+    fs::write(&input, &text).unwrap();
+    let std_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std");
+    for (flag, output) in [("--bin", "bin"), ("--ethdebug", "debug")] {
+        let result = Command::new(env!("CARGO_BIN_EXE_solcore-driver"))
+            .arg(flag)
+            .arg("--std-root")
+            .arg(&std_root)
+            .arg("-o")
+            .arg(dir.join(output))
+            .arg(&input)
+            .output()
+            .unwrap();
+        assert!(
+            result.status.success(),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+    }
+    let read_program = |file: &str| {
+        serde_json::from_slice::<serde_json::Value>(
+            &fs::read(dir.join("debug").join(file)).unwrap(),
+        )
+        .unwrap()
+    };
+    let compilation = read_program("ethdebug_compilation.json");
+    for (extension, suffix, environment) in
+        [("bin", "", "create"), ("bin-runtime", "-runtime", "call")]
+    {
+        let filename = format!("OutputDeploy.{extension}");
+        assert_eq!(
+            fs::read(dir.join("debug").join(&filename)).unwrap(),
+            fs::read(dir.join("bin").join(&filename)).unwrap(),
+        );
+        let program = read_program(&format!("OutputDeploy_ethdebug{suffix}.json"));
+        assert_eq!(program["environment"], environment);
+        let definition = &program["contract"]["definition"];
+        let source = compilation["sources"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|source| source["id"] == definition["source"]["id"])
+            .unwrap();
+        assert_eq!(source["path"], "main.sol");
+        let offset = definition["range"]["offset"].as_u64().unwrap() as usize;
+        let length = definition["range"]["length"].as_u64().unwrap() as usize;
+        assert_eq!(&text[offset..offset + length], entry);
+    }
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn cli_rejects_output_aliases_before_writing_artifacts() {
+    let dir = temp_dir("ethdebug-output-alias");
+    let out = dir.join("out");
+    fs::create_dir_all(out.join("subdir")).unwrap();
+    let input = dir.join("main.sol");
+    fs::write(
+        &input,
+        "pragma solcore; contract C { function main() public returns (word) { return 7; } }",
+    )
+    .unwrap();
+    fs::write(out.join("C.bin"), "sentinel").unwrap();
+
+    let mut aliases = vec![out.join("subdir/../C.bin")];
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink("C.bin", out.join("symbolic")).unwrap();
+        fs::hard_link(out.join("C.bin"), out.join("hardlink")).unwrap();
+        aliases.extend([out.join("symbolic"), out.join("hardlink")]);
+    }
+    for alias in aliases {
+        let result = Command::new(env!("CARGO_BIN_EXE_solcore-driver"))
+            .args(["--abi", "--ethdebug", "--std-root"])
+            .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std"))
+            .arg(format!("--coverage={}", alias.display()))
+            .arg("-o")
+            .arg(&out)
+            .arg(&input)
+            .output()
+            .unwrap();
+        assert!(!result.status.success(), "{}", alias.display());
+        let stderr = String::from_utf8_lossy(&result.stderr);
+        assert!(stderr.contains("multiple outputs would write"), "{stderr}");
+        assert_eq!(fs::read_to_string(out.join("C.bin")).unwrap(), "sentinel");
+        assert!(!out.join("C.abi").exists());
+        assert!(!out.join("ethdebug_resources.json").exists());
+    }
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn cli_rejects_an_output_that_is_also_a_directory() {
+    let dir = temp_dir("ethdebug-output-directory-conflict");
+    fs::create_dir_all(&dir).unwrap();
+    let input = dir.join("main.sol");
+    fs::write(
+        &input,
+        "pragma solcore; contract C { function main() public returns (word) { return 7; } }",
+    )
+    .unwrap();
+    let resources = dir.join("ethdebug_resources.json");
+    fs::write(&resources, "sentinel").unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_solcore-driver"))
+        .args([
+            "--ethdebug",
+            "--abi",
+            "--coverage=C.bin/report.json",
+            "--std-root",
+        ])
+        .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std"))
+        .arg("-o")
+        .arg(&dir)
+        .arg(&input)
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("needs") && stderr.contains("as a directory"),
+        "{stderr}"
+    );
+    assert_eq!(fs::read_to_string(resources).unwrap(), "sentinel");
+    assert!(!dir.join("C.bin").exists());
+    assert!(!dir.join("C.abi").exists());
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn cli_escapes_unicode_source_paths_in_annotated_yul() {
+    let dir = temp_dir("yul-locations-unicode-path");
+    let external = dir.join("π");
+    let local = dir.join("src");
+    fs::create_dir_all(&external).unwrap();
+    fs::create_dir_all(&local).unwrap();
+    fs::write(
+        external.join("ops.sol"),
+        "pragma solcore; function plus(x: word) returns (word) { let y: word; assembly { y := add(x, 13) } return y; } export { plus };",
+    )
+    .unwrap();
+    let input = local.join("main.sol");
+    fs::write(
+        &input,
+        "pragma solcore; import { plus } from @pkg.ops; contract C { function main() public returns (word) { let x: word; assembly { x := calldatasize() } return plus(x); } }",
+    )
+    .unwrap();
+    let out = dir.join("out");
+    let result = Command::new(env!("CARGO_BIN_EXE_solcore-driver"))
+        .args(["--emit-yul=C.yul", "--yul-locations", "--std-root"])
+        .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std"))
+        .arg(format!("--external-lib=pkg={}", external.display()))
+        .arg("-o")
+        .arg(&out)
+        .arg(&input)
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let yul = fs::read_to_string(out.join("C.yul")).unwrap();
+    let headers: Vec<_> = yul
+        .lines()
+        .filter(|line| line.contains("@use-src"))
+        .collect();
+    assert_eq!(headers.len(), 2);
+    assert!(headers.iter().all(|line| line.contains(r"\xcf\x80")));
+    let compilation: serde_json::Value =
+        serde_json::from_slice(&fs::read(out.join("ethdebug_compilation.json")).unwrap()).unwrap();
+    assert!(
+        compilation["sources"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|source| {
+                source["path"].as_str().map(Path::new) == Some(external.join("ops.sol").as_path())
+            })
+    );
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn cli_annotates_yul_with_source_locations() {
+    let dir = temp_dir("yul-locations");
+    fs::create_dir_all(&dir).expect("create temp dir");
+    let input = dir.join("main.sol");
+    fs::write(
+        &input,
+        r#"
+pragma solcore;
+import * from std;
+import * from std.dispatch;
+
+contract C {
+    function twice(x: uint256) public returns (uint256) {
+        return x + x;
+    }
+}
+"#,
+    )
+    .expect("write source");
+    let std_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std");
+    let driver = |args: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_solcore-driver"))
+            .args(args)
+            .arg("--std-root")
+            .arg(&std_root)
+            .arg(&input)
+            .output()
+            .expect("run driver")
+    };
+
+    let out_dir = dir.join("out");
+    let output = driver(&[
+        "--emit-yul=C.yul",
+        "--yul-locations",
+        "-o",
+        out_dir.to_str().unwrap(),
+    ]);
+    assert!(
+        output.status.success(),
+        "driver failed\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let yul = fs::read_to_string(out_dir.join("C.yul")).expect("read Yul");
+    let compilation = fs::read_to_string(out_dir.join("ethdebug_compilation.json"))
+        .expect("the compilation file describes the ids");
+    let compilation: serde_json::Value = serde_json::from_str(&compilation).expect("valid JSON");
+    let sources = compilation["sources"].as_array().expect("sources");
+    // Every object lists the same files, under the ids and paths of ethdebug.
+    let list = sources
+        .iter()
+        .map(|source| format!("{}:{}", source["id"], source["path"]))
+        .collect::<Vec<_>>()
+        .join(", ");
+    assert_eq!(yul.matches(&format!("/// @use-src {list}\n")).count(), 2);
+    let main = sources.iter().find(|source| source["path"] == "main.sol");
+    let main = main.expect("main.sol is a source")["id"].clone();
+    assert!(yul.contains(&format!("/// @src {main}:")), "{yul}");
+    assert!(yul.contains("/// @src -1:-1:-1"), "{yul}");
+
+    let rejected = driver(&["--yul-locations"]);
+    assert_eq!(rejected.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&rejected.stderr);
+    assert!(
+        stderr.contains("--yul-locations requires --emit-yul"),
+        "{stderr}"
+    );
+    let rejected = driver(&["--emit-yul", "--yul-locations=flat"]);
+    assert_eq!(rejected.status.code(), Some(2));
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn cli_attributes_cross_file_add_in_creation_and_runtime() {
+    let dir = temp_dir("cross-file-debug");
+    fs::create_dir_all(&dir).expect("create temp dir");
+    let main = "pragma solcore;
+import * from std;
+import * from std.dispatch;
+import { bump } from ops;
+contract CrossFile {
+    seeded: word;
+    constructor(x: uint256) { seeded = bump(toWord(x)); }
+    function run(x: uint256) public returns (uint256) { return uint256(bump(toWord(x))); }
+}
+";
+    let ops = concat!(
+        "pragma solcore;\r\n",
+        "// π before the target distinguishes bytes from characters.\r\n",
+        "function bump(x: word) returns (word) {\r\n",
+        "    let y: word;\r\n",
+        "    assembly { y := add(x, 13) }\r\n",
+        "    return y;\r\n",
+        "}\r\n",
+        "export { bump };\r\n",
+    );
+    fs::write(dir.join("main.sol"), main).expect("write main.sol");
+    fs::write(dir.join("ops.sol"), ops).expect("write ops.sol");
+    let anchor = "y := add(x, 13)";
+    let start = ops.find(anchor).expect("offset in the written file");
+    let end = start + anchor.len();
+    // A contract-file ID substitution would still pass a bounds check.
+    assert!(end <= main.len());
+    let std_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std");
+
+    let out = dir.join("out");
+    let result = Command::new(env!("CARGO_BIN_EXE_solcore-driver"))
+        .current_dir(&dir)
+        .args([
+            "--ethdebug",
+            "--opt-level",
+            "0",
+            "--emit-yul=CrossFile.yul",
+            "--yul-locations",
+            "-o",
+        ])
+        .arg(&out)
+        .arg("--std-root")
+        .arg(&std_root)
+        .arg("main.sol")
+        .output()
+        .expect("run driver");
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let read = |name: &str| fs::read_to_string(out.join(name)).expect(name);
+    let json = |name: &str| -> serde_json::Value { serde_json::from_str(&read(name)).expect(name) };
+    let compilation = json("ethdebug_compilation.json");
+    assert_eq!(json("ethdebug_resources.json")["compilation"], compilation);
+    let source = |name: &str, contents: &str| {
+        let entry = compilation["sources"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|source| source["path"] == name)
+            .expect(name);
+        assert_eq!(entry["contents"], contents);
+        entry["id"].as_u64().expect("numeric source ID")
+    };
+    let main_id = source("main.sol", main);
+    let ops_id = source("ops.sol", ops);
+    assert_ne!(main_id, ops_id);
+
+    let expected = serde_json::json!({
+        "source": {"id": ops_id},
+        "range": {"offset": start, "length": anchor.len()}
+    });
+    let check_add = |program: &serde_json::Value, environment: &str, bin: &str| {
+        if program["environment"] != environment {
+            return Err("wrong program environment");
+        }
+        let add = program["instructions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["operation"]["mnemonic"] == "ADD" && row["context"]["code"] == expected)
+            .ok_or("missing ADD at the exact source span")?;
+        let pc = add["offset"].as_u64().unwrap() as usize;
+        if evm_opcode_at(bin, pc) != Some(0x01) {
+            return Err("ADD offset is not an ADD instruction boundary");
+        }
+        let range = &add["context"]["code"]["range"];
+        let start = range["offset"].as_u64().unwrap() as usize;
+        let end = start + range["length"].as_u64().unwrap() as usize;
+        Ok(format!(
+            "{environment} ADD ops.sol:{start}..{end} {}",
+            &ops[start..end]
+        ))
+    };
+
+    let creation = read("CrossFile.bin");
+    let runtime = read("CrossFile.bin-runtime");
+    let init = creation.strip_suffix(&runtime).expect("embedded runtime");
+    let programs = [
+        json("CrossFile_ethdebug.json"),
+        json("CrossFile_ethdebug-runtime.json"),
+    ];
+    let mut locations = Vec::new();
+    for (index, (environment, bin)) in [("create", init), ("call", runtime.as_str())]
+        .into_iter()
+        .enumerate()
+    {
+        let program = &programs[index];
+        assert_eq!(program["compilation"]["id"], compilation["id"]);
+        let def_start = main.find("contract CrossFile").unwrap();
+        assert_eq!(
+            program["contract"]["definition"],
+            serde_json::json!({
+                "source": {"id": main_id},
+                "range": {"offset": def_start, "length": main.trim_end().len() - def_start}
+            })
+        );
+        locations.push(
+            check_add(program, environment, bin)
+                .unwrap_or_else(|err| panic!("{environment}: {err}")),
+        );
+
+        let mut wrong_file = program.clone();
+        for row in wrong_file["instructions"].as_array_mut().unwrap() {
+            if row["context"]["code"] == expected {
+                row["context"]["code"]["source"]["id"] = main_id.into();
+            }
+        }
+        assert_eq!(
+            check_add(&wrong_file, environment, bin),
+            Err("missing ADD at the exact source span")
+        );
+        assert_eq!(
+            check_add(&programs[1 - index], environment, bin),
+            Err("wrong program environment")
+        );
+    }
+    assert_eq!(
+        locations,
+        [
+            "create ADD ops.sol:153..168 y := add(x, 13)",
+            "call ADD ops.sol:153..168 y := add(x, 13)"
+        ]
+    );
+    // PUSH1's immediate has the same value as ADD's opcode.
+    assert_eq!(evm_opcode_at("600101", 1), None);
+    assert_eq!(evm_opcode_at("600101", 2), Some(0x01));
+
+    // solc uses the source table of each object. Check the helper's
+    // annotation is attached to its ADD separately in both objects.
+    let yul = read("CrossFile.yul");
+    let objects: Vec<_> = yul.split("/// @use-src ").skip(1).collect();
+    assert_eq!(objects.len(), 2);
+    for (object, name) in objects.into_iter().zip(["CrossFileDeploy", "CrossFile"]) {
+        let mut lines = object.lines();
+        let table = lines.next().unwrap();
+        assert!(table.contains(&format!("{main_id}:\"main.sol\"")));
+        assert!(table.contains(&format!("{ops_id}:\"ops.sol\"")));
+        assert_eq!(
+            lines.next().unwrap().trim(),
+            format!("object \"{name}\" {{")
+        );
+        let annotation = format!("/// @src {ops_id}:{start}:{end}");
+        let body: Vec<_> = lines.collect();
+        assert!(
+            body.windows(2).any(|pair| {
+                pair[0].trim() == annotation
+                    && pair[1].contains(" := add(")
+                    && pair[1].ends_with(", 13)")
+            }),
+            "{name}: no annotated ADD"
+        );
+    }
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+fn evm_opcode_at(hex: &str, target: usize) -> Option<u8> {
+    let mut pc = 0;
+    while pc <= target {
+        let opcode = u8::from_str_radix(hex.get(pc * 2..pc * 2 + 2)?, 16).ok()?;
+        if pc == target {
+            return Some(opcode);
+        }
+        pc += match opcode {
+            0x60..=0x7f => usize::from(opcode - 0x5f) + 1,
+            _ => 1,
+        };
+    }
+    None
+}
+
+#[test]
 fn cli_emits_memory_array_return_abi_and_both_backends() {
     let dir = temp_dir("memory-array-return");
     fs::create_dir_all(&dir).expect("create temp dir");

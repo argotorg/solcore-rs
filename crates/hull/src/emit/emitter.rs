@@ -138,8 +138,24 @@ impl<'db> Emitter<'db> {
                 .collect::<Vec<_>>();
             let ret = this.hull_ty(function.ret.ty(), function.span);
             let body = this.emit_stmts(&function.body);
+            let generated = match function.origin {
+                MonoFunctionOrigin::DerivedGeneric { .. }
+                | MonoFunctionOrigin::DerivedClass { .. }
+                | MonoFunctionOrigin::StructAccessor => Some(GeneratedReason::Derived),
+                // The constructor-argument decoder is made by the compiler for
+                // the whole constructor, like the deployment entry that calls it.
+                _ if function
+                    .source
+                    .and_then(|def| hir_ty::contract_overlay_backend_name(this.db, def))
+                    == Some("copy_arguments_for_constructor") =>
+                {
+                    Some(GeneratedReason::Entry)
+                }
+                _ => None,
+            };
             Function {
                 span: function.span,
+                generated,
                 name: function.name.clone().into(),
                 args,
                 ret,
@@ -830,6 +846,7 @@ impl<'db> Emitter<'db> {
     ) -> Function<'db> {
         Function {
             span,
+            generated: Some(GeneratedReason::Literal),
             name: name.into(),
             args: Vec::new(),
             ret: Ty::unit(span),
@@ -903,6 +920,7 @@ impl<'db> Emitter<'db> {
         let word = Ty::word(span);
         Function {
             span,
+            generated: Some(GeneratedReason::Literal),
             name: name.into(),
             args: Vec::new(),
             ret: word.clone(),
