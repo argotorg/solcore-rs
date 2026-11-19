@@ -7,7 +7,7 @@ use std::{
 };
 
 use hir::{diag::Diagnostic, input::SourceFile};
-use hull::origin::{GeneratedReason, ResolvedOrigin, SourceTable};
+use hull::origin::{GeneratedReason, ResolvedOrigin, SourceCatalog, SourceTable};
 use nameres::ModuleId;
 use serde_json::{Value, json};
 use sonatina::{CompileOptions, CompiledObject, CompiledSection, OptLevel, PcRange};
@@ -16,7 +16,7 @@ use url::Url;
 use crate::{
     args::{Args, EmitTarget, OPT_LEVELS},
     db::DriverDb,
-    debug_info::{compilation_file, ethdebug_files, source_paths},
+    debug_info::{compilation_file, ethdebug_files},
 };
 
 #[derive(Debug)]
@@ -120,20 +120,23 @@ pub(crate) fn maybe_emit_backend_outputs(
     }
     // One table per compile, shared by every output that names source files.
     let table = LazyCell::new(|| SourceTable::from_program(db, &program));
+    let catalog = LazyCell::new(|| SourceCatalog::new(&table, |url| display_path(db, url)));
     if let Some(target) = &args.emit_yul {
         let object = args.emit_yul_object.as_deref();
         let failed = |err| BackendFailure::Message(format!("Yul translation failed:\n  {err}"));
         let mut compilation = None;
         let yul = if args.yul_locations {
-            let paths = source_paths(db, &table).map_err(BackendFailure::Message)?;
+            let catalog = catalog
+                .as_ref()
+                .map_err(|err| BackendFailure::Message(err.clone()))?;
             if args.output_dir.is_some() {
                 // Describes the source ids that the annotations use.
                 compilation = Some(
-                    compilation_file(db, &table, &paths, args.opt_level)
+                    compilation_file(db, catalog, args.opt_level)
                         .map_err(BackendFailure::Message)?,
                 );
             }
-            yul::render_hull_program_object_with_locations(db, &program, object, &table, &paths)
+            yul::render_hull_program_object_with_catalog(db, &program, object, catalog)
         } else {
             yul::render_hull_program_object(db, &program, object)
         }
@@ -169,7 +172,10 @@ pub(crate) fn maybe_emit_backend_outputs(
             None => None,
         };
         let ethdebug = if args.ethdebug {
-            ethdebug_files(db, &table, &program, &objects, args.opt_level)
+            let catalog = catalog
+                .as_ref()
+                .map_err(|err| BackendFailure::Message(err.clone()))?;
+            ethdebug_files(db, catalog, &program, &objects, args.opt_level)
                 .map_err(BackendFailure::Message)?
         } else {
             Vec::new()

@@ -5,7 +5,7 @@ use hull::{
     Alt, CodeBlock as HullCodeBlock, Expr as HullExpr, ExprKind, Function as HullFunction,
     Object as HullObject, PatKind, Program as HullProgram, Stmt as HullStmt, StmtKind,
     Ty as HullTy, TyKind,
-    origin::{FunctionScope, SourceTable},
+    origin::{FunctionScope, SourceCatalog, SourceTable},
 };
 
 use super::{
@@ -66,6 +66,22 @@ pub fn render_hull_program_object_with_locations<'db>(
     translator.sources = Some(table.clone());
     let program = translator.translate_program(program)?;
     render_strict_assembly_program(&program, object_name, sources)
+}
+
+/// Renders Yul source annotations and object headers using a single catalog.
+pub fn render_hull_program_object_with_catalog<'db>(
+    db: &'db dyn HirDb,
+    program: &HullProgram<'db>,
+    object_name: Option<&str>,
+    catalog: &SourceCatalog<'_>,
+) -> Result<String, TranslationError> {
+    render_hull_program_object_with_locations(
+        db,
+        program,
+        object_name,
+        catalog.table(),
+        catalog.paths(),
+    )
 }
 
 /// Renders a single-contract program so its runtime code calls `entry` and

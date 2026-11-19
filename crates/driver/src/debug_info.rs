@@ -2,12 +2,12 @@
 
 use ethdebug::{Compilation, Context, Environment, Program, Range, Source};
 use hir::keccak::keccak256;
-use hull::origin::{Origin, SourceTable};
+use hull::origin::{Origin, SourceCatalog, SourceTable};
 use sonatina::{CompiledObject, CompiledSection, OptLevel};
 
 use crate::{
     db::DriverDb,
-    emit::{Attribution, classify, display_path, hex, opt_level_name},
+    emit::{Attribution, classify, hex, opt_level_name},
 };
 
 /// The name of the language in the sources. Not `Solidity`: SolDB reads the
@@ -22,20 +22,15 @@ const COMPILER_VERSION: &str = env!("CARGO_PKG_VERSION");
 /// without an origin get no context.
 pub(crate) fn ethdebug_files(
     db: &DriverDb,
-    table: &SourceTable,
+    catalog: &SourceCatalog<'_>,
     program: &hull::Program<'_>,
     objects: &[CompiledObject],
     opt_level: OptLevel,
 ) -> Result<Vec<(String, String)>, String> {
-    let paths = source_paths(db, table)?;
-    let sources = sources(db, table, &paths)?;
+    let table = catalog.table();
+    let sources = sources(db, catalog)?;
     let id = compilation_id(opt_level, &sources);
-    let compilation = Compilation {
-        id: &id,
-        compiler_name: "solcore",
-        compiler_version: COMPILER_VERSION,
-        sources: &sources,
-    };
+    let compilation = compilation(&id, &sources);
 
     let mut out = vec![
         (
@@ -87,22 +82,24 @@ pub(crate) fn ethdebug_files(
 /// paths and compilation id are the same in both.
 pub(crate) fn compilation_file(
     db: &DriverDb,
-    table: &SourceTable,
-    paths: &[(u32, String)],
+    catalog: &SourceCatalog<'_>,
     opt_level: OptLevel,
 ) -> Result<(String, String), String> {
-    let sources = sources(db, table, paths)?;
+    let sources = sources(db, catalog)?;
     let id = compilation_id(opt_level, &sources);
-    let compilation = Compilation {
-        id: &id,
-        compiler_name: "solcore",
-        compiler_version: COMPILER_VERSION,
-        sources: &sources,
-    };
     json_file(
         "ethdebug_compilation.json".to_owned(),
-        &ethdebug::compilation_json(&compilation),
+        &ethdebug::compilation_json(&compilation(&id, &sources)),
     )
+}
+
+fn compilation<'a>(id: &'a str, sources: &'a [Source<'a>]) -> Compilation<'a> {
+    Compilation {
+        id,
+        compiler_name: "solcore",
+        compiler_version: COMPILER_VERSION,
+        sources,
+    }
 }
 
 fn json_file(name: String, json: &serde_json::Value) -> Result<(String, String), String> {
@@ -112,34 +109,14 @@ fn json_file(name: String, json: &serde_json::Value) -> Result<(String, String),
     Ok((name, text))
 }
 
-/// The `(id, path)` of every file of the program, under the names that every
-/// output uses (`@use-src` lines and ethdebug sources alike). Two files may not
-/// share a name.
-pub(crate) fn source_paths(
-    db: &DriverDb,
-    table: &SourceTable,
-) -> Result<Vec<(u32, String)>, String> {
-    let mut paths: Vec<(u32, String)> = Vec::new();
-    for (id, url, _) in table.entries() {
-        let path = display_path(db, url);
-        if paths.iter().any(|(_, seen)| *seen == path) {
-            return Err(format!("two source files are named `{path}`"));
-        }
-        paths.push((id, path));
-    }
-    Ok(paths)
-}
-
-/// The files of `paths`, with their text.
+/// The catalog's files with their text, loaded only for compilation output.
 fn sources<'a>(
     db: &'a DriverDb,
-    table: &SourceTable,
-    paths: &'a [(u32, String)],
+    catalog: &'a SourceCatalog<'_>,
 ) -> Result<Vec<Source<'a>>, String> {
-    table
+    catalog
         .entries()
-        .zip(paths)
-        .map(|((id, _, file), (_, path))| {
+        .map(|(id, path, file)| {
             let contents = file
                 .content(db)
                 .as_deref()

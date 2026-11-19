@@ -324,6 +324,44 @@ impl SourceTable {
     }
 }
 
+/// Display names for a source table, in its existing ID order.
+pub struct SourceCatalog<'a> {
+    table: &'a SourceTable,
+    paths: Vec<(u32, String)>,
+}
+
+impl<'a> SourceCatalog<'a> {
+    pub fn new(
+        table: &'a SourceTable,
+        mut display_path: impl FnMut(&str) -> String,
+    ) -> Result<Self, String> {
+        let mut paths: Vec<(u32, String)> = Vec::new();
+        for (id, url, _) in table.entries() {
+            let path = display_path(url);
+            if paths.iter().any(|(_, seen)| *seen == path) {
+                return Err(format!("two source files are named `{path}`"));
+            }
+            paths.push((id, path));
+        }
+        Ok(Self { table, paths })
+    }
+
+    pub fn table(&self) -> &'a SourceTable {
+        self.table
+    }
+
+    pub fn paths(&self) -> &[(u32, String)] {
+        &self.paths
+    }
+
+    /// IDs, display paths, and source files in catalog order.
+    pub fn entries(&self) -> impl Iterator<Item = (u32, &str, SourceFile)> {
+        self.paths
+            .iter()
+            .map(|(id, path)| (*id, path.as_str(), self.table.entries[*id as usize].1))
+    }
+}
+
 /// Calls `visit(function, stmt, depth)` for each statement of `stmts` and, after
 /// it, for the statements nested in it. `depth` is 0 for `stmts` and grows by
 /// one per level of nesting. `function` is the Hull function the statements
@@ -696,5 +734,31 @@ mod tests {
         // A file seen only through zero-width spans, and an unknown file.
         assert_eq!(table.id("memory:///empty.sol"), None);
         assert_eq!(table.id("memory:///other.sol"), None);
+
+        // Display path order can differ from URL order. IDs still name the
+        // original files while the same display names reach both outputs.
+        let catalog = SourceCatalog::new(&table, |url| match url {
+            "memory:///a.sol" => "loaded-z.sol".to_owned(),
+            "memory:///z.sol" => "loaded-a.sol".to_owned(),
+            _ => panic!("unexpected source URL {url}"),
+        })
+        .unwrap();
+        assert_eq!(
+            catalog.paths(),
+            &[
+                (0, "loaded-z.sol".to_owned()),
+                (1, "loaded-a.sol".to_owned())
+            ]
+        );
+        assert_eq!(
+            catalog.entries().collect::<Vec<_>>(),
+            [(0, "loaded-z.sol", alpha), (1, "loaded-a.sol", zed)]
+        );
+        assert_eq!(
+            SourceCatalog::new(&table, |_| "same.sol".to_owned())
+                .err()
+                .as_deref(),
+            Some("two source files are named `same.sol`")
+        );
     }
 }
