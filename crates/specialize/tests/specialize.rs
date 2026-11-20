@@ -4031,6 +4031,122 @@ contract FieldAccess {
 }
 
 #[test]
+fn memory_array_compound_assignment_reads_through_its_checked_element_reference() {
+    let (db, main_file, output) = specialize_src_with_std_and_db(
+        r#"
+pragma solcore;
+import * from std;
+
+contract C {
+  function compound(m:uint256[], i:uint256) returns () { m[i] += uint256(1); return (); }
+  function explicit(m:uint256[], i:uint256) returns () { m[i] = m[i] + uint256(1); return (); }
+
+  function main() returns (uint256) {
+    let n : uint256 = 1;
+    let i : uint256 = 0;
+    let m : uint256[] = new uint256[](n);
+    compound(m, i);
+    explicit(m, i);
+    return m[i];
+  }
+}
+"#,
+    );
+
+    assert_eq!(output.diagnostics, Vec::new(), "{:#?}", output.diagnostics);
+    let source_function = |name: &str| {
+        output
+            .module
+            .items
+            .iter()
+            .find_map(|item| match item {
+                MonoItem::Function(function)
+                    if function.source.is_some_and(|def| {
+                        def.file(db) == main_file && def.name(db).as_deref() == Some(name)
+                    }) =>
+                {
+                    Some(function)
+                }
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("missing source specialization for {name}"))
+    };
+
+    // `lidx` evaluates and bounds-checks the place once; the generated read
+    // loads through the element reference saved from it.
+    let compound = source_function("compound");
+    let Some(MonoStmt {
+        kind: MonoStmtKind::Block(update),
+        ..
+    }) = compound.body.first()
+    else {
+        panic!("expected the update block first: {compound:#?}");
+    };
+    let [
+        MonoStmt {
+            kind:
+                MonoStmtKind::Let {
+                    id: cell,
+                    init: Some(lookup),
+                    ..
+                },
+            ..
+        },
+        MonoStmt {
+            kind: MonoStmtKind::Expr(store),
+            ..
+        },
+    ] = update.as_slice()
+    else {
+        panic!("expected the saved element reference and the store: {update:#?}");
+    };
+    assert!(
+        matches!(&lookup.kind, MonoExprKind::Call { callee, .. } if callee.name.contains("_lidx_")),
+        "{lookup:#?}"
+    );
+    let MonoExprKind::Call { args, .. } = &store.kind else {
+        panic!("expected the assignRef call: {store:#?}");
+    };
+    let [target, updated] = args.as_slice() else {
+        panic!("expected the reference and the updated value: {store:#?}");
+    };
+    assert!(
+        matches!(&target.kind, MonoExprKind::Var(id) if id.name == cell.name),
+        "{store:#?}"
+    );
+    let MonoExprKind::Call { args, .. } = &updated.kind else {
+        panic!("expected the Add.add call: {updated:#?}");
+    };
+    assert!(
+        matches!(
+            args.first().map(|arg| &arg.kind),
+            Some(MonoExprKind::Call { callee, args, .. })
+                if callee.name.starts_with("CanStore_load_")
+                    && matches!(
+                        args.as_slice(),
+                        [MonoExpr { kind: MonoExprKind::Var(id), .. }] if id.name == cell.name
+                    )
+        ),
+        "{updated:#?}"
+    );
+    assert!(
+        !function_call_names(compound)
+            .iter()
+            .any(|name| name.contains("_ridx_")),
+        "the generated read must not evaluate the place again: {compound:#?}"
+    );
+
+    // An explicitly written read is a separate evaluation of its own place.
+    let explicit = source_function("explicit");
+    let explicit_calls = function_call_names(explicit);
+    assert!(
+        explicit_calls.iter().any(|name| name.contains("_lidx_"))
+            && explicit_calls.iter().any(|name| name.contains("_ridx_")),
+        "{explicit:#?}"
+    );
+}
+
+#[test]
 fn partial_contract_field_support_does_not_fall_back_to_legacy_slots() {
     let read = specialize_src_with_std(
         r#"
