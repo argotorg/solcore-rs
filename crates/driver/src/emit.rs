@@ -6,6 +6,7 @@ use std::{
     path::{Component, Path, PathBuf},
 };
 
+use ethdebug::Environment;
 use hir::{diag::Diagnostic, input::SourceFile};
 use hull::origin::{GeneratedReason, ResolvedOrigin, SourceCatalog, SourceTable};
 use nameres::ModuleId;
@@ -16,7 +17,7 @@ use url::Url;
 use crate::{
     args::{Args, EmitTarget, OPT_LEVELS},
     db::DriverDb,
-    debug_info::{compilation_file, ethdebug_files},
+    debug_info::{compilation_file, ethdebug_files, program_filename},
 };
 
 #[derive(Debug)]
@@ -195,7 +196,7 @@ fn collect_backend_outputs(
         };
         if args.emit_bin {
             for object in &objects {
-                collect_bin_output(object, outputs);
+                collect_bin_output(object, args, outputs).map_err(BackendFailure::Message)?;
             }
         }
         outputs.extend(
@@ -212,16 +213,37 @@ fn collect_backend_outputs(
 
 /// Prepares `<contract>.bin` (creation code) and `<contract>.bin-runtime` as one
 /// line of lower-case hex without prefix or line end, like `solc --bin -o`.
-fn collect_bin_output(object: &CompiledObject, outputs: &mut Vec<(EmitTarget, String)>) {
+fn collect_bin_output(
+    object: &CompiledObject,
+    args: &Args,
+    outputs: &mut Vec<(EmitTarget, String)>,
+) -> Result<(), String> {
     let sections = [
-        ("bin", Some(&object.init)),
-        ("bin-runtime", object.runtime.as_ref()),
+        ("bin", Some(&object.init), Environment::Create),
+        ("bin-runtime", object.runtime.as_ref(), Environment::Call),
     ];
-    for (extension, section) in sections {
+    for (extension, section, environment) in sections {
         let Some(section) = section else { continue };
-        let filename = EmitTarget::File(format!("{}.{extension}", object.contract).into());
-        outputs.push((filename, hex(&section.bytes)));
+        let filename: PathBuf = format!("{}.{extension}", object.contract).into();
+        if !args.ethdebug {
+            let output_dir = args.output_dir.as_deref();
+            let program = program_filename(&object.contract, environment);
+            let program_path = emit_file_path(Path::new(&program), output_dir);
+            let exists = program_path.try_exists().map_err(|err| {
+                format!("failed to check for `{}`: {err}", program_path.display())
+            })?;
+            if exists {
+                let destination = emit_file_path(&filename, output_dir);
+                return Err(format!(
+                    "cannot write `{}` while `{}` exists; rebuild with `--ethdebug` or use a different output directory",
+                    destination.display(),
+                    program_path.display()
+                ));
+            }
+        }
+        outputs.push((EmitTarget::File(filename), hex(&section.bytes)));
     }
+    Ok(())
 }
 
 /// Lower-case hex without prefix.

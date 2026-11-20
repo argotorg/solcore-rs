@@ -45,14 +45,10 @@ pub(crate) fn ethdebug_files(
     for object in objects {
         let definition = definition(db, table, program, object)?;
         let sections = [
-            (Some(&object.init), Environment::Create, "_ethdebug.json"),
-            (
-                object.runtime.as_ref(),
-                Environment::Call,
-                "_ethdebug-runtime.json",
-            ),
+            (Some(&object.init), Environment::Create),
+            (object.runtime.as_ref(), Environment::Call),
         ];
-        for (section, environment, suffix) in sections {
+        for (section, environment) in sections {
             let Some(section) = section else { continue };
             let ranges = ranges(table, section)?;
             let code = section
@@ -69,12 +65,20 @@ pub(crate) fn ethdebug_files(
             };
             let json = ethdebug::program_json(&program, &sources)
                 .map_err(|err| format!("ethdebug program of `{}`: {err}", object.contract))?;
-            out.push((format!("{}{suffix}", object.contract), json));
+            out.push((program_filename(&object.contract, environment), json));
         }
     }
     out.into_iter()
         .map(|(name, json)| json_file(name, &json))
         .collect()
+}
+
+pub(crate) fn program_filename(contract: &str, environment: Environment) -> String {
+    let suffix = match environment {
+        Environment::Create => "_ethdebug.json",
+        Environment::Call => "_ethdebug-runtime.json",
+    };
+    format!("{contract}{suffix}")
 }
 
 /// `ethdebug_compilation.json` alone, to describe the source ids of

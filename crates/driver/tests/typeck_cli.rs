@@ -1045,6 +1045,72 @@ fn cli_ethdebug_describes_the_standalone_entry() {
 }
 
 #[test]
+fn cli_plain_rebuild_preserves_existing_ethdebug_artifacts() {
+    let dir = temp_dir("ethdebug-rebuild");
+    fs::create_dir_all(&dir).unwrap();
+    let input = dir.join("main.sol");
+    let out = dir.join("out");
+    let write_source = |value| {
+        fs::write(
+            &input,
+            format!(
+                "pragma solcore; contract C {{ function main() public returns (word) {{ return {value}; }} }}"
+            ),
+        )
+        .unwrap();
+    };
+    let build = |mode| {
+        Command::new(env!("CARGO_BIN_EXE_solcore-driver"))
+            .args([mode, "--std-root"])
+            .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std"))
+            .arg("-o")
+            .arg(&out)
+            .arg(&input)
+            .output()
+            .unwrap()
+    };
+    let read = |name: &str| fs::read(out.join(name)).unwrap();
+
+    write_source(13);
+    let first_build = build("--ethdebug");
+    assert!(first_build.status.success(), "{:?}", first_build);
+    let creation = read("C.bin");
+    let runtime = read("C.bin-runtime");
+    let creation_program = read("C_ethdebug.json");
+    let runtime_program = read("C_ethdebug-runtime.json");
+    let resources = read("ethdebug_resources.json");
+
+    write_source(17);
+    let rejected = build("--bin");
+    assert!(!rejected.status.success(), "{:?}", rejected);
+    let stderr = String::from_utf8_lossy(&rejected.stderr);
+    assert!(stderr.contains("C_ethdebug.json"), "{stderr}");
+    assert!(stderr.contains("rebuild with `--ethdebug`"), "{stderr}");
+    assert_eq!(read("C.bin"), creation);
+    assert_eq!(read("C.bin-runtime"), runtime);
+    assert_eq!(read("C_ethdebug.json"), creation_program);
+    assert_eq!(read("C_ethdebug-runtime.json"), runtime_program);
+    assert_eq!(read("ethdebug_resources.json"), resources);
+
+    fs::remove_file(out.join("C_ethdebug.json")).unwrap();
+    let rejected = build("--bin");
+    assert!(!rejected.status.success(), "{:?}", rejected);
+    let stderr = String::from_utf8_lossy(&rejected.stderr);
+    assert!(stderr.contains("C_ethdebug-runtime.json"), "{stderr}");
+    assert_eq!(read("C.bin"), creation);
+    assert_eq!(read("C.bin-runtime"), runtime);
+    assert_eq!(read("C_ethdebug-runtime.json"), runtime_program);
+
+    let refreshed = build("--ethdebug");
+    assert!(refreshed.status.success(), "{:?}", refreshed);
+    assert_ne!(read("C.bin-runtime"), runtime);
+    assert_ne!(read("C_ethdebug-runtime.json"), runtime_program);
+    assert_ne!(read("ethdebug_resources.json"), resources);
+    assert!(out.join("C_ethdebug.json").exists());
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn cli_rejects_output_aliases_before_writing_artifacts() {
     let dir = temp_dir("ethdebug-output-alias");
     let out = dir.join("out");
