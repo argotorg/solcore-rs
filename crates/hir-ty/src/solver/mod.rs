@@ -129,7 +129,9 @@ use r#match::{
     ty_equal, unify_ty,
 };
 pub(crate) use r#match::{clause_conditions_for_goal, scheme_conditions_for_type};
-use r#match::{collect_evidence_vars, collect_pred_vars, collect_ty_vars, head_can_unify};
+use r#match::{
+    collect_evidence_vars, collect_pred_vars, collect_ty_vars, head_can_unify, strip_comptime_pred,
+};
 use module_lookup::{
     ident_text, module_for_def, scope_resolution_for_module_id, type_var_bindings, unique_modules,
     unique_preds, visible_class_modules,

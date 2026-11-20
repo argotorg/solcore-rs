@@ -2,10 +2,21 @@ use super::*;
 
 /// Dictionary identity, separate from the path used to discover it. A
 /// dictionary rooted in local givens is identified by its predicate alone,
-/// whichever given and superclass edges lead to it: coherence gives a concrete
-/// predicate a single impl, and specialization normalizes every projection to
-/// that impl's dictionary. Other dictionaries retain their complete
-/// prerequisites.
+/// whichever given and superclass edges lead to it. This relies on two facts:
+///
+/// - coherence selects a single impl for each concrete predicate, the same in
+///   every module (impl locality, overlap checks, and defaults that never
+///   decide a type-parameter goal);
+/// - specialization normalizes every superclass projection to the dictionary
+///   of that impl, so the given a proof starts from does not change the code.
+///
+/// Coherence has one known gap: generic code commits to a default impl at its
+/// definition, while a conditional default may apply once the type parameter
+/// is instantiated. Two givens can then carry different impls for the same
+/// predicate. Specialization reports that conflict as `SC0416` when it
+/// instantiates the function that receives both
+/// (`hull/redundant_given_incoherent_conditional_default` in the uitest
+/// fixtures). Other dictionaries retain their complete prerequisites.
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub(super) enum DictionaryIdentity<'db> {
     Given {
@@ -250,8 +261,8 @@ pub(super) fn solution_from_answers<'db>(
         return Solution::NoSolution;
     };
 
-    let mut seen_candidates = FxHashMap::default();
-    let mut candidates: Vec<Candidate<'db>> = Vec::new();
+    let mut seen_candidates = FxHashSet::default();
+    let mut candidates = Vec::new();
     for answer in answers {
         if answer_priority(db, env, &answer) != best_priority {
             continue;
@@ -260,19 +271,8 @@ pub(super) fn solution_from_answers<'db>(
             .candidate
             .evidence
             .dictionary_identity(&|pred| env.local_givens(db).contains(&pred));
-        match seen_candidates.get(&(answer.candidate.subst.clone(), identity.clone())) {
-            None => {
-                seen_candidates
-                    .insert((answer.candidate.subst.clone(), identity), candidates.len());
-                candidates.push(answer.candidate);
-            }
-            Some(&index) => {
-                let rank = given_evidence_rank(db, env, &answer.candidate.evidence);
-                let kept = given_evidence_rank(db, env, &candidates[index].evidence);
-                if matches!((rank, kept), (Some(rank), Some(kept)) if rank < kept) {
-                    candidates[index] = answer.candidate;
-                }
-            }
+        if seen_candidates.insert((answer.candidate.subst.clone(), identity)) {
+            candidates.push(answer.candidate);
         }
     }
 
@@ -400,31 +400,6 @@ pub(super) fn evidence_root_given<'db>(evidence: &Evidence<'db>) -> Option<Pred<
     }
 }
 
-/// Every proof of a predicate from local givens denotes one dictionary, so the
-/// rank only picks which proof represents it: the fewest superclass
-/// projections, then the earliest given. The choice is then independent of the
-/// order in which answers arrive.
-fn given_evidence_rank<'db>(
-    db: &'db dyn Db,
-    env: TraitEnvId<'db>,
-    evidence: &Evidence<'db>,
-) -> Option<(usize, usize)> {
-    let source = evidence_root_given(evidence)?;
-    let position = env
-        .local_givens(db)
-        .iter()
-        .position(|given| *given == source)?;
-    Some((given_projection_depth(evidence), position))
-}
-
-/// Number of superclass projections between `evidence` and its given root.
-fn given_projection_depth(evidence: &Evidence<'_>) -> usize {
-    match evidence {
-        Evidence::Superclass { child, .. } => 1 + given_projection_depth(child),
-        Evidence::Builtin { .. } | Evidence::Instance { .. } | Evidence::Derived { .. } => 0,
-    }
-}
-
 pub(super) fn clause_evidence<'db>(
     db: &'db dyn Db,
     goal: Pred<'db>,
@@ -438,7 +413,10 @@ pub(super) fn clause_evidence<'db>(
             args: subst.args_for_vars(db, &clause.binder_vars),
             sub_evidence,
         },
-        ClauseOrigin::Builtin | ClauseOrigin::Given => Evidence::Builtin { pred: goal },
+        ClauseOrigin::Builtin => Evidence::Builtin { pred: goal },
+        ClauseOrigin::Given => Evidence::Builtin {
+            pred: strip_comptime_pred(db, goal),
+        },
         ClauseOrigin::Derived(kind) => Evidence::Derived {
             kind,
             pred: goal,
@@ -446,7 +424,7 @@ pub(super) fn clause_evidence<'db>(
         },
         ClauseOrigin::Superclass(class) => Evidence::Superclass {
             class,
-            pred: goal,
+            pred: strip_comptime_pred(db, goal),
             child: Box::new(
                 sub_evidence
                     .into_iter()

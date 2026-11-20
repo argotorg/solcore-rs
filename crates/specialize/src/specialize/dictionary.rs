@@ -161,18 +161,13 @@ impl<'db> Driver<'db> {
             }
             _ => unreachable!(),
         };
-        let mut local_bindings = prerequisites
+        let local_bindings = prerequisites
             .iter()
             .filter_map(|evidence| {
                 self.dictionary_predicate(evidence)
                     .map(|pred| (pred, evidence.clone()))
             })
             .collect::<Vec<_>>();
-        for (pred, evidence) in bindings {
-            if !local_bindings.iter().any(|(given, _)| given == pred) {
-                local_bindings.push((*pred, evidence.clone()));
-            }
-        }
         let mut superclasses = Vec::new();
         let Some(base) = self.try_module_trait_env(module) else {
             self.push_missing_module_trait_env(None);

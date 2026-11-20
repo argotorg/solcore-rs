@@ -18,47 +18,46 @@ trait C<t> where t: A {
     function fc(x: t) returns (word);
 }
 
-enum T {
-    T
-}
-
-impl A<T> {
-    function fa(x: T) returns (word) {
-        return 1;
+impl A<uint256> {
+    function fa(x: uint256) returns (word) {
+        return Typedef.rep(x);
     }
 }
 
-impl B<T> {
-    function fb(x: T) returns (word) {
-        return 10;
+impl B<uint256> {
+    function fb(x: uint256) returns (word) {
+        return primAddWord(Typedef.rep(x), 10);
     }
 }
 
-impl C<T> {
-    function fc(x: T) returns (word) {
-        return 100;
+impl C<uint256> {
+    function fc(x: uint256) returns (word) {
+        return primAddWord(Typedef.rep(x), 100);
     }
 }
 
-enum U {
-    U
+enum Box<a> {
+    Box(a)
 }
 
-impl A<U> {
-    function fa(x: U) returns (word) {
-        return 2;
+impl<a> A<Box<a>> where a: A {
+    function fa(x: Box<a>) returns (word) {
+        match (x) {
+            case Box(inner) {
+                return primAddWord(A.fa(inner), 1000);
+            }
+        }
     }
 }
 
-impl B<U> {
-    function fb(x: U) returns (word) {
-        return 20;
-    }
-}
-
-impl C<U> {
-    function fc(x: U) returns (word) {
-        return 200;
+// The superclass `Box<a>: A` needs `a: A`, which both conditions give.
+impl<a> B<Box<a>> where a: B, a: C {
+    function fb(x: Box<a>) returns (word) {
+        match (x) {
+            case Box(inner) {
+                return primAddWord(B.fb(inner), C.fc(inner));
+            }
+        }
     }
 }
 
@@ -70,34 +69,54 @@ function diamond<t>(x: t) returns (word) where t: B, t: C {
     return primAddWord(A.fa(x), primAddWord(B.fb(x), C.fc(x)));
 }
 
+// Each call fixes `t` to uint256, so the recursion has a single
+// specialization.
+function walk<t>(x: t, n: uint256) returns (word) where t: B, t: C {
+    if (n == 0) {
+        return A.fa(x);
+    }
+    return walk(n, n - 1);
+}
+
 function same<t>(x: t, y: t) returns (bool) where t: Eq, t: Ord {
     return Eq.eq(x, y);
 }
 
+function isZero<t>(x: t) returns (bool) where t: Ord, t: Num {
+    return Eq.eq(Num.fromInteger(0), x);
+}
+
 contract GivenRedundantSuperclass {
-    // #[() -> 11]
-    function statedT() public returns (uint256) {
-        return uint256(stated(T.T));
+    // #[(5) -> 20]
+    function statedUint(x: uint256) public returns (uint256) {
+        return uint256(stated(x));
     }
 
-    // #[() -> 22]
-    function statedU() public returns (uint256) {
-        return uint256(stated(U.U));
+    // #[(5) -> 125]
+    function diamondUint(x: uint256) public returns (uint256) {
+        return uint256(diamond(x));
     }
 
-    // #[() -> 111]
-    function diamondT() public returns (uint256) {
-        return uint256(diamond(T.T));
+    // #[(5) -> 1125]
+    function statedBox(x: uint256) public returns (uint256) {
+        return uint256(stated(Box.Box(x)));
     }
 
-    // #[() -> 222]
-    function diamondU() public returns (uint256) {
-        return uint256(diamond(U.U));
+    // #[(3) -> 1]
+    // #[(0) -> 0]
+    function walkUint(x: uint256) public returns (uint256) {
+        return uint256(walk(x, x));
     }
 
     // #[(3, 3) -> true]
     // #[(3, 4) -> false]
     function sameUint(x: uint256, y: uint256) public returns (bool) {
         return same(x, y);
+    }
+
+    // #[(0) -> true]
+    // #[(7) -> false]
+    function isZeroUint(x: uint256) public returns (bool) {
+        return isZero(x);
     }
 }

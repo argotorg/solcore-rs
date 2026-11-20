@@ -1,0 +1,15 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/hull/redundant_given_incoherent_conditional_default/main.sol
+---
+error[SC0416]: constraint `adt:Box<adt:Foo>: StorageSize` resolves to two different impls: one in module `main` and one in module `std`
+  --> /main/main.sol:42:12
+   |
+41 | function site<u>(x: u) returns (word) {
+42 |     return pick(Box(x));
+   |            ^^^^^^^^^^^^ resolved to a second impl here
+43 | }
+   |
+   = note: a constraint must resolve to the same impl everywhere in a program
+   = note: this is a compiler bug: impl placement checks should have rejected the program

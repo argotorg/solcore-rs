@@ -83,6 +83,20 @@ fn generic_abi_decoder_evidence_specializes_for_internal_sum_adt() {
 }
 
 #[test]
+fn redundant_givens_share_dictionaries() {
+    audit_variants("redundant_givens_share_dictionaries", |_, output| {
+        assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+        let copies = functions(output)
+            .iter()
+            .filter(|function| {
+                function.name.starts_with("A_fa_") && function.name.contains("$uint256")
+            })
+            .count();
+        assert!(copies <= 1, "{copies} copies of A.fa for uint256");
+    });
+}
+
+#[test]
 fn implicit_superclass_bindings_survive_recursive_instance_methods() {
     audit_variants(
         "implicit_superclass_bindings_survive_recursive_instance_methods",
