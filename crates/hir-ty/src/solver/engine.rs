@@ -271,6 +271,7 @@ impl<'db> TabledEngine<'db> {
         let logical_key = self.logical_answer_key(key, &answer);
         let branch = (!prerequisites.is_empty())
             .then(|| ProofBranch::new(self.db, key, &answer.candidate.evidence));
+        let (db, env) = (self.db, self.env);
         if let Some(discovery) = &mut self.discovery {
             // Discovery depends only on substitutions and provenance. A
             // repeated witness still proves logical reachability, but needs
@@ -279,7 +280,8 @@ impl<'db> TabledEngine<'db> {
             discovery.record_recipe(key, &logical_key, branch, prerequisites);
             let answers = discovery.answers.entry(key.clone()).or_default();
             if let Some(previous) = answers.get(&logical_key) {
-                discovery.collapsed |= previous != &answer;
+                discovery.collapsed |= complete_answer_key(db, env, key, previous)
+                    != complete_answer_key(db, env, key, &answer);
             } else {
                 answers.insert(logical_key, answer.clone());
             }
@@ -498,16 +500,24 @@ impl<'db> ResolutionContext for TabledEngine<'db> {
             AnswerKey::Logical(self.logical_answer_key(&key.logical, answer))
         } else {
             // Equal-priority dictionaries include all prerequisite evidence.
-            AnswerKey::Complete(
-                answer.candidate.subst.clone(),
-                answer.candidate.evidence.dictionary_identity(&|pred| {
-                    self.env.local_givens(self.db).iter().any(|given| {
-                        canonicalize_local_given(self.db, *given, &key.logical) == pred
-                    })
-                }),
-            )
+            let (subst, identity) = complete_answer_key(self.db, self.env, &key.logical, answer);
+            AnswerKey::Complete(subst, identity)
         }
     }
+}
+
+fn complete_answer_key<'db>(
+    db: &'db dyn Db,
+    env: TraitEnvId<'db>,
+    key: &TableKey<'db>,
+    answer: &Answer<'db>,
+) -> (Substitution<'db>, evidence::DictionaryIdentity<'db>) {
+    let identity = answer.candidate.evidence.dictionary_identity(&|pred| {
+        env.local_givens(db)
+            .iter()
+            .any(|given| canonicalize_local_given(db, *given, key) == pred)
+    });
+    (answer.candidate.subst.clone(), identity)
 }
 
 /// Complete dictionaries are shared only in contexts with the same ancestors.

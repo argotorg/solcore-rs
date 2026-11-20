@@ -62,3 +62,25 @@ enum Color {
     Red,
     Green
 }
+
+trait C<t> where t: A {
+    function fc(x: t) returns (word);
+}
+
+enum Twin<a> {
+    Twin(a, a)
+}
+
+impl<a> A<Twin<a>> where a: A {
+    function fa(x: Twin<a>) returns (word) {
+        return 5;
+    }
+}
+
+// Both conditions give `a: A`, and either proof is the same dictionary, so the
+// impl above provides `Twin<a>: A`.
+impl<a> B<Twin<a>> where a: B, a: C {
+    function fb(x: Twin<a>) returns (word) {
+        return 6;
+    }
+}

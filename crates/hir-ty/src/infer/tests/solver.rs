@@ -1039,8 +1039,8 @@ fn tabled_solver_preserves_lower_priority_seeds_in_preference_cycles(fixture: Fi
     );
 }
 
-#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/solver/superclass_dictionary_identity_retains_given_origins_and_target_substitutions", glob: "main.sol")]
-fn superclass_dictionary_identity_retains_given_origins_and_target_substitutions(
+#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/solver/superclass_dictionary_identity_merges_given_origins_but_keeps_target_substitutions", glob: "main.sol")]
+fn superclass_dictionary_identity_merges_given_origins_but_keeps_target_substitutions(
     fixture: Fixture<&str>,
 ) {
     let db = TestDb::default();
@@ -1060,8 +1060,9 @@ fn superclass_dictionary_identity_retains_given_origins_and_target_substitutions
     );
     assert!(matches!(solution, Solution::Unique { .. }), "{solution:?}");
 
-    // Two superclass paths from D are one dictionary; an independent E
-    // assumption is a different dictionary even though its target is equal.
+    // Two superclass paths from D and the path from an independent E assumption
+    // reach the same target, so they are one dictionary: coherence gives
+    // `A<word>` a single impl once the rigid variable is instantiated.
     let env = trait_env_with_givens(&db, base, vec![first, given("E", Ty::word(&db))]);
     let solution = solve_class_goal(
         &db,
@@ -1070,7 +1071,7 @@ fn superclass_dictionary_identity_retains_given_origins_and_target_substitutions
         rigid,
         vec![Ty::word(&db)],
     );
-    assert!(matches!(solution, Solution::Ambiguous { candidates } if candidates.len() == 2));
+    assert!(matches!(solution, Solution::Unique { .. }), "{solution:?}");
 
     // Projection identity includes the target type arguments, including when
     // the surrounding query infers one of them.
@@ -1091,6 +1092,61 @@ fn superclass_dictionary_identity_retains_given_origins_and_target_substitutions
     };
     assert_eq!(candidates.len(), 2);
     assert_ne!(candidates[0].subst, candidates[1].subst);
+}
+
+#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/solver/redundant_local_givens_entail_one_dictionary", glob: "main.sol")]
+fn redundant_local_givens_entail_one_dictionary(fixture: Fixture<&str>) {
+    let db = TestDb::default();
+    let module = parse_module(&db, fixture.content());
+    let resolution = hir_nameres::resolve_module(&db, module);
+    let base = trait_env(&db, module, &resolution);
+    let rigid = Ty::bound(&db, 0);
+    let given = |name| Pred::in_class(&db, class_id(&db, module, name), rigid, Vec::new());
+    let a = class_id(&db, module, "A");
+
+    // A stated assumption next to a subtrait, and two subtraits, give one
+    // dictionary in either order, including for a comptime goal.
+    for givens in [
+        vec![given("A"), given("B")],
+        vec![given("B"), given("A")],
+        vec![given("B"), given("C")],
+        vec![given("C"), given("B")],
+    ] {
+        let env = trait_env_with_givens(&db, base, givens);
+        for main in [rigid, Ty::comptime(&db, rigid)] {
+            let solution = solve_class_goal(&db, env, a, main, Vec::new());
+            assert!(matches!(solution, Solution::Unique { .. }), "{solution:?}");
+        }
+    }
+}
+
+#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/solver/redundant_given_chains_resolve_within_budget", glob: "main.sol")]
+fn redundant_given_chains_resolve_within_budget(fixture: Fixture<&str>) {
+    let db = TestDb::default();
+    let module = parse_module(&db, fixture.content());
+    let resolution = hir_nameres::resolve_module(&db, module);
+    let base = trait_env(&db, module, &resolution);
+    let rigid = Ty::bound(&db, 0);
+
+    // Every `S_i` reaches `A` through each shorter chain. All of those proofs
+    // are one dictionary, so the solver must not enumerate them.
+    let givens = (0..64)
+        .map(|index| {
+            Pred::in_class(
+                &db,
+                class_id(&db, module, &format!("S{index}")),
+                rigid,
+                Vec::new(),
+            )
+        })
+        .collect();
+    let env = trait_env_with_givens(&db, base, givens);
+    let report = solve_class_report(&db, env, class_id(&db, module, "A"), rigid, Vec::new());
+    assert!(!report.exhausted, "{report:?}");
+    assert!(
+        matches!(report.solution, Solution::Unique { .. }),
+        "{report:?}"
+    );
 }
 
 #[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/solver/superclass_cycles_preserve_one_local_dictionary_identity", glob: "*.sol")]
@@ -1278,31 +1334,53 @@ fn contextual_proofs_preserve_rigid_roots_across_flexible_child_goals(fixture: F
         let base = trait_env(&db, module, &resolution);
         let rigid = Ty::bound(&db, rigid_index);
         let given = |name, args| Pred::in_class(&db, class_id(&db, module, name), rigid, args);
-        let env = trait_env_with_givens(
-            &db,
-            base,
-            vec![given("Seed", Vec::new()), given("Fix", vec![Ty::word(&db)])],
-        );
-        let report = solve_class_report(&db, env, class_id(&db, module, "C"), rigid, Vec::new());
-        assert!(!report.exhausted, "{report:?}");
-        let Solution::Ambiguous { candidates } = report.solution else {
-            panic!("expected independent Seed and Fix dictionaries: {report:?}")
-        };
-        assert_eq!(candidates.len(), 2);
+        let c = Pred::in_class(&db, class_id(&db, module, "C"), rigid, Vec::new());
+        let fix = given("Fix", vec![Ty::word(&db)]);
+
         // The Sub projection root is fixed, but its child Sub<rigid, r>
         // introduces a flexible r, solved by projecting the Fix assumption,
         // and shifts the rigid variable's canonical index. The child also
         // projects back to C through C's Sub<word> superclass. That cycle
-        // must terminate without merging the independent Seed dictionary.
-        for candidate in candidates {
-            let Evidence::Superclass { pred, .. } = candidate.evidence else {
-                panic!("expected superclass dictionary")
-            };
-            assert_eq!(
-                pred,
-                Pred::in_class(&db, class_id(&db, module, "C"), rigid, Vec::new())
-            );
-        }
+        // must terminate.
+        let env = trait_env_with_givens(&db, base, vec![fix]);
+        let report = solve_class_report(&db, env, class_id(&db, module, "C"), rigid, Vec::new());
+        assert!(!report.exhausted, "{report:?}");
+        assert!(
+            matches!(
+                &report.solution,
+                Solution::Unique {
+                    evidence: Evidence::Superclass { pred, child, .. },
+                    ..
+                } if *pred == c && matches!(
+                    &**child,
+                    Evidence::Superclass { pred, child, .. }
+                        if *pred == Pred::in_class(
+                            &db,
+                            class_id(&db, module, "Sub"),
+                            rigid,
+                            vec![Ty::word(&db)],
+                        ) && matches!(**child, Evidence::Builtin { pred } if pred == fix)
+                )
+            ),
+            "{report:?}"
+        );
+        assert!(report.stats.answers_found < 40);
+
+        // With Seed as well, both proofs reach `rigid: C` and are one
+        // dictionary.
+        let env = trait_env_with_givens(&db, base, vec![given("Seed", Vec::new()), fix]);
+        let report = solve_class_report(&db, env, class_id(&db, module, "C"), rigid, Vec::new());
+        assert!(!report.exhausted, "{report:?}");
+        assert!(
+            matches!(
+                &report.solution,
+                Solution::Unique {
+                    evidence: Evidence::Superclass { pred, .. },
+                    ..
+                } if *pred == c
+            ),
+            "{report:?}"
+        );
         assert!(report.stats.answers_found < 40);
     }
 }

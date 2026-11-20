@@ -1,13 +1,26 @@
 use super::*;
 
-/// Dictionary identity, separate from the path used to discover it. Projecting
-/// the same predicate from one local dictionary is independent of the sequence
-/// of superclass edges; other dictionaries retain their complete prerequisites.
+/// Dictionary identity, separate from the path used to discover it. A
+/// dictionary rooted in local givens is identified by its predicate alone,
+/// whichever given and superclass edges lead to it. This relies on two facts:
+///
+/// - coherence selects a single impl for each concrete predicate, the same in
+///   every module (impl locality, overlap checks, and defaults that never
+///   decide a type-parameter goal);
+/// - specialization normalizes every superclass projection to the dictionary
+///   of that impl, so the given a proof starts from does not change the code.
+///
+/// Coherence has one known gap: generic code commits to a default impl at its
+/// definition, while a conditional default may apply once the type parameter
+/// is instantiated. Two givens can then carry different impls for the same
+/// predicate. Specialization reports that conflict as `SC0416` when it
+/// instantiates the function that receives both
+/// (`hull/redundant_given_incoherent_conditional_default` in the uitest
+/// fixtures). Other dictionaries retain their complete prerequisites.
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub(super) enum DictionaryIdentity<'db> {
     Given {
         pred: Pred<'db>,
-        source: Pred<'db>,
     },
     Instance {
         instance: DefId<'db>,
@@ -71,16 +84,14 @@ impl<'db> Evidence<'db> {
         &self,
         is_given: &impl Fn(Pred<'db>) -> bool,
     ) -> DictionaryIdentity<'db> {
-        if let Some(source) = evidence_root_given(self)
-            && is_given(source)
-        {
+        if evidence_root_given(self).is_some_and(is_given) {
             let pred = match self {
                 Self::Builtin { pred } | Self::Superclass { pred, .. } => *pred,
                 _ => {
                     unreachable!("only given dictionaries and their projections have a given root")
                 }
             };
-            return DictionaryIdentity::Given { pred, source };
+            return DictionaryIdentity::Given { pred };
         }
         match self {
             Self::Instance {
@@ -402,7 +413,10 @@ pub(super) fn clause_evidence<'db>(
             args: subst.args_for_vars(db, &clause.binder_vars),
             sub_evidence,
         },
-        ClauseOrigin::Builtin | ClauseOrigin::Given => Evidence::Builtin { pred: goal },
+        ClauseOrigin::Builtin => Evidence::Builtin { pred: goal },
+        ClauseOrigin::Given => Evidence::Builtin {
+            pred: strip_comptime_pred(db, goal),
+        },
         ClauseOrigin::Derived(kind) => Evidence::Derived {
             kind,
             pred: goal,
@@ -410,7 +424,7 @@ pub(super) fn clause_evidence<'db>(
         },
         ClauseOrigin::Superclass(class) => Evidence::Superclass {
             class,
-            pred: goal,
+            pred: strip_comptime_pred(db, goal),
             child: Box::new(
                 sub_evidence
                     .into_iter()

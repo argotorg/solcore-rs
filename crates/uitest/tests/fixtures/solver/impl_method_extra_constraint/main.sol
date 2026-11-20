@@ -54,3 +54,16 @@ impl<a> D<Box<a>> where a: D {
         return 3;
     }
 }
+
+trait G<t> where t: D {}
+
+enum Trio<a> {
+    Trio(a, a, a)
+}
+
+// `a: D` already follows from either condition, `a: E` or `a: G`.
+impl<a> C<Trio<a>> where a: E, a: G {
+    function c(x: Trio<a>) returns (word) where a: D {
+        return 4;
+    }
+}

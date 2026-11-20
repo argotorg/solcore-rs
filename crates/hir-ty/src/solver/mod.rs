@@ -23,8 +23,10 @@
 //! clause origins. Shared proof recipes answer finite-witness queries without
 //! enumerating every prerequisite combination. This keeps necessary
 //! recursive seeds inside cycles without multiplying dominated uses outside
-//! them. Superclass paths to the same predicate from one local given identify
-//! one dictionary. Both passes share the same work budget.
+//! them. All proofs of the same predicate from local givens, through any
+//! given and any superclass path, identify one dictionary: coherence gives the
+//! predicate a single impl once specialization fixes its types. Both passes
+//! share the same work budget.
 //!
 //! Because repeated subgoals are shared within each pass, diamond-shaped constraint
 //! graphs are resolved without the exponential blow-up of naive backtracking,
@@ -127,7 +129,9 @@ use r#match::{
     ty_equal, unify_ty,
 };
 pub(crate) use r#match::{clause_conditions_for_goal, scheme_conditions_for_type};
-use r#match::{collect_evidence_vars, collect_pred_vars, collect_ty_vars, head_can_unify};
+use r#match::{
+    collect_evidence_vars, collect_pred_vars, collect_ty_vars, head_can_unify, strip_comptime_pred,
+};
 use module_lookup::{
     ident_text, module_for_def, scope_resolution_for_module_id, type_var_bindings, unique_modules,
     unique_preds, visible_class_modules,
