@@ -1330,15 +1330,34 @@ contract CrossFile {
         if program["environment"] != environment {
             return Err("wrong program environment");
         }
-        let add = program["instructions"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|row| row["operation"]["mnemonic"] == "ADD" && row["context"]["code"] == expected)
-            .ok_or("missing ADD at the exact source span")?;
-        let pc = add["offset"].as_u64().unwrap() as usize;
-        if evm_opcode_at(bin, pc) != Some(0x01) {
-            return Err("ADD offset is not an ADD instruction boundary");
+        let mut add_pcs = Vec::new();
+        let mut pushes_13 = false;
+        for (pc, opcode, operand) in evm_instructions(bin) {
+            if opcode == 0x01 && pushes_13 {
+                add_pcs.push(pc as u64);
+            }
+            pushes_13 = operand.trim_start_matches('0') == "d";
+        }
+        let [pc] = add_pcs.as_slice() else {
+            return Err("expected exactly one ADD after a push of 13 in the executable section");
+        };
+        let instructions = program["instructions"].as_array().unwrap();
+        let mut rows = instructions.iter().filter(|row| row["offset"] == *pc);
+        let add = rows
+            .next()
+            .ok_or("missing row for the independently decoded ADD")?;
+        if rows.next().is_some() || add["operation"]["mnemonic"] != "ADD" {
+            return Err("ambiguous or incorrect instruction at the independently decoded ADD");
+        }
+        if add["context"]["code"] != expected {
+            return Err("incorrect source span at the independently decoded ADD");
+        }
+        if instructions.iter().any(|row| {
+            row["offset"] != *pc
+                && row["operation"]["mnemonic"] == "ADD"
+                && row["context"]["code"] == expected
+        }) {
+            return Err("unrelated ADD claims the same source span");
         }
         let range = &add["context"]["code"]["range"];
         let start = range["offset"].as_u64().unwrap() as usize;
@@ -1384,7 +1403,31 @@ contract CrossFile {
         }
         assert_eq!(
             check_add(&wrong_file, environment, bin),
-            Err("missing ADD at the exact source span")
+            Err("incorrect source span at the independently decoded ADD")
+        );
+
+        let mut misplaced = program.clone();
+        let rows = misplaced["instructions"].as_array_mut().unwrap();
+        let correct = rows
+            .iter()
+            .position(|row| {
+                row["operation"]["mnemonic"] == "ADD" && row["context"]["code"] == expected
+            })
+            .expect("the imported ADD has the expected source span");
+        let unrelated = rows
+            .iter()
+            .enumerate()
+            .position(|(index, row)| index != correct && row["operation"]["mnemonic"] == "ADD")
+            .expect("the fixture has a second ADD");
+        rows[unrelated]["context"]["code"] = expected.clone();
+        assert_eq!(
+            check_add(&misplaced, environment, bin),
+            Err("unrelated ADD claims the same source span")
+        );
+        misplaced["instructions"][correct]["context"] = serde_json::Value::Null;
+        assert_eq!(
+            check_add(&misplaced, environment, bin),
+            Err("incorrect source span at the independently decoded ADD")
         );
         assert_eq!(
             check_add(&programs[1 - index], environment, bin),
@@ -1399,8 +1442,10 @@ contract CrossFile {
         ]
     );
     // PUSH1's immediate has the same value as ADD's opcode.
-    assert_eq!(evm_opcode_at("600101", 1), None);
-    assert_eq!(evm_opcode_at("600101", 2), Some(0x01));
+    assert_eq!(
+        evm_instructions("600101").collect::<Vec<_>>(),
+        [(0, 0x60, "01"), (2, 0x01, "")]
+    );
 
     // solc uses the source table of each object. Check the helper's
     // annotation is attached to its ADD separately in both objects.
@@ -1431,19 +1476,18 @@ contract CrossFile {
     let _ = fs::remove_dir_all(&dir);
 }
 
-fn evm_opcode_at(hex: &str, target: usize) -> Option<u8> {
+fn evm_instructions(hex: &str) -> impl Iterator<Item = (usize, u8, &str)> {
     let mut pc = 0;
-    while pc <= target {
-        let opcode = u8::from_str_radix(hex.get(pc * 2..pc * 2 + 2)?, 16).ok()?;
-        if pc == target {
-            return Some(opcode);
-        }
-        pc += match opcode {
-            0x60..=0x7f => usize::from(opcode - 0x5f) + 1,
-            _ => 1,
+    std::iter::from_fn(move || {
+        let at = pc;
+        let opcode = u8::from_str_radix(hex.get(at * 2..at * 2 + 2)?, 16).ok()?;
+        let immediate_bytes = match opcode {
+            0x60..=0x7f => usize::from(opcode - 0x5f),
+            _ => 0,
         };
-    }
-    None
+        pc += 1 + immediate_bytes;
+        Some((at, opcode, hex.get((at + 1) * 2..pc * 2)?))
+    })
 }
 
 #[test]
