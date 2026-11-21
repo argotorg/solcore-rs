@@ -3,6 +3,7 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     fmt::Write as _,
     fs, io,
+    io::Write as _,
     path::{Component, Path, PathBuf},
 };
 
@@ -35,7 +36,8 @@ pub(crate) fn emit_outputs(
     let mut outputs = Vec::new();
     collect_abi_outputs(db, entry, args, &mut outputs).map_err(BackendFailure::Message)?;
     let diagnostics = collect_backend_outputs(db, entry_file, args, &mut outputs)?;
-    write_outputs(outputs, args.output_dir.as_deref()).map_err(BackendFailure::Message)?;
+    write_outputs(outputs, args.output_dir.as_deref(), args.emit_bin)
+        .map_err(BackendFailure::Message)?;
     Ok(diagnostics)
 }
 
@@ -396,6 +398,7 @@ pub(crate) fn display_path(db: &DriverDb, url: &str) -> String {
 fn write_outputs(
     mut outputs: Vec<(EmitTarget, String)>,
     output_dir: Option<&Path>,
+    stage_files: bool,
 ) -> Result<(), String> {
     let mut destinations = BTreeSet::new();
     #[cfg(unix)]
@@ -443,6 +446,9 @@ fn write_outputs(
             ));
         }
     }
+    if stage_files {
+        return write_staged_outputs(outputs);
+    }
     for (target, content) in outputs {
         match target {
             EmitTarget::Stdout => print!("{content}"),
@@ -450,6 +456,70 @@ fn write_outputs(
         }
     }
     Ok(())
+}
+
+fn write_staged_outputs(outputs: Vec<(EmitTarget, String)>) -> Result<(), String> {
+    // Prepare every file before replacing any destination. Each rename replaces
+    // its own file, including a leaf symlink, without modifying a linked file.
+    let mut files = Vec::new();
+    for (target, content) in &outputs {
+        if let EmitTarget::File(path) = target {
+            let file = stage_output_file(path, content)
+                .map_err(|err| format!("failed to prepare `{}`: {err}", path.display()))?;
+            files.push((path, file));
+        }
+    }
+    for (path, file) in files {
+        file.persist(path)
+            .map_err(|err| format!("failed to replace `{}`: {}", path.display(), err.error))?;
+    }
+    for (target, content) in outputs {
+        if matches!(target, EmitTarget::Stdout) {
+            print!("{content}");
+        }
+    }
+    Ok(())
+}
+
+fn stage_output_file(path: &Path, content: &str) -> io::Result<tempfile::TempPath> {
+    let permissions = match fs::metadata(path) {
+        Ok(metadata) => {
+            if !metadata.is_file() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "destination is not a regular file",
+                ));
+            }
+            let permissions = metadata.permissions();
+            if permissions.readonly() {
+                return Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    "destination is read-only",
+                ));
+            }
+            Some(permissions)
+        }
+        Err(err) if err.kind() == io::ErrorKind::NotFound => None,
+        Err(err) => return Err(err),
+    };
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    fs::create_dir_all(parent)?;
+    let mut builder = tempfile::Builder::new();
+    builder.prefix(".solcore-");
+    #[cfg(unix)]
+    if permissions.is_none() {
+        use std::os::unix::fs::PermissionsExt;
+        builder.permissions(fs::Permissions::from_mode(0o666));
+    }
+    let mut file = builder.tempfile_in(parent)?;
+    file.write_all(content.as_bytes())?;
+    if let Some(permissions) = permissions {
+        file.as_file().set_permissions(permissions)?;
+    }
+    Ok(file.into_temp_path())
 }
 
 /// Resolve aliases even when the output or a symlink target does not exist yet.

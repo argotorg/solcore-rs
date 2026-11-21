@@ -1111,6 +1111,100 @@ fn cli_plain_rebuild_preserves_existing_ethdebug_artifacts() {
 }
 
 #[test]
+fn cli_failed_ethdebug_refresh_preserves_previous_output() {
+    let dir = temp_dir("ethdebug-failed-refresh");
+    fs::create_dir_all(&dir).unwrap();
+    let input = dir.join("main.sol");
+    let out = dir.join("out");
+    let source =
+        "pragma solcore; contract C { function main() public returns (word) { return 13; } }";
+    fs::write(&input, source).unwrap();
+    let build = || {
+        Command::new(env!("CARGO_BIN_EXE_solcore-driver"))
+            .args(["--ethdebug", "--abi", "--std-root"])
+            .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std"))
+            .arg("-o")
+            .arg(&out)
+            .arg(&input)
+            .output()
+            .unwrap()
+    };
+    let first_build = build();
+    assert!(first_build.status.success(), "{first_build:?}");
+    let previous = fs::read_dir(&out)
+        .unwrap()
+        .map(|entry| {
+            let path = entry.unwrap().path();
+            let bytes = fs::read(&path).unwrap();
+            (path, bytes)
+        })
+        .collect::<Vec<_>>();
+
+    fs::write(&input, source.replace("13", "17")).unwrap();
+    let resources = out.join("ethdebug_resources.json");
+    let permissions = fs::metadata(&resources).unwrap().permissions();
+    let mut read_only = permissions.clone();
+    read_only.set_readonly(true);
+    fs::set_permissions(&resources, read_only).unwrap();
+    let rejected = build();
+    fs::set_permissions(&resources, permissions).unwrap();
+
+    assert!(!rejected.status.success(), "{rejected:?}");
+    let stderr = String::from_utf8_lossy(&rejected.stderr);
+    assert!(stderr.contains("ethdebug_resources.json"), "{stderr}");
+    assert!(stderr.contains("read-only"), "{stderr}");
+    assert_eq!(fs::read_dir(&out).unwrap().count(), previous.len());
+    for (path, bytes) in previous {
+        assert_eq!(fs::read(&path).unwrap(), bytes, "{}", path.display());
+    }
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[cfg(unix)]
+#[test]
+fn cli_bytecode_output_replaces_file_aliases_without_changing_their_targets() {
+    let dir = temp_dir("ethdebug-linked-bytecode");
+    let debug = dir.join("debug");
+    let plain = dir.join("plain");
+    fs::create_dir_all(&plain).unwrap();
+    let input = dir.join("main.sol");
+    let source =
+        "pragma solcore; contract C { function main() public returns (word) { return 13; } }";
+    fs::write(&input, source).unwrap();
+    let build = |mode, out: &Path| {
+        Command::new(env!("CARGO_BIN_EXE_solcore-driver"))
+            .args([mode, "--std-root"])
+            .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std"))
+            .arg("-o")
+            .arg(out)
+            .arg(&input)
+            .output()
+            .unwrap()
+    };
+    let first_build = build("--ethdebug", &debug);
+    assert!(first_build.status.success(), "{first_build:?}");
+    let old_creation = fs::read(debug.join("C.bin")).unwrap();
+    let old_runtime = fs::read(debug.join("C.bin-runtime")).unwrap();
+    std::os::unix::fs::symlink("../debug/C.bin", plain.join("C.bin")).unwrap();
+    fs::hard_link(debug.join("C.bin-runtime"), plain.join("C.bin-runtime")).unwrap();
+
+    fs::write(&input, source.replace("13", "17")).unwrap();
+    let rebuilt = build("--bin", &plain);
+    assert!(rebuilt.status.success(), "{rebuilt:?}");
+    assert!(
+        !fs::symlink_metadata(plain.join("C.bin"))
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
+    assert_eq!(fs::read(debug.join("C.bin")).unwrap(), old_creation);
+    assert_eq!(fs::read(debug.join("C.bin-runtime")).unwrap(), old_runtime);
+    assert_ne!(fs::read(plain.join("C.bin")).unwrap(), old_creation);
+    assert_ne!(fs::read(plain.join("C.bin-runtime")).unwrap(), old_runtime);
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn cli_rejects_output_aliases_before_writing_artifacts() {
     let dir = temp_dir("ethdebug-output-alias");
     let out = dir.join("out");

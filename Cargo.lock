@@ -3538,6 +3538,7 @@ dependencies = [
  "solcore-specialize",
  "solcore-vfs",
  "solcore-yul",
+ "tempfile",
  "tracing",
  "tracing-subscriber",
  "url",
