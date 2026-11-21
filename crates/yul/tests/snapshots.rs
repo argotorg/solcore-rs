@@ -168,6 +168,92 @@ fn doc_add1_yul_snapshot() {
 }
 
 #[test]
+fn doc_add1_yul_locations_snapshot() {
+    let fixture =
+        repo_root().join("crates/parser/tests/fixtures/corpus/ok/test/examples/cases/Add1.sol");
+    let (db, output) = specialize_fixture(&fixture);
+    insta::assert_snapshot!(
+        "doc_add1_yul_locations_snapshot",
+        render_output_with_locations(db, output)
+    );
+}
+
+#[test]
+fn locations_start_every_function_body_with_an_annotation() {
+    let (db, output) = specialize_src(
+        "first_lines",
+        r#"
+pragma solcore;
+import * from std;
+import * from std.dispatch;
+
+contract FirstLines {
+  function id(x : uint256) public returns (uint256) {
+    return x;
+  }
+}
+"#,
+    );
+    let yul = render_output_with_locations(db, output);
+    let lines: Vec<_> = yul.lines().map(str::trim).collect();
+    let mut functions = 0;
+    for pair in lines.windows(2) {
+        if pair[0].starts_with("function ") {
+            functions += 1;
+            assert!(pair[1].starts_with("/// @src "), "{pair:?}");
+        }
+    }
+    assert!(functions > 10, "{functions} functions");
+}
+
+/// The condition of a loop is code of the loop. After the statements of the
+/// `init` and `post` blocks, solc would attribute it to the last of them, so
+/// the annotation of the loop itself must come back before it.
+#[test]
+fn locations_restore_the_loop_annotation_after_nested_statements() {
+    let mut checked = 0;
+    for fixture in ["forloops", "asm-break-continue-leave"] {
+        let path = repo_root().join("tests/e2e").join(fixture).join("main.sol");
+        let (db, output) = specialize_fixture(&path);
+        let yul = render_output_with_locations(db, output);
+        let lines: Vec<_> = yul.lines().collect();
+        for (at, line) in lines.iter().enumerate() {
+            if line.trim() != "for {" {
+                continue;
+            }
+            let indent = &line[..line.len() - line.trim_start().len()];
+            let find = |from: usize, text: String| {
+                (from + 1..lines.len())
+                    .find(|&i| lines[i].starts_with(&text))
+                    .unwrap()
+            };
+            let cond = find(at, format!("{indent}}} "));
+            let post_end = find(cond, format!("{indent}}} {{"));
+            // A Hull loop repeats its condition in `post`; a loop of inline Yul does not.
+            let (init, post) = (&lines[at + 1..cond], &lines[cond + 1..post_end]);
+            let blocks: &[&[&str]] = if fixture == "forloops" {
+                &[init, post]
+            } else {
+                &[init]
+            };
+            for block in blocks {
+                let last = block.iter().rev().find(|line| line.contains("/// @src "));
+                if let Some(last) = last {
+                    assert_eq!(
+                        last.trim(),
+                        lines[at - 1].trim(),
+                        "{fixture}: {}",
+                        lines[at + 1..=post_end].join("\n")
+                    );
+                    checked += 1;
+                }
+            }
+        }
+    }
+    assert!(checked >= 5, "{checked} blocks checked");
+}
+
+#[test]
 fn dispatch_basic_shape_yul_snapshot() {
     insta::assert_snapshot!(
         "dispatch_basic_shape",
@@ -220,6 +306,7 @@ fn ink_binary_sum_preserves_nested_layout_snapshot() {
                 stmts: Vec::new(),
                 functions: vec![HullFunction {
                     span: sp,
+                    generated: None,
                     name: "pick_third".into(),
                     args: Vec::new(),
                     ret: target.clone(),
@@ -267,6 +354,7 @@ fn if_expression_branches_are_lowered_inside_switch_snapshot() {
                 functions: vec![
                     HullFunction {
                         span: sp,
+                        generated: None,
                         name: "then_value".into(),
                         args: Vec::new(),
                         ret: word.clone(),
@@ -277,6 +365,7 @@ fn if_expression_branches_are_lowered_inside_switch_snapshot() {
                     },
                     HullFunction {
                         span: sp,
+                        generated: None,
                         name: "else_value".into(),
                         args: Vec::new(),
                         ret: word.clone(),
@@ -287,6 +376,7 @@ fn if_expression_branches_are_lowered_inside_switch_snapshot() {
                     },
                     HullFunction {
                         span: sp,
+                        generated: None,
                         name: "main".into(),
                         args: Vec::new(),
                         ret: word.clone(),
@@ -358,6 +448,7 @@ fn word_literals_wrap_to_256_bits_in_yul_expressions_and_patterns() {
                 functions: vec![
                     HullFunction {
                         span: sp,
+                        generated: None,
                         name: "exact".into(),
                         args: Vec::new(),
                         ret: word.clone(),
@@ -368,6 +459,7 @@ fn word_literals_wrap_to_256_bits_in_yul_expressions_and_patterns() {
                     },
                     HullFunction {
                         span: sp,
+                        generated: None,
                         name: "plus".into(),
                         args: Vec::new(),
                         ret: word.clone(),
@@ -378,6 +470,7 @@ fn word_literals_wrap_to_256_bits_in_yul_expressions_and_patterns() {
                     },
                     HullFunction {
                         span: sp,
+                        generated: None,
                         name: "pick".into(),
                         args: vec![HullArg {
                             span: sp,
@@ -469,6 +562,7 @@ fn copy_locs_rejects_arity_mismatch() {
                 span: sp,
                 functions: vec![HullFunction {
                     span: sp,
+                    generated: None,
                     name: "bad".into(),
                     args: Vec::new(),
                     ret: HullTy::unit(sp),
@@ -520,6 +614,7 @@ fn zero_sized_structured_return_needs_no_result_binding() {
                 span: sp,
                 functions: vec![HullFunction {
                     span: sp,
+                    generated: None,
                     name: "zero".into(),
                     args: Vec::new(),
                     ret: zero_sized.clone(),
@@ -577,6 +672,7 @@ fn assembly_calls_use_checked_hull_function_resolution() {
     };
     let function = |callee: &str, ret, body| HullFunction {
         span: sp,
+        generated: None,
         name: callee.into(),
         args: vec![],
         ret,
@@ -833,6 +929,7 @@ fn top_level_no_object_hull_wraps_like_assemble_hs_snapshot() {
         entry_points: vec!["main".into()],
         functions: vec![HullFunction {
             span: sp,
+            generated: None,
             name: "main".into(),
             args: Vec::new(),
             ret: word.clone(),
@@ -1171,6 +1268,27 @@ fn render_output_with_object(
     );
     solcore_yul::render_hull_program_object(db, &emitted.program, object_name)
         .map_err(|err| err.message().to_owned())
+}
+
+/// Renders with source locations. Sources are named by file name only, so the
+/// output does not depend on where the repository is checked out.
+fn render_output_with_locations(db: &'static TestDb, output: SpecializeOutput<'static>) -> String {
+    assert_eq!(output.diagnostics, Vec::new(), "specialization diagnostics");
+    let emitted = hull::emit_module(db, &output.module, hull::EmitOptions::default());
+    assert_eq!(emitted.diagnostics, Vec::new(), "Hull emission diagnostics");
+    let table = hull::origin::SourceTable::from_program(db, &emitted.program);
+    let sources: Vec<_> = table
+        .entries()
+        .map(|(id, url, _)| (id, url.rsplit('/').next().unwrap().to_owned()))
+        .collect();
+    solcore_yul::render_hull_program_object_with_locations(
+        db,
+        &emitted.program,
+        None,
+        &table,
+        &sources,
+    )
+    .expect("Yul translation")
 }
 
 fn specialize_src(name: &str, src: &str) -> (&'static TestDb, SpecializeOutput<'static>) {

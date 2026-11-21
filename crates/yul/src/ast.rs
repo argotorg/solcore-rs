@@ -108,6 +108,11 @@ pub enum Stmt {
     Continue,
     Leave,
     Comment(String),
+    /// Source location annotation, printed as a `/// @src` comment. solc
+    /// applies it to everything that follows until the next annotation.
+    /// `Some((id, start, end))` is a source id and a byte range; `None` is
+    /// printed as `-1:-1:-1` and marks code that has no source location.
+    SrcLoc(Option<(u32, u32, u32)>),
     Expr(Expr),
 }
 

@@ -286,6 +286,10 @@ pub enum MonoFunctionOrigin<'db> {
         target_index: u32,
         method: String,
     },
+    /// A struct field getter or setter built for field accesses. One function
+    /// serves every access of that field of that struct type, so it belongs to
+    /// no single access.
+    StructAccessor,
     External,
 }
 

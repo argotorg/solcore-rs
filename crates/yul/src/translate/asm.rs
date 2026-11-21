@@ -25,10 +25,17 @@ impl<'db> Translator<'db> {
         asm: &mut AsmScopes,
     ) -> Result<Vec<Stmt>, TranslationError> {
         self.predeclare_yul_functions(stmts, asm)?;
-        stmts
-            .iter()
-            .map(|stmt| self.convert_yul_stmt(stmt, asm))
-            .collect()
+        let mut out = Vec::new();
+        for stmt in stmts {
+            // A definition has no origin of its own, as in the Sonatina route.
+            out.extend(if matches!(stmt.kind, YulStmtKind::FunctionDef { .. }) {
+                self.no_src_loc()
+            } else {
+                self.src_loc(stmt.span)?
+            });
+            out.push(self.convert_yul_stmt(stmt, asm)?);
+        }
+        Ok(out)
     }
 
     fn predeclare_yul_functions(
@@ -114,7 +121,12 @@ impl<'db> Translator<'db> {
                 body,
             } => {
                 asm.push_scope();
-                let init = self.convert_yul_stmts(init, asm)?;
+                let mut init = self.convert_yul_stmts(init, asm)?;
+                // The condition belongs to the loop, not to the last statement
+                // of `init`.
+                if !init.is_empty() {
+                    init.extend(self.src_loc(stmt.span)?);
+                }
                 let cond = self.convert_yul_expr(cond, asm)?;
 
                 asm.push_scope();

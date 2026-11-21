@@ -10,6 +10,7 @@ rust-version.workspace = true
 hir = { workspace = true }
 hull = { path = "../hull", package = "solcore-hull" }
 smallvec = { workspace = true }
+sonatina-codegen = { workspace = true }
 sonatina-ir = { workspace = true }
 sonatina-triple = { workspace = true }
 sonatina-verifier = { workspace = true }
@@ -22,5 +23,5 @@ nameres = { workspace = true }
 parser = { workspace = true }
 salsa = { workspace = true }
 solcore-test-utils = { path = "../test-utils" }
-sonatina-codegen = { workspace = true }
 specialize = { path = "../specialize", package = "solcore-specialize" }
+yul = { path = "../yul", package = "solcore-yul" }

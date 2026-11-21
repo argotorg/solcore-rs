@@ -1,0 +1,60 @@
+---
+source: crates/yul/tests/snapshots.rs
+expression: "render_output_with_locations(db, output)"
+---
+/// @use-src 0:"Add1.sol"
+object "Add1Deploy" {
+  code {
+    /// @src -1:-1:-1
+    function usr$Add1_Add1__start_d2d7f074c() {
+      /// @src -1:-1:-1
+      /// @src -1:-1:-1
+      /// @src -1:-1:-1
+      mstore(64, memoryguard(128))
+      /// @src -1:-1:-1
+      if lt(codesize(), datasize("Add1Deploy")) {
+        /// @src -1:-1:-1
+        revert(0, 0)
+      }
+      /// @src -1:-1:-1
+      /// @src -1:-1:-1
+      if callvalue() {
+        /// @src -1:-1:-1
+        mstore(0, 0xb5988ea3)
+        /// @src -1:-1:-1
+        revert(28, 4)
+      }
+      /// @src -1:-1:-1
+      /// @src -1:-1:-1
+      /// @src -1:-1:-1
+      /// @src -1:-1:-1
+      let asm$size_0 := datasize("Add1")
+      /// @src -1:-1:-1
+      codecopy(0, dataoffset("Add1"), asm$size_0)
+      /// @src -1:-1:-1
+      return(0, asm$size_0)
+    }
+    /// @src -1:-1:-1
+    usr$Add1_Add1__start_d2d7f074c()
+  }
+  /// @use-src 0:"Add1.sol"
+  object "Add1" {
+    code {
+      /// @src -1:-1:-1
+      function usr$Add1_Add1_main_dac62ccff() -> gen$result_1 {
+        /// @src -1:-1:-1
+        /// @src 0:85:99
+        let src$res_2
+        /// @src 0:108:158
+        /// @src 0:131:148
+        src$res_2 := add(40, 2)
+        /// @src 0:167:178
+        gen$result_1 := 42
+        leave
+      }
+      /// @src -1:-1:-1
+      let _v0
+      _v0 := usr$Add1_Add1_main_dac62ccff()
+    }
+  }
+}

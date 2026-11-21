@@ -7,6 +7,7 @@
 
 mod args;
 mod db;
+mod debug_info;
 mod diagnostics;
 mod emit;
 mod modules;
