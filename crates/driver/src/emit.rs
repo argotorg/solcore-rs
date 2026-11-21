@@ -524,6 +524,9 @@ fn stage_output_file(path: &Path, content: &str) -> io::Result<tempfile::TempPat
 
 /// Resolve aliases even when the output or a symlink target does not exist yet.
 fn output_identity(absolute: &Path, symlinks: u32) -> io::Result<PathBuf> {
+    #[cfg(windows)]
+    const ERROR_NOT_A_REPARSE_POINT: i32 = 4390;
+
     if symlinks >= 40 {
         return Err(io::Error::other("too many output symlinks"));
     }
@@ -547,6 +550,9 @@ fn output_identity(absolute: &Path, symlinks: u32) -> io::Result<PathBuf> {
                             err.kind(),
                             io::ErrorKind::NotFound | io::ErrorKind::InvalidInput
                         ) => {}
+                    // Windows returns this for ordinary files and directories.
+                    #[cfg(windows)]
+                    Err(err) if err.raw_os_error() == Some(ERROR_NOT_A_REPARSE_POINT) => {}
                     Err(err) => return Err(err),
                 }
             }
