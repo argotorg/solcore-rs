@@ -1,0 +1,23 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/solver/derive_without_generic_in_scope/main.sol
+---
+error[SC0230]: cannot derive 'Eq' for type 'Missing': deriving it needs the Generic trait in scope; add 'import * from std.Generic;'
+  --> /main/main.sol:11:10
+   |
+10 | // `std.Generic` in scope even when the field type has the trait.
+11 | #[derive(Eq)]
+   |          ^^ invalid derive target
+12 | enum Missing {
+   |
+---
+
+error[SC0230]: cannot derive 'Eq' for type 'Plain': deriving it needs the Generic trait in scope; add 'import * from std.Generic;'
+  --> /main/main.sol:16:10
+   |
+15 |
+16 | #[derive(Eq)]
+   |          ^^ invalid derive target
+17 | enum Plain {
+   |

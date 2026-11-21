@@ -1,0 +1,13 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/solver/derive_without_generic_impl/main.sol
+---
+error[SC0230]: cannot derive 'Eq' for type 'Wrap': 'pragma no-generic-instance-for Wrap' removes its Generic impl, and no other impl provides one
+  --> /main/main.sol:9:10
+   |
+ 8 | // The pragma removes the synthesized Generic impl, and nothing replaces it.
+ 9 | #[derive(Eq)]
+   |          ^^ invalid derive target
+10 | enum Wrap {
+   |
