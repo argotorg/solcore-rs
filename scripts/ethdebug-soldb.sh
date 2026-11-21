@@ -3,9 +3,9 @@
 #
 #   scripts/ethdebug-soldb.sh DIR CONTRACT 'sig(types)' [ARG...] FILE:LINE
 #
-# SolDB does not check that the bytes it runs are the bytes a program
-# describes, so the offsets and mnemonics of both programs are first compared
-# with `cast disassemble` of the .bin files. Then DIR/CONTRACT.bin is deployed
+# First compare the programs' instruction offsets and mnemonics with
+# `cast disassemble` of the .bin files. A debugger that supports
+# ethdebug_bytecode.json also checks bytecode identity. Then DIR/CONTRACT.bin is deployed
 # on SolDB's local chain, the function is called, execution stops at FILE:LINE,
 # continues, and the source around the stop is listed.
 #

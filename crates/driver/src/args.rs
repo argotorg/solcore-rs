@@ -753,7 +753,8 @@ Options:
   --ethdebug                         Write ethdebug debug info and the .bin files for each contract
                                       into --output-dir: <contract>_ethdebug.json (creation),
                                       <contract>_ethdebug-runtime.json, ethdebug_resources.json and
-                                      ethdebug_compilation.json. Requires --opt-level 0 because
+                                      ethdebug_compilation.json and ethdebug_bytecode.json.
+                                      Requires --opt-level 0 because
                                       optimizations can merge code with different source locations
   --emit-yul-object NAME             Select one top-level Yul object for --emit-yul
   --pe-fuel N                        Set partial-evaluation total work fuel (default: 8192)

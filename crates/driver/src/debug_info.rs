@@ -3,6 +3,7 @@
 use ethdebug::{Compilation, Context, Environment, Program, Range, Source};
 use hir::keccak::keccak256;
 use hull::origin::{SourceCatalog, SourceTable};
+use serde_json::{Map, Value, json};
 use sonatina::{CompiledObject, CompiledSection, OptLevel};
 
 use crate::{
@@ -14,6 +15,8 @@ use crate::{
 /// text of Solidity sources to find local variables.
 const LANGUAGE: &str = "Core Solidity";
 const COMPILER_VERSION: &str = env!("CARGO_PKG_VERSION");
+// A program with this compilation ID requires the separate bytecode bindings.
+const COMPILATION_ID_PREFIX: &str = "solcore-bound-v1-";
 
 /// The name and text of every file `--ethdebug` writes besides the bytecode.
 ///
@@ -33,15 +36,16 @@ pub(crate) fn ethdebug_files(
     let compilation = compilation(&id, &sources);
 
     let mut out = vec![
-        (
+        json_file(
             "ethdebug_resources.json".to_owned(),
-            ethdebug::resources_json(&compilation),
-        ),
-        (
+            &ethdebug::resources_json(&compilation),
+        )?,
+        json_file(
             "ethdebug_compilation.json".to_owned(),
-            ethdebug::compilation_json(&compilation),
-        ),
+            &ethdebug::compilation_json(&compilation),
+        )?,
     ];
+    let mut bindings = Map::new();
     for object in objects {
         let definition = definition(db, table, program, object)?;
         let sections = [
@@ -65,12 +69,23 @@ pub(crate) fn ethdebug_files(
             };
             let json = ethdebug::program_json(&program, &sources)
                 .map_err(|err| format!("ethdebug program of `{}`: {err}", object.contract))?;
-            out.push((program_filename(&object.contract, environment), json));
+            let (name, text) = json_file(program_filename(&object.contract, environment), &json)?;
+            bindings.insert(
+                name.clone(),
+                json!({
+                    "program_hash": format!("0x{}", hex(&keccak256(text.as_bytes()))),
+                    "bytecode_hash": format!("0x{}", hex(&keccak256(&section.bytes))),
+                    "bytecode_length": section.bytes.len(),
+                }),
+            );
+            out.push((name, text));
         }
     }
-    out.into_iter()
-        .map(|(name, json)| json_file(name, &json))
-        .collect()
+    out.push(json_file(
+        "ethdebug_bytecode.json".to_owned(),
+        &Value::Object(bindings),
+    )?);
+    Ok(out)
 }
 
 pub(crate) fn program_filename(contract: &str, environment: Environment) -> String {
@@ -135,8 +150,8 @@ fn sources<'a>(
         .collect()
 }
 
-/// `solcore-` and the keccak hash of the compiler version, the optimization
-/// level and the path and text of each source, each length-prefixed.
+/// The artifact format prefix and the keccak hash of the compiler version, the
+/// optimization level and the path and text of each source, each length-prefixed.
 fn compilation_id(opt_level: OptLevel, sources: &[Source<'_>]) -> String {
     let mut data = Vec::new();
     let mut field = |text: &str| {
@@ -149,7 +164,7 @@ fn compilation_id(opt_level: OptLevel, sources: &[Source<'_>]) -> String {
         field(source.path);
         field(source.contents);
     }
-    format!("solcore-{}", hex(&keccak256(&data)))
+    format!("{COMPILATION_ID_PREFIX}{}", hex(&keccak256(&data)))
 }
 
 /// Source range of a declared contract or the synthetic standalone program.
