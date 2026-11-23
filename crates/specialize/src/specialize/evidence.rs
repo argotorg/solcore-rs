@@ -33,44 +33,6 @@ impl<'db> Driver<'db> {
         });
     }
 
-    pub(super) fn record_binding_instances(
-        &mut self,
-        module: Module<'db>,
-        bindings: &[(Pred<'db>, Evidence<'db>)],
-        span: Span<'db>,
-    ) {
-        let Some(base) = self.try_module_trait_env(module) else {
-            return;
-        };
-        let mut pending = bindings
-            .iter()
-            .map(|(_, evidence)| evidence.clone())
-            .collect::<Vec<_>>();
-        let mut visited = FxHashSet::default();
-        while let Some(evidence) = pending.pop() {
-            if !visited.insert(evidence.clone()) {
-                continue;
-            }
-            let Some(head) = self.dictionary_predicate(&evidence) else {
-                continue;
-            };
-            match &evidence {
-                Evidence::Instance { instance, .. } => {
-                    self.record_selected_instance(head, *instance, span);
-                }
-                Evidence::Derived { .. } => {}
-                Evidence::Builtin { .. }
-                | Evidence::Unavailable { .. }
-                | Evidence::Superclass { .. } => continue,
-            }
-            for pred in hir_ty::direct_superclass_predicates(self.db, base.base(self.db), head) {
-                if let Some(superclass) = self.superclass_instance_evidence(pred, &evidence) {
-                    pending.push(superclass);
-                }
-            }
-        }
-    }
-
     pub(super) fn resolve_class_method_call(
         &mut self,
         method: &str,

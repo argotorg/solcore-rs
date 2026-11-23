@@ -5,18 +5,13 @@ use super::*;
 /// whichever given and superclass edges lead to it. This relies on two facts:
 ///
 /// - coherence selects a single impl for each concrete predicate, the same in
-///   every module (impl locality, overlap checks, and defaults that never
-///   decide a type-parameter goal);
+///   every module (impl locality, overlap checks, and default impls that
+///   decide no goal on type parameters while an instantiation could select
+///   another impl for it);
 /// - specialization normalizes every superclass projection to the dictionary
 ///   of that impl, so the given a proof starts from does not change the code.
 ///
-/// Coherence has one known gap: generic code commits to a default impl at its
-/// definition, while a conditional default may apply once the type parameter
-/// is instantiated. Two givens can then carry different impls for the same
-/// predicate. Specialization reports that conflict as `SC0416` when it
-/// instantiates the function that receives both
-/// (`hull/redundant_given_incoherent_conditional_default` in the uitest
-/// fixtures). Other dictionaries retain their complete prerequisites.
+/// Other dictionaries retain their complete prerequisites.
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub(super) enum DictionaryIdentity<'db> {
     Given {

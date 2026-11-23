@@ -865,8 +865,6 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
                 };
                 evidence_bindings.push((pred, evidence));
             }
-            self.driver
-                .record_binding_instances(self.info.module, &evidence_bindings, span);
             let mut proof_base = base;
             if !evidence_bindings.is_empty() {
                 proof_base.push('_');
