@@ -157,6 +157,11 @@ fn check_superclass_instances<'db>(
     }
     let env = trait_env_with_givens(db, trait_env, conditions.to_vec());
     for superclass in superclasses {
+        // A condition that states the superclass carries its dictionary, as in
+        // specialization; only other superclasses are solved.
+        if conditions.contains(&superclass) {
+            continue;
+        }
         let report = solve_report(db, env, canonical_goal(db, superclass));
         let reason = if report.exhausted {
             "the trait solver gave up proving it"
