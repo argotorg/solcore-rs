@@ -280,8 +280,11 @@ impl<'db> TabledEngine<'db> {
             discovery.record_recipe(key, &logical_key, branch, prerequisites);
             let answers = discovery.answers.entry(key.clone()).or_default();
             if let Some(previous) = answers.get(&logical_key) {
-                discovery.collapsed |= complete_answer_key(db, env, key, previous)
-                    != complete_answer_key(db, env, key, &answer);
+                // A second witness needs the complete pass to settle on one
+                // of them, unless the two differ only in the givens they
+                // start at: those are one dictionary whichever the pass kept.
+                discovery.collapsed |=
+                    previous != &answer && !differ_only_in_givens(db, env, key, previous, &answer);
             } else {
                 answers.insert(logical_key, answer.clone());
             }
@@ -504,6 +507,23 @@ impl<'db> ResolutionContext for TabledEngine<'db> {
             AnswerKey::Complete(subst, identity)
         }
     }
+}
+
+/// Whether two answers are one dictionary and start at different givens.
+fn differ_only_in_givens<'db>(
+    db: &'db dyn Db,
+    env: TraitEnvId<'db>,
+    key: &TableKey<'db>,
+    left: &Answer<'db>,
+    right: &Answer<'db>,
+) -> bool {
+    let assumptions = |answer: &Answer<'db>| {
+        let mut assumptions = Vec::new();
+        answer.candidate.evidence.assumptions(&mut assumptions);
+        assumptions
+    };
+    complete_answer_key(db, env, key, left) == complete_answer_key(db, env, key, right)
+        && assumptions(left) != assumptions(right)
 }
 
 fn complete_answer_key<'db>(

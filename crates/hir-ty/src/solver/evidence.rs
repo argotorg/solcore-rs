@@ -134,6 +134,19 @@ impl<'db> Evidence<'db> {
         }
     }
 
+    /// The assumptions that the proofs of this dictionary start at, in order.
+    pub(super) fn assumptions(&self, assumptions: &mut Vec<Pred<'db>>) {
+        match self {
+            Self::Builtin { pred } => assumptions.push(*pred),
+            Self::Superclass { child, .. } => child.assumptions(assumptions),
+            Self::Instance { sub_evidence, .. } | Self::Derived { sub_evidence, .. } => {
+                for child in sub_evidence {
+                    child.assumptions(assumptions);
+                }
+            }
+        }
+    }
+
     fn children(&self) -> &[Self] {
         match self {
             Self::Instance { sub_evidence, .. } | Self::Derived { sub_evidence, .. } => {
