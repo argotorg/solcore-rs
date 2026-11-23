@@ -22,6 +22,13 @@ pub(super) enum DictionaryIdentity<'db> {
     Given {
         pred: Pred<'db>,
     },
+    /// A superclass of a given that the goal matched only up to `comptime`
+    /// qualifiers. No given is this dictionary: specialization selects the
+    /// impl for the predicate as the goal spells it, whichever given led
+    /// there.
+    Requalified {
+        pred: Pred<'db>,
+    },
     Instance {
         instance: DefId<'db>,
         args: Vec<Ty<'db>>,
@@ -82,16 +89,16 @@ impl<'db> Evidence<'db> {
 
     pub(super) fn dictionary_identity(
         &self,
-        is_given: &impl Fn(Pred<'db>) -> bool,
+        given_root: &impl Fn(Pred<'db>) -> GivenRoot,
     ) -> DictionaryIdentity<'db> {
-        if evidence_root_given(self).is_some_and(is_given) {
-            let pred = match self {
-                Self::Builtin { pred } | Self::Superclass { pred, .. } => *pred,
-                _ => {
-                    unreachable!("only given dictionaries and their projections have a given root")
-                }
-            };
-            return DictionaryIdentity::Given { pred };
+        match (evidence_root_given(self).map(given_root), self) {
+            (Some(GivenRoot::Exact), Self::Builtin { pred } | Self::Superclass { pred, .. }) => {
+                return DictionaryIdentity::Given { pred: *pred };
+            }
+            (Some(GivenRoot::Requalified), Self::Superclass { pred, .. }) => {
+                return DictionaryIdentity::Requalified { pred: *pred };
+            }
+            _ => {}
         }
         match self {
             Self::Instance {
@@ -103,14 +110,14 @@ impl<'db> Evidence<'db> {
                 args: args.clone(),
                 children: sub_evidence
                     .iter()
-                    .map(|child| child.dictionary_identity(is_given))
+                    .map(|child| child.dictionary_identity(given_root))
                     .collect(),
             },
             Self::Builtin { pred } => DictionaryIdentity::Builtin(*pred),
             Self::Superclass { class, pred, child } => DictionaryIdentity::Superclass {
                 class: *class,
                 pred: *pred,
-                child: Box::new(child.dictionary_identity(is_given)),
+                child: Box::new(child.dictionary_identity(given_root)),
             },
             Self::Derived {
                 kind,
@@ -121,7 +128,7 @@ impl<'db> Evidence<'db> {
                 pred: *pred,
                 children: sub_evidence
                     .iter()
-                    .map(|child| child.dictionary_identity(is_given))
+                    .map(|child| child.dictionary_identity(given_root))
                     .collect(),
             },
         }
@@ -267,10 +274,9 @@ pub(super) fn solution_from_answers<'db>(
         if answer_priority(db, env, &answer) != best_priority {
             continue;
         }
-        let identity = answer
-            .candidate
-            .evidence
-            .dictionary_identity(&|pred| env.local_givens(db).contains(&pred));
+        let identity = answer.candidate.evidence.dictionary_identity(&|pred| {
+            given_root(db, env.local_givens(db).iter().copied(), pred)
+        });
         if seen_candidates.insert((answer.candidate.subst.clone(), identity)) {
             candidates.push(answer.candidate);
         }
@@ -328,8 +334,8 @@ fn evidence_preference<'db>(
     right: &Evidence<'db>,
 ) -> Option<std::cmp::Ordering> {
     use std::cmp::Ordering;
-    let is_given = |pred| env.local_givens(db).contains(&pred);
-    if left.dictionary_identity(&is_given) == right.dictionary_identity(&is_given) {
+    let given_root = |pred| given_root(db, env.local_givens(db).iter().copied(), pred);
+    if left.dictionary_identity(&given_root) == right.dictionary_identity(&given_root) {
         return Some(Ordering::Equal);
     }
     let priority = evidence_priority(db, env, left).cmp(&evidence_priority(db, env, right));
@@ -392,6 +398,36 @@ fn evidence_root_is_local_given<'db>(
     evidence_root_given(evidence).is_some_and(|pred| env.local_givens(db).contains(&pred))
 }
 
+/// How the predicate at the root of a proof relates to the local givens.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum GivenRoot {
+    /// It is a local given: the given is the dictionary.
+    Exact,
+    /// It is a local given up to `comptime` qualifiers. Clause matching sees
+    /// through them, but the given's dictionary is not the goal's.
+    Requalified,
+    None,
+}
+
+pub(super) fn given_root<'db>(
+    db: &'db dyn Db,
+    givens: impl Iterator<Item = Pred<'db>> + Clone,
+    pred: Pred<'db>,
+) -> GivenRoot {
+    if givens.clone().any(|given| given == pred) {
+        return GivenRoot::Exact;
+    }
+    let unqualified = strip_comptime_pred(db, pred);
+    if givens
+        .into_iter()
+        .any(|given| strip_comptime_pred(db, given) == unqualified)
+    {
+        GivenRoot::Requalified
+    } else {
+        GivenRoot::None
+    }
+}
+
 pub(super) fn evidence_root_given<'db>(evidence: &Evidence<'db>) -> Option<Pred<'db>> {
     match evidence {
         Evidence::Builtin { pred } => Some(*pred),
@@ -413,10 +449,7 @@ pub(super) fn clause_evidence<'db>(
             args: subst.args_for_vars(db, &clause.binder_vars),
             sub_evidence,
         },
-        ClauseOrigin::Builtin => Evidence::Builtin { pred: goal },
-        ClauseOrigin::Given => Evidence::Builtin {
-            pred: strip_comptime_pred(db, goal),
-        },
+        ClauseOrigin::Builtin | ClauseOrigin::Given => Evidence::Builtin { pred: goal },
         ClauseOrigin::Derived(kind) => Evidence::Derived {
             kind,
             pred: goal,
@@ -424,7 +457,7 @@ pub(super) fn clause_evidence<'db>(
         },
         ClauseOrigin::Superclass(class) => Evidence::Superclass {
             class,
-            pred: strip_comptime_pred(db, goal),
+            pred: goal,
             child: Box::new(
                 sub_evidence
                     .into_iter()

@@ -292,6 +292,38 @@ impl<'db> TySubst<'db> {
     }
 }
 
+/// Instance selection sees through `comptime`, so a given matches a goal
+/// that differs from it only there.
+pub(super) fn preds_equal_up_to_comptime<'db>(
+    db: &'db dyn Db,
+    lhs: Pred<'db>,
+    rhs: Pred<'db>,
+) -> bool {
+    match (lhs.kind(db), rhs.kind(db)) {
+        (
+            PredKind::InClass {
+                class: lhs_class,
+                main: lhs_main,
+                args: lhs_args,
+            },
+            PredKind::InClass {
+                class: rhs_class,
+                main: rhs_main,
+                args: rhs_args,
+            },
+        ) => {
+            lhs_class == rhs_class
+                && lhs_args.len() == rhs_args.len()
+                && value_types_equal(db, *lhs_main, *rhs_main)
+                && lhs_args
+                    .iter()
+                    .zip(rhs_args)
+                    .all(|(lhs, rhs)| value_types_equal(db, *lhs, *rhs))
+        }
+        _ => false,
+    }
+}
+
 /// Value-type matching erases comptime qualifiers at every structural level.
 /// Already selected dictionary arguments must use the same comparison, while
 /// retaining their original qualified types in the substitution and its identity.

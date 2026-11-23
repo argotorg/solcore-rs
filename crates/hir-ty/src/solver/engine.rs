@@ -513,9 +513,13 @@ fn complete_answer_key<'db>(
     answer: &Answer<'db>,
 ) -> (Substitution<'db>, evidence::DictionaryIdentity<'db>) {
     let identity = answer.candidate.evidence.dictionary_identity(&|pred| {
-        env.local_givens(db)
-            .iter()
-            .any(|given| canonicalize_local_given(db, *given, key) == pred)
+        evidence::given_root(
+            db,
+            env.local_givens(db)
+                .iter()
+                .map(|given| canonicalize_local_given(db, *given, key)),
+            pred,
+        )
     });
     (answer.candidate.subst.clone(), identity)
 }

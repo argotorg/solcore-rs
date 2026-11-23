@@ -110,6 +110,12 @@ impl<'db> Driver<'db> {
                 return self.normalize_dictionary(dictionary, normalize_projections);
             }
             LogicalEvidence::Superclass { class, pred, child } => {
+                // No given is the dictionary of a goal that matched it only
+                // up to `comptime`. The impl is selected where the goal is
+                // used, as it is for such an assumption itself.
+                if normalize_projections && self.assumes_requalified_given(&child, bindings) {
+                    return Evidence::Builtin { pred };
+                }
                 let child =
                     self.elaborate_dictionary(module, *child, bindings, normalize_projections);
                 return self.normalize_dictionary(
@@ -246,6 +252,26 @@ impl<'db> Driver<'db> {
             _ => unreachable!(),
         }
         dictionary
+    }
+
+    /// Whether `proof` starts at an assumption that no binding provides as
+    /// it is spelled, while one does up to `comptime`.
+    fn assumes_requalified_given(
+        &self,
+        proof: &LogicalEvidence<'db>,
+        bindings: &[(Pred<'db>, Evidence<'db>)],
+    ) -> bool {
+        let assumed = match proof {
+            LogicalEvidence::Builtin { pred } => *pred,
+            LogicalEvidence::Superclass { child, .. } => {
+                return self.assumes_requalified_given(child, bindings);
+            }
+            LogicalEvidence::Instance { .. } | LogicalEvidence::Derived { .. } => return false,
+        };
+        !bindings.iter().any(|(given, _)| *given == assumed)
+            && bindings
+                .iter()
+                .any(|(given, _)| preds_equal_up_to_comptime(self.db, *given, assumed))
     }
 
     fn normalize_dictionary(
