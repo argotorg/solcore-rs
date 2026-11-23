@@ -82,18 +82,59 @@ fn generic_abi_decoder_evidence_specializes_for_internal_sum_adt() {
     );
 }
 
+/// A specialized name without the hashes of the dictionaries it was given
+/// (`_p` and sixteen hex digits). Two functions with the same remainder are
+/// one source function at the same types.
+fn without_dictionary_hashes(name: &str) -> String {
+    let bytes = name.as_bytes();
+    let mut stripped = String::with_capacity(name.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        let hash = index + 2..index + 18;
+        if bytes[index..].starts_with(b"_p")
+            && bytes
+                .get(hash.clone())
+                .is_some_and(|digits| digits.iter().all(u8::is_ascii_hexdigit))
+        {
+            index = hash.end;
+        } else {
+            stripped.push(bytes[index] as char);
+            index += 1;
+        }
+    }
+    stripped
+}
+
+/// Two functions with the same name once the dictionary hashes are removed
+/// are one source function at the same types, specialized more than once.
+fn assert_one_specialization_per_function(output: &SpecializeOutput<'_>) {
+    let mut seen = BTreeSet::new();
+    for function in functions(output) {
+        let name = without_dictionary_hashes(&function.name);
+        assert!(
+            seen.insert(name.clone()),
+            "{name} is specialized for more than one dictionary"
+        );
+    }
+}
+
 #[test]
 fn redundant_givens_share_dictionaries() {
     audit_variants("redundant_givens_share_dictionaries", |_, output| {
         assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
-        let copies = functions(output)
-            .iter()
-            .filter(|function| {
-                function.name.starts_with("A_fa_") && function.name.contains("$uint256")
-            })
-            .count();
-        assert!(copies <= 1, "{copies} copies of A.fa for uint256");
+        assert_one_specialization_per_function(output);
     });
+}
+
+#[test]
+fn recursive_calls_at_concrete_types_share_specializations() {
+    audit_variants(
+        "recursive_calls_at_concrete_types_share_specializations",
+        |_, output| {
+            assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+            assert_one_specialization_per_function(output);
+        },
+    );
 }
 
 #[test]

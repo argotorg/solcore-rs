@@ -61,6 +61,11 @@ pub(super) struct SuperclassRecipe<'db> {
     pub bindings: Vec<(Pred<'db>, Evidence<'db>)>,
 }
 
+/// Predicates followed from one given through the superclasses their classes
+/// declare. A superclass that grows its type argument has no finite closure;
+/// class hierarchies in practice stay far below the bound.
+const MAX_SUPERCLASS_CLOSURE: usize = 256;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(super) enum SuperclassFailure {
     Exhausted,
@@ -167,13 +172,22 @@ impl<'db> Driver<'db> {
             }
             _ => unreachable!(),
         };
-        let local_bindings = prerequisites
+        let mut local_bindings = prerequisites
             .iter()
             .filter_map(|evidence| {
                 self.dictionary_predicate(evidence)
                     .map(|pred| (pred, evidence.clone()))
             })
             .collect::<Vec<_>>();
+        let prerequisites_len = local_bindings.len();
+        for (pred, evidence) in bindings {
+            if !local_bindings.iter().any(|(given, _)| given == pred) {
+                local_bindings.push((*pred, evidence.clone()));
+            }
+        }
+        // The predicates that two of the givens reach, found when a proof
+        // first starts at a given.
+        let mut shared = None;
         let mut superclasses = Vec::new();
         let Some(base) = self.try_module_trait_env(module) else {
             self.push_missing_module_trait_env(None);
@@ -187,36 +201,15 @@ impl<'db> Driver<'db> {
             {
                 continue;
             }
-            let env = trait_env_with_givens(
-                self.db,
+            let selection = self.select_superclass(
+                module,
                 base,
-                local_bindings.iter().map(|(pred, _)| *pred).collect(),
+                pred,
+                &local_bindings,
+                prerequisites_len,
+                &mut shared,
+                normalize_projections,
             );
-            let report = hir_ty::solve_report(self.db, env, canonical_goal(self.db, pred));
-            let selection = if report.exhausted {
-                Err(SuperclassFailure::Exhausted)
-            } else {
-                match report.solution {
-                    Solution::Unique {
-                        evidence: proof,
-                        subst,
-                    } => {
-                        // Specialization has closed inputs: fresh answer
-                        // variables cannot identify an executable dictionary.
-                        if logical_evidence_is_closed(self.db, &proof)
-                            && subst
-                                .values
-                                .iter()
-                                .all(|(_, ty)| ty_is_closed(self.db, *ty))
-                        {
-                            Ok(proof)
-                        } else {
-                            Err(SuperclassFailure::OpenDictionary)
-                        }
-                    }
-                    _ => Err(SuperclassFailure::NoUniqueDictionary),
-                }
-            };
             let mut referenced = FxHashSet::default();
             if let Ok(proof) = &selection {
                 collect_given_predicates(proof, &mut referenced);
@@ -274,6 +267,160 @@ impl<'db> Driver<'db> {
                 .any(|(given, _)| preds_equal_up_to_comptime(self.db, *given, assumed))
     }
 
+    /// Selects one superclass of a new dictionary under `givens`: its
+    /// prerequisites, which are the first `prerequisites_len` of them, and
+    /// the dictionaries of the enclosing function.
+    ///
+    /// A dictionary that holds one of the enclosing function differs with
+    /// the function it is built in, and the specializations of its methods
+    /// multiply with it. So the proof from the prerequisites alone is kept
+    /// where it builds the same dictionary, or where the enclosing function's
+    /// dictionaries turn out not to hold the superclass.
+    ///
+    /// Two givens that reach one predicate used to leave a superclass that
+    /// needs it without a unique dictionary. Now the proofs that start at
+    /// different givens are one dictionary, and the proof that is found
+    /// starts at whichever given inference met first. The prerequisites
+    /// alone decide such a superclass.
+    #[allow(clippy::too_many_arguments)]
+    fn select_superclass(
+        &mut self,
+        module: Module<'db>,
+        base: hir_ty::TraitEnvId<'db>,
+        pred: Pred<'db>,
+        givens: &[(Pred<'db>, Evidence<'db>)],
+        prerequisites_len: usize,
+        shared: &mut Option<FxHashSet<Pred<'db>>>,
+        normalize_projections: bool,
+    ) -> Result<LogicalEvidence<'db>, SuperclassFailure> {
+        let proof = self.solve_superclass(base, pred, givens)?;
+        // A recipe is expanded with the givens it captured, as it was
+        // selected, and prerequisites are part of the dictionary anyway.
+        if !normalize_projections || givens.len() == prerequisites_len {
+            return Ok(proof);
+        }
+        let mut rooted = Vec::new();
+        collect_given_rooted_predicates(&proof, &mut rooted);
+        if rooted.is_empty() {
+            return Ok(proof);
+        }
+        let shared = shared.get_or_insert_with(|| self.shared_superclasses(module, givens));
+        if rooted.iter().any(|pred| shared.contains(pred)) {
+            return self
+                .solve_superclass(base, pred, &givens[..prerequisites_len])
+                .map_err(|_| SuperclassFailure::NoUniqueDictionary);
+        }
+        let mut named = FxHashSet::default();
+        collect_given_predicates(&proof, &mut named);
+        if !givens[prerequisites_len..]
+            .iter()
+            .any(|(given, _)| named.contains(given))
+        {
+            return Ok(proof);
+        }
+        let Ok(own) = self.solve_superclass(base, pred, &givens[..prerequisites_len]) else {
+            return Ok(proof);
+        };
+        let canonical = self.recipe_dictionary(module, &own, &givens[..prerequisites_len]);
+        let enclosing = self.recipe_dictionary(module, &proof, givens);
+        if self.has_no_dictionary(&enclosing) || self.same_dictionary(&canonical, &enclosing) {
+            return Ok(own);
+        }
+        Ok(proof)
+    }
+
+    /// The dictionary that a recipe with `proof`, selected under `givens`,
+    /// expands to.
+    fn recipe_dictionary(
+        &mut self,
+        module: Module<'db>,
+        proof: &LogicalEvidence<'db>,
+        givens: &[(Pred<'db>, Evidence<'db>)],
+    ) -> Evidence<'db> {
+        let mut referenced = FxHashSet::default();
+        collect_given_predicates(proof, &mut referenced);
+        let bindings = givens
+            .iter()
+            .filter(|(pred, _)| referenced.contains(pred))
+            .map(|(pred, evidence)| (*pred, self.normalize_dictionary(evidence.clone(), true)))
+            .collect::<Vec<_>>();
+        self.elaborate_dictionary(module, proof.clone(), &bindings, false)
+    }
+
+    /// Solves one superclass of a dictionary under `givens`.
+    fn solve_superclass(
+        &mut self,
+        base: hir_ty::TraitEnvId<'db>,
+        pred: Pred<'db>,
+        givens: &[(Pred<'db>, Evidence<'db>)],
+    ) -> Result<LogicalEvidence<'db>, SuperclassFailure> {
+        let env = trait_env_with_givens(
+            self.db,
+            base,
+            givens.iter().map(|(pred, _)| *pred).collect(),
+        );
+        let report = hir_ty::solve_report(self.db, env, canonical_goal(self.db, pred));
+        if report.exhausted {
+            return Err(SuperclassFailure::Exhausted);
+        }
+        match report.solution {
+            Solution::Unique {
+                evidence: proof,
+                subst,
+            } => {
+                // Specialization has closed inputs: fresh answer variables
+                // cannot identify an executable dictionary.
+                if logical_evidence_is_closed(self.db, &proof)
+                    && subst
+                        .values
+                        .iter()
+                        .all(|(_, ty)| ty_is_closed(self.db, *ty))
+                {
+                    Ok(proof)
+                } else {
+                    Err(SuperclassFailure::OpenDictionary)
+                }
+            }
+            _ => Err(SuperclassFailure::NoUniqueDictionary),
+        }
+    }
+
+    /// The predicates that two of `givens` reach through the superclasses
+    /// that `module` sees: the ones for which inference there found proofs
+    /// that start at different givens.
+    fn shared_superclasses(
+        &self,
+        module: Module<'db>,
+        givens: &[(Pred<'db>, Evidence<'db>)],
+    ) -> FxHashSet<Pred<'db>> {
+        let mut shared = FxHashSet::default();
+        let Some(env) = self.try_module_trait_env(module) else {
+            return shared;
+        };
+        // The given that reached each predicate first.
+        let mut reached_from = FxHashMap::<Pred<'db>, usize>::default();
+        for (index, (given, _)) in givens.iter().enumerate() {
+            let mut reached = FxHashSet::default();
+            let mut pending = VecDeque::from([*given]);
+            // The walk is breadth first, so a superclass that grows its type
+            // argument does not use up the bound.
+            while let Some(pred) = pending.pop_front() {
+                if reached.len() >= MAX_SUPERCLASS_CLOSURE || !reached.insert(pred) {
+                    continue;
+                }
+                if *reached_from.entry(pred).or_insert(index) != index {
+                    shared.insert(pred);
+                }
+                pending.extend(hir_ty::direct_superclass_predicates(
+                    self.db,
+                    env.base(self.db),
+                    pred,
+                ));
+            }
+        }
+        shared
+    }
+
     fn normalize_dictionary(
         &mut self,
         dictionary: Evidence<'db>,
@@ -328,6 +475,22 @@ fn logical_evidence_is_closed<'db>(db: &'db dyn Db, evidence: &LogicalEvidence<'
         LogicalEvidence::Builtin { pred } => pred_is_closed(db, *pred),
         LogicalEvidence::Superclass { pred, child, .. } => {
             pred_is_closed(db, *pred) && logical_evidence_is_closed(db, child)
+        }
+    }
+}
+
+/// The predicates of the dictionaries that `proof` takes from assumptions:
+/// each assumption it uses, or the superclass it projects from one.
+fn collect_given_rooted_predicates<'db>(proof: &LogicalEvidence<'db>, rooted: &mut Vec<Pred<'db>>) {
+    match proof {
+        LogicalEvidence::Builtin { pred } | LogicalEvidence::Superclass { pred, .. } => {
+            rooted.push(*pred);
+        }
+        LogicalEvidence::Instance { sub_evidence, .. }
+        | LogicalEvidence::Derived { sub_evidence, .. } => {
+            for proof in sub_evidence {
+                collect_given_rooted_predicates(proof, rooted);
+            }
         }
     }
 }
