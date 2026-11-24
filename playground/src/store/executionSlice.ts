@@ -2,12 +2,28 @@ import type { StoreApi } from "zustand";
 import { compileClient } from "../compiler/compileClient";
 import { ACCOUNTS } from "../compiler/accounts";
 import { formatCall } from "../compiler/formatCall";
+import { breakpointSteps, replayPositions } from "../compiler/replay";
 import { nowMs } from "../compiler/timing";
 import type { Backend, CompileInput, CompileResult, Diag, TestCase, ContractInterface, ManualCall, WatchCall, WatchResult, RecentAction } from "../compiler/types";
 import type { WorkspaceState } from "./workspace";
-import type { WorkspaceFile } from "./filesSlice";
+import type { Breakpoints, WorkspaceFile } from "./filesSlice";
 
 let compileRun = 0;
+
+function keepRecentCalls(actions: RecentAction[]): RecentAction[] {
+  let recordings = 0;
+  return actions.slice(-20).reverse().map((action) => {
+    const event = action.events.find((event) => event.replay?.kind === "ready");
+    if (!event || ++recordings <= 2) return action;
+    return {
+      ...action,
+      events: action.events.map((item) => item === event ? {
+        ...item,
+        replay: { kind: "unavailable", message: "This recording expired." } as const,
+      } : item),
+    };
+  }).reverse();
+}
 let watchRun = 0;
 
 export function invalidateExecution(): void {
@@ -55,6 +71,7 @@ export interface ExecutionData {
   manualResult: CompileResult["execution"];
   manualResultVersion: number | null;
   recentActions: RecentAction[];
+  replaySelection: ReplaySelection | null;
   testRun: RecentAction | null;
   actionSequence: number;
   sandboxAction: number | null;
@@ -85,6 +102,24 @@ export interface ExecutionOptions {
   backend: Backend;
 }
 
+export interface ReplaySelection {
+  actionId: number;
+  event: number;
+  breakpoint?: number;
+  test?: boolean;
+}
+
+function initialReplay(action: RecentAction, files: Record<string, WorkspaceFile>, breakpoints: Breakpoints, test: boolean): ReplaySelection | null {
+  const hasBreakpoints = Object.keys(breakpoints).length > 0;
+  for (const [index, event] of action.events.entries()) {
+    if (event.replay?.kind !== "ready") continue;
+    const breakpoint = hasBreakpoints ? breakpointSteps(replayPositions(event.replay), breakpoints, files)[0] : undefined;
+    const failed = event.passed === false || (event.passed === null && event.result.status !== "success");
+    if (breakpoint !== undefined || failed) return { actionId: action.id, event: index, breakpoint, ...(test ? { test } : {}) };
+  }
+  return null;
+}
+
 export interface ExecutionSlice extends ExecutionData {
   options: ExecutionOptions;
   setBackend: (backend: Backend) => void;
@@ -103,7 +138,7 @@ export function freshExecutionState(sandboxEpoch = 0, watchRevision = 0): Execut
     contracts: [], hasMain: false, discoveryVersion: null,
     callDraft: { contract: "", signature: "", arguments: "[]", constructorArguments: "[]", simulate: true, caller: ACCOUNTS[0] },
     selectedTestId: null,
-    testRun: null, recentActions: [], actionSequence: 0, sandboxAction: null, watchAction: null,
+    testRun: null, recentActions: [], replaySelection: null, actionSequence: 0, sandboxAction: null, watchAction: null,
     sandbox: null, sandboxVersion: null, sandboxEpoch,
     manualResult: null, manualResultVersion: null,
     watches: [], watchValues: {}, watchVersion: null, watchEpoch: null,
@@ -122,6 +157,8 @@ export function createExecutionSlice(set: StoreApi<WorkspaceState>["setState"], 
     const state = get();
     const compileVersion = state.workspaceVersion;
     const startedAt = nowMs();
+    const testing = run && !manual && (Boolean(testId) || state.testCases.length > 0);
+    const recordTrace = run && state.options.backend === "sonatina";
     const input: CompileInput = {
       files: state.order
         .map((path) => state.files[path])
@@ -131,17 +168,18 @@ export function createExecutionSlice(set: StoreApi<WorkspaceState>["setState"], 
           content: file.content,
         })),
       entry: state.entry,
-      options: state.options,
+      options: { ...state.options, recordTrace: recordTrace && !manual,
+        ...(testing && recordTrace ? { breakpoints: state.breakpoints } : {}) },
       testId,
       manual,
       sandboxEpoch: state.sandboxEpoch + state.workspaceVersion,
     };
 
-    const testing = run && !manual && (Boolean(testId) || state.testCases.length > 0);
     if (run && !testing) watchRun += 1;
     const selected = testId ? state.testCases.find((t) => t.id === testId) : null;
     set({
       ...(run ? {
+        replaySelection: null, replayLocation: null,
         ...(!testing ? { watchLoading: false } : {}),
         selectedTestId: testId ?? null,
         ...(testId ? { viewedTestId: testId } : {}),
@@ -164,7 +202,7 @@ export function createExecutionSlice(set: StoreApi<WorkspaceState>["setState"], 
       const result = await (run ? compileClient.run(input) : compileClient.compile(input));
       const durationMs = nowMs() - startedAt;
       if (runId === compileRun) {
-        const actionId = get().actionSequence + 1;
+        const actionId = testing ? (state.testRun?.id ?? 0) + 1 : get().actionSequence + 1;
         const label = manual
           ? `${manual.simulate ? "Preview" : "Call"} ${manual.contract}.${formatCall(manual.signature, manual.arguments)}`
           : selected ? `Run test · ${selected.file}:${selected.line}`
@@ -172,12 +210,16 @@ export function createExecutionSlice(set: StoreApi<WorkspaceState>["setState"], 
         const action: RecentAction = { id: actionId, label, version: compileVersion,
           sandboxId: testing ? null : result.sandbox?.id ?? null, events: result.events ?? [], result: result.execution,
           message: result.execution?.message ?? result.diagnostics.find((d) => d.severity === "error")?.message ?? null };
+        const current = get();
+        const recentActions = run && !testing ? keepRecentCalls([...current.recentActions, action]) : current.recentActions;
         set({
           ...(testing ? { testRun: action } : {}),
+          ...(run ? { replaySelection: compileVersion === current.workspaceVersion
+            ? initialReplay(action, state.files, state.breakpoints, testing) : null } : {}),
           ...(run && !testing ? {
             actionSequence: actionId,
             sandboxAction: result.sandbox ? actionId : null,
-            recentActions: [...get().recentActions, action].slice(-20),
+            recentActions,
           } : {}),
           result,
           ...(compileVersion === get().workspaceVersion ? { hasMain: result.hasMain ?? false, discoveryVersion: compileVersion } : {}),
@@ -276,10 +318,10 @@ export function createExecutionSlice(set: StoreApi<WorkspaceState>["setState"], 
     options: {
       emitHull: true,
       emitYul: true,
-      emitSonatina: false,
+      emitSonatina: true,
       emitAbi: true,
       emitBytecode: true,
-      backend: "solc",
+      backend: "sonatina",
     },
     setBackend(backend) {
       if (get().options.backend === backend) return;
@@ -292,17 +334,19 @@ export function createExecutionSlice(set: StoreApi<WorkspaceState>["setState"], 
         ...(s.outputTab === "sonatina" && backend !== "sonatina" ? { outputTab: "execution" as const } : {}),
         result: null, lastCompiledVersion: null, lastCompileDurationMs: null,
         compiling: false, running: false, compileStartedAt: null,
-        testResults: [], testResultsVersion: null, testRun: null,
+        testResults: [], testResultsVersion: null, testRun: null, replaySelection: null, replayLocation: null,
       }));
     },
     setCallDraft(patch) { set((s) => ({ callDraft: { ...s.callDraft, ...patch }, selectedTestId: null })); },
-    runCall: (simulate = false) => executeWorkspace(true, undefined, { ...get().callDraft, simulate }),
+    runCall: (simulate = false) => executeWorkspace(true, undefined,
+      { ...get().callDraft, simulate, recordTrace: get().options.backend === "sonatina" }),
     resetSandbox() {
       watchRun += 1;
       set((s) => ({ sandbox: null, sandboxVersion: null, sandboxEpoch: s.sandboxEpoch + 1,
         sandboxAction: null, watchAction: null, manualResult: null, manualResultVersion: null,
         actionSequence: 0,
-        recentActions: [],
+        recentActions: [], replaySelection: s.replaySelection?.test ? s.replaySelection : null,
+        replayLocation: s.replaySelection?.test ? s.replayLocation : null,
         watchValues: {}, watchVersion: null, watchEpoch: null, watchLoading: false }));
     },
     addWatch(call) {

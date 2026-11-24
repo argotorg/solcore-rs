@@ -152,15 +152,15 @@ test('stale view parameters fall back without executing or adding history', t =>
 
 
 test('the Sonatina IR tab opens only together with the Sonatina backend', t => {
-  window.location.hash = '#/examples/std-usage?tab=sonatina';
+  window.location.hash = '#/examples/std-usage?tab=sonatina&backend=solc';
   t.after(attachExampleRouter());
   assert.equal(store.getState().options.backend, 'solc');
   assert.equal(store.getState().outputTab, 'execution');
-  navigate('#/examples/std-usage?tab=sonatina&backend=sonatina');
+  navigate('#/examples/std-usage?tab=sonatina');
   assert.equal(store.getState().options.backend, 'sonatina');
   assert.equal(store.getState().outputTab, 'sonatina');
   navigate('#/examples/std-usage');
-  assert.equal(store.getState().options.backend, 'solc');
+  assert.equal(store.getState().options.backend, 'sonatina');
   assert.equal(store.getState().outputTab, 'execution');
 });
 

@@ -41,8 +41,9 @@ export function attachExampleRouter(): () => void {
       if (!projectSource && location.id !== useWorkspaceStore.getState().exampleId) useWorkspaceStore.getState().loadExample(example.id);
       const state = useWorkspaceStore.getState();
       const view = location.view;
-      const tab = view.tab === "run" || (view.tab === "sonatina" && view.backend !== "sonatina") ? "execution" : view.tab;
-      state.setBackend(view.backend === "sonatina" ? "sonatina" : "solc");
+      const backend = view.backend === "solc" ? "solc" : "sonatina";
+      const tab = view.tab === "run" || (view.tab === "sonatina" && backend === "solc") ? "execution" : view.tab;
+      state.setBackend(backend);
       const entry = Object.hasOwn(state.files, example.entry) ? example.entry : state.entry;
       state.setActive(view.file && Object.hasOwn(state.files, view.file) ? view.file : entry);
       useWorkspaceStore.setState({ outputTab: tabs.includes(tab as OutputTab) ? tab as OutputTab : "execution",
@@ -85,7 +86,11 @@ export function attachExampleRouter(): () => void {
     }
     if (changed || (pending && pending.version !== state.workspaceVersion)) pending = null;
     if (changed) {
-      window.history.pushState(null, "", workspaceLink(window.location.href, current.id, current.view));
+      const url = workspaceLink(window.location.href, current.id, current.view);
+      const replayFollowed = state.activePath !== previous.activePath
+        && state.replayLocation !== previous.replayLocation && state.activePath === state.replayLocation?.range.file;
+      if (replayFollowed) window.history.replaceState(null, "", url);
+      else window.history.pushState(null, "", url);
     }
   });
   return () => { window.removeEventListener("hashchange", followRoute); unsubscribe(); };

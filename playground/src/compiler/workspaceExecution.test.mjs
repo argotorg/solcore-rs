@@ -300,7 +300,8 @@ test('Run is the default tab on startup, example changes, and workspace reset', 
 });
 
 test('Sonatina IR is requested and shown only with the Sonatina backend', async () => {
-  assert.equal(store.getState().options.backend, 'solc');
+  assert.equal(store.getState().options.backend, 'sonatina');
+  store.getState().setBackend('solc');
   assert.equal(store.getState().options.emitSonatina, false);
   store.getState().setBackend('sonatina');
   assert.equal(store.getState().options.emitSonatina, true);
@@ -315,4 +316,42 @@ test('Sonatina IR is requested and shown only with the Sonatina backend', async 
   assert.equal(store.getState().options.emitSonatina, false);
   assert.equal(store.getState().outputTab, 'execution');
   assert.equal(store.getState().result, null);
+});
+
+test('normal calls record and open only at an executed breakpoint or a failed call', async () => {
+  const state = store.getState();
+  state.setBackend('sonatina');
+  state.loadExample('replay-call');
+  const path = 'fee.sol';
+  const contents = store.getState().files[path].content;
+  const statement = 'total := add(amount, 13)';
+  const offset = Buffer.byteLength(contents.slice(0, contents.indexOf(statement)));
+  const replay = {
+    kind: 'ready', incomplete: null,
+    program: { json: '{}', sources: [{ id: 3, path, contents }], locations: [[5, { source_id: 3, offset, length: statement.length }]] },
+    steps: [{ pc: 0, opcode: 0 }, { pc: 5, opcode: 1 }],
+  };
+  function start(status = 'success') {
+    const operation = store.getState().runCall();
+    const request = pending.shift();
+    assert.equal(request.input.manual.recordTrace, true);
+    assert.equal(request.input.manual.simulate, false);
+    request.resolve({ ...result, execution: { ...execution, status }, events: [
+      { kind: 'call', result: { ...execution, status }, passed: null, replay },
+    ] });
+    return operation;
+  }
+
+  await start();
+  assert.equal(store.getState().replaySelection, null);
+  assert.equal(store.getState().recentActions.at(-1).events[0].replay, replay);
+  store.getState().setBreakpoints(path, [6]);
+  await start();
+  assert.deepEqual(store.getState().replaySelection, { actionId: 2, event: 0, breakpoint: 1 });
+  store.getState().setContent(path, contents.replace('13', '12'));
+  await start();
+  assert.equal(store.getState().replaySelection, null);
+  await start('revert');
+  assert.equal(store.getState().replaySelection?.event, 0);
+  assert.equal(store.getState().replaySelection?.breakpoint, undefined);
 });

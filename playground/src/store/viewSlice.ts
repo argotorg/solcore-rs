@@ -1,4 +1,5 @@
 import type { StoreApi } from "zustand";
+import type { Pos } from "../compiler/types";
 import type { WorkspaceState } from "./workspace";
 import { isBrowser } from "./isBrowser";
 
@@ -32,12 +33,19 @@ function readInitialTheme(): ThemeMode {
 export type OutputTab = "hull" | "yul" | "sonatina" | "abi" | "execution" | "problems";
 export type ThemeMode = "light" | "dark";
 
+export interface ReplayLocation {
+  range: Pos;
+  contents: string;
+}
+
 export interface ViewSlice {
   outputTab: OutputTab;
   theme: ThemeMode;
   runActivity: "calls" | "tests";
   viewedTestId: string | null;
   sourceSelection: string | null;
+  replayLocation: ReplayLocation | null;
+  setReplayLocation: (location: ReplayLocation | null) => void;
   setOutputTab: (tab: OutputTab) => void;
   toggleTheme: () => void;
   setRunActivity: (activity: "calls" | "tests") => void;
@@ -50,6 +58,17 @@ export function createViewSlice(set: StoreApi<WorkspaceState>["setState"], get: 
     runActivity: "calls",
     viewedTestId: null,
     sourceSelection: null,
+    replayLocation: null,
+    setReplayLocation(location) {
+      set((state) => {
+        const path = location?.range.file;
+        if (!location || !path || state.files[path]?.content !== location.contents) {
+          return state.replayLocation ? { replayLocation: null } : state;
+        }
+        if (path !== state.activePath) return { replayLocation: { ...location }, activePath: path, sourceSelection: null };
+        return state.replayLocation !== location ? { replayLocation: location } : state;
+      });
+    },
     setOutputTab(tab) { set({ outputTab: tab }); },
     setRunActivity(runActivity) { set({ runActivity }); },
     toggleTheme() {

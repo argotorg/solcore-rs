@@ -6,6 +6,144 @@ import { backends, initializeBrowserWasm } from '../../scripts/test-support/brow
 // Exercise the actual browser WASM package and the examples shipped by the UI.
 const { compile, run, watch } = await initializeBrowserWasm();
 
+test('Sonatina call replay uses the exact imported expression and keeps earlier source', async () => {
+  const readExample = (file) => readFile(new URL(`../src/examples/replay-call/${file}`, import.meta.url), 'utf8');
+  const checkout = await readExample('Checkout.sol');
+  const helper = (await readExample('fee.sol')).replaceAll('\n', '\r\n').replace('// The fee', '// π 🧪 The fee');
+  const call = (source, recordTrace, sandboxEpoch) => run({
+    files: [{ path: 'Checkout.sol', content: checkout }, { path: 'fee.sol', content: source }],
+    entry: 'Checkout.sol',
+    options: { backend: 'sonatina', emitBytecode: true },
+    sandboxEpoch,
+    manual: { contract: 'Checkout', signature: 'checkout(uint256)', arguments: '[8]',
+      constructorArguments: '[]', simulate: false, recordTrace },
+  });
+
+  const recorded = call(helper, true, 12_001);
+  assert.equal(recorded.success, true, JSON.stringify(recorded.diagnostics));
+  assert.equal(recorded.execution.status, 'revert');
+  assert.equal(recorded.execution.message, 'Reverted · Over limit');
+  const plain = call(helper, false, 12_002);
+  assert.deepEqual(recorded.execution, plain.execution);
+  assert.deepEqual(recorded.bytecode, plain.bytecode);
+  assert.equal(plain.events.find(event => event.kind === 'call').replay, undefined);
+
+  function assertAddition(result, source, literal) {
+    const replay = result.events.find(event => event.kind === 'call').replay;
+    assert.equal(replay.kind, 'ready', JSON.stringify(replay));
+    assert.equal(replay.incomplete, null);
+    const program = JSON.parse(replay.program.json);
+    assert.equal(program.environment, 'call');
+    const locations = new Map(replay.program.locations);
+    assert.equal(locations.size, replay.program.locations.length);
+    for (const instruction of program.instructions) {
+      const code = instruction.context?.code;
+      assert.deepEqual(locations.get(instruction.offset), code && {
+        source_id: code.source.id, offset: code.range.offset, length: code.range.length,
+      }, `SolDB's location must match the emitted instruction at PC ${instruction.offset}`);
+    }
+    const imported = replay.program.sources.find(file => file.path === 'fee.sol');
+    assert.equal(imported.contents, source);
+    const instructions = new Map(program.instructions.map(item => [item.offset, item]));
+    assert.ok(replay.steps.some((step, i) => {
+      const previous = replay.steps[i - 1];
+      const instruction = instructions.get(step.pc);
+      const context = instruction?.context?.code;
+      if (step.opcode !== 0x01 || previous?.opcode !== 0x60 || context?.source.id !== imported.id) return false;
+      const { offset, length } = context.range;
+      return Buffer.from(source).subarray(offset, offset + length).toString() === `total := add(amount, ${literal})`;
+    }), 'the executing PUSH1 and ADD must select the exact imported bytes');
+    return replay;
+  }
+
+  const failed = assertAddition(recorded, helper, 13);
+  const updated = helper.replace('add(amount, 13)', 'add(amount, 12)');
+  const fixed = call(updated, true, 12_003);
+  assert.equal(fixed.execution?.decoded, '20');
+  assertAddition(fixed, updated, 12);
+  assert.equal(failed.program.sources.find(file => file.path === 'fee.sol').contents, helper);
+});
+
+test('debugging an existing sandbox preserves its storage and preview only reads it', () => {
+  const content = `pragma solcore;
+import * from std;
+import * from std.dispatch;
+contract Counter {
+  count: uint256;
+  function bump() public returns (uint256) {
+    count = count + uint256(1);
+    return count;
+  }
+}`;
+  const call = (simulate, recordTrace) => run({
+    files: [{ path: 'Counter.sol', content }], entry: 'Counter.sol',
+    options: { backend: 'sonatina' }, sandboxEpoch: 12_004,
+    manual: { contract: 'Counter', signature: 'bump()', arguments: '[]',
+      constructorArguments: '[]', simulate, recordTrace },
+  });
+
+  const committed = call(false, false);
+  const preview = call(true, true);
+  const next = call(false, true);
+  assert.deepEqual([committed, preview, next].map(result => result.execution?.decoded), ['1', '2', '2']);
+  assert.ok(committed.sandbox);
+  assert.equal(committed.events.find(event => event.kind === 'call').replay, undefined);
+  for (const result of [preview, next]) {
+    assert.equal(result.sandbox?.id, committed.sandbox.id);
+    assert.equal(result.events.some(event => event.kind === 'deploy'), false);
+    assert.equal(result.events.find(event => event.kind === 'call').replay?.kind, 'ready');
+  }
+});
+
+test('normal Sonatina main runs record the executed source without changing results or gas', async () => {
+  const standalone = 'pragma solcore;\nfunction main() returns (word) {\n    return 42;\n}\n';
+  const contract = await readFile(new URL('../src/examples/contract-output/Hello.sol', import.meta.url), 'utf8');
+  for (const content of [standalone, contract]) {
+    const entry = 'Hello.sol';
+    const input = { files: [{ path: entry, content }], entry, options: { backend: 'sonatina', emitBytecode: true } };
+    const plain = run(input);
+    const recorded = run({ ...input, options: { ...input.options, recordTrace: true } });
+    assert.equal(recorded.success, true, JSON.stringify(recorded.diagnostics));
+    assert.equal(recorded.execution?.returnWord, '42');
+    assert.deepEqual(recorded.execution, plain.execution);
+    assert.deepEqual(recorded.bytecode, plain.bytecode);
+    const trace = recorded.events.find(event => event.signature === 'main()')?.replay;
+    assert.equal(trace?.kind, 'ready', JSON.stringify(trace));
+    const source = trace.program.sources.find(file => file.path === entry);
+    const locations = new Map(trace.program.locations);
+    assert.ok(trace.steps.some(({ pc }) => {
+      const range = locations.get(pc);
+      return range?.source_id === source.id && Buffer.from(content).subarray(range.offset, range.offset + range.length).toString().includes('42');
+    }), 'the executed code must map back to the return value');
+  }
+});
+
+test('Sonatina tests retain the first breakpoint and the selected check without altering setup', () => {
+  const content = `pragma solcore;
+import * from std;
+import * from std.dispatch;
+contract Counter {
+    n: uint256;
+    // #[send(7)]
+    function set(value: uint256) public { n = value; }
+    // #[() -> 7]
+    function read() public returns (uint256) { return n; }
+}`.replaceAll('\n', '\r\n');
+  const entry = 'Counter.sol';
+  const input = { files: [{ path: entry, content }], entry, options: { backend: 'sonatina' } };
+  const plain = run(input);
+  assert.deepEqual(plain.tests.map(test => test.status), ['passed', 'passed']);
+  const options = { backend: 'sonatina', recordTrace: true, breakpoints: { [entry]: [7, 9] } };
+  const suite = run({ ...input, options });
+  assert.deepEqual(suite.tests, plain.tests);
+  assert.deepEqual(suite.execution, plain.execution);
+  assert.deepEqual(suite.events.filter(event => event.replay?.kind === 'ready').map(event => event.signature), ['set(uint256)']);
+  const single = run({ ...input, options, testId: plain.tests[1].id });
+  assert.deepEqual(single.events.filter(event => event.replay?.kind === 'ready').map(event => event.signature), ['set(uint256)', 'read()']);
+  assert.equal(single.tests[0].replayed, true);
+  assert.equal(single.tests[1].actual, '7');
+});
+
 // Uncomments the commented-out function `name` in a workshop example.
 function uncomment(source, name) {
   const lines = source.split('\n');
