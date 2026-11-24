@@ -1,0 +1,36 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/nameres/solidity_globals/main.sol
+---
+error[SC0101]: undefined name: msg
+ --> /main/main.sol:4:18
+  |
+3 | function main() returns (word) {
+4 |     let sender = msg.sender;
+  |                  ^^^ unknown name
+5 |     revert("failed");
+  |
+  = help: use `msgSender()` from `std` for `msg.sender` and `msgValue()` for `msg.value`
+---
+
+error[SC0101]: undefined name: revert
+ --> /main/main.sol:5:5
+  |
+4 |     let sender = msg.sender;
+5 |     revert("failed");
+  |     ^^^^^^ unknown name
+6 |     return keccak256(sender);
+  |
+  = help: to revert with a message, call `revertWithError("...")` from `std`
+---
+
+error[SC0101]: undefined name: keccak256
+ --> /main/main.sol:6:12
+  |
+5 |     revert("failed");
+6 |     return keccak256(sender);
+  |            ^^^^^^^^^ unknown name
+7 | }
+  |
+  = help: `keccak256_` from `std` hashes a value in memory, and `keccakLit` hashes a string literal at compile time

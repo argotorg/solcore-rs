@@ -34,6 +34,19 @@ pub enum UndefinedNameKind {
     Other,
 }
 
+/// Syntactic context of an `SC0101` undefined name that adds a help line.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
+pub enum UndefinedNameHint {
+    /// The name is the target of an assignment statement, such as `x = 1;`.
+    AssignmentTarget,
+    /// The name follows `.` in a call on a value and names a visible
+    /// function that is not a trait method, such as `state.check()`.
+    FunctionCalledAsMethod {
+        /// Receiver path as written, when the receiver is a plain name.
+        receiver: Option<String>,
+    },
+}
+
 /// Typed local name-resolution diagnostic.
 ///
 /// The variants mirror the `SC010x` local resolver codes and store
@@ -53,6 +66,8 @@ pub enum NameresDiagnostic {
         suggestion: Option<String>,
         /// Exact private imported item hidden behind a module qualifier.
         private_candidate: Option<PrivateCandidate>,
+        /// Syntactic context that adds a help line.
+        hint: Option<UndefinedNameHint>,
     },
     /// `SC0103`: failed type-constructor lookup.
     UndefinedTypeConstructor {
@@ -111,9 +126,10 @@ impl NameresDiagnostic {
             NameresDiagnostic::UndefinedName {
                 name,
                 span,
-                kind: _,
+                kind,
                 suggestion,
                 private_candidate,
+                hint,
             } => {
                 let mut diagnostic = Diagnostic::error(format!("undefined name: {name}"))
                     .with_code(DiagnosticCode::NAMERES_UNDEFINED_NAME)
@@ -138,6 +154,37 @@ impl NameresDiagnostic {
                             Applicability::MaybeIncorrect,
                         ));
                     }
+                }
+                match hint {
+                    Some(UndefinedNameHint::AssignmentTarget) => {
+                        diagnostic = diagnostic.with_help(format!(
+                            "to declare a new local variable, write `let {name} = ...;`"
+                        ));
+                    }
+                    Some(UndefinedNameHint::FunctionCalledAsMethod { receiver }) => {
+                        diagnostic = diagnostic
+                            .with_note(format!(
+                                "`{name}` is a function, and method-call syntax only works for trait methods"
+                            ))
+                            .with_help(match receiver {
+                                Some(receiver) => format!(
+                                    "pass `{receiver}` as the first argument of `{name}`"
+                                ),
+                                None => format!(
+                                    "pass the receiver as the first argument of `{name}`"
+                                ),
+                            });
+                    }
+                    None => {}
+                }
+                if let Some(help) = matches!(
+                    kind,
+                    UndefinedNameKind::Term | UndefinedNameKind::ModuleQualifier { .. }
+                )
+                .then(|| solidity_equivalent(name))
+                .flatten()
+                {
+                    diagnostic = diagnostic.with_help(help);
                 }
                 diagnostic
             }
@@ -283,6 +330,20 @@ pub(super) fn duplicate_diagnostic<'db>(
     }
 }
 
+/// Returns the `std` replacement for a Solidity global that Core does not have.
+fn solidity_equivalent(name: &str) -> Option<&'static str> {
+    match name {
+        "msg" => {
+            Some("use `msgSender()` from `std` for `msg.sender` and `msgValue()` for `msg.value`")
+        }
+        "revert" => Some("to revert with a message, call `revertWithError(\"...\")` from `std`"),
+        "keccak256" => Some(
+            "`keccak256_` from `std` hashes a value in memory, and `keccakLit` hashes a string literal at compile time",
+        ),
+        _ => None,
+    }
+}
+
 pub(super) fn undefined_name<'db>(
     db: &'db dyn Db,
     name: &str,
@@ -290,6 +351,7 @@ pub(super) fn undefined_name<'db>(
     kind: UndefinedNameKind,
     suggestion: Option<String>,
     private_candidate: Option<PrivateCandidate>,
+    hint: Option<UndefinedNameHint>,
 ) -> NameresDiagnostic {
     NameresDiagnostic::UndefinedName {
         name: name.to_owned(),
@@ -297,6 +359,7 @@ pub(super) fn undefined_name<'db>(
         kind,
         suggestion,
         private_candidate,
+        hint,
     }
 }
 

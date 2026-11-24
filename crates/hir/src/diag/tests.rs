@@ -103,6 +103,7 @@ fn undefined_name_kind_stays_off_the_rendering_surface() {
             kind,
             suggestion: None,
             private_candidate: None,
+            hint: None,
         }
         .lower(&db)
     };
