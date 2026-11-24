@@ -325,7 +325,11 @@ test('normal calls record and open only at an executed breakpoint or a failed ca
   const path = 'fee.sol';
   const contents = store.getState().files[path].content;
   const statement = 'total := add(amount, 13)';
-  const offset = Buffer.byteLength(contents.slice(0, contents.indexOf(statement)));
+  const index = contents.indexOf(statement);
+  assert.notEqual(index, -1);
+  const prefix = contents.slice(0, index);
+  const offset = Buffer.byteLength(prefix);
+  const line = prefix.split(/\r\n|\r|\n/).length;
   const replay = {
     kind: 'ready', incomplete: null,
     program: { json: '{}', sources: [{ id: 3, path, contents }], locations: [[5, { source_id: 3, offset, length: statement.length }]] },
@@ -345,7 +349,7 @@ test('normal calls record and open only at an executed breakpoint or a failed ca
   await start();
   assert.equal(store.getState().replaySelection, null);
   assert.equal(store.getState().recentActions.at(-1).events[0].replay, replay);
-  store.getState().setBreakpoints(path, [6]);
+  store.getState().setBreakpoints(path, [line]);
   await start();
   assert.deepEqual(store.getState().replaySelection, { actionId: 2, event: 0, breakpoint: 1 });
   store.getState().setContent(path, contents.replace('13', '12'));
