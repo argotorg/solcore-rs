@@ -1,0 +1,13 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/nameres/hidden_ctor_misspelled/main.sol
+---
+error[SC0101]: undefined name: Er
+ --> /main/main.sol:6:18
+  |
+5 | function main() returns (Token) {
+6 |     return Token.Er(0);
+  |                  ^^ unknown name
+7 | }
+  |

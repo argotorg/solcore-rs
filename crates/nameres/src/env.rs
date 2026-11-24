@@ -160,6 +160,7 @@ impl<'db> ModuleEnvBuilder<'db> {
                 },
                 item_scope: Some(item_scope),
                 diagnostics: Vec::new(),
+                hidden_constructors: Vec::new(),
             },
             local_terms,
             local_types,
@@ -222,7 +223,7 @@ impl<'db> ModuleEnvBuilder<'db> {
                 "selected import refs"
             );
             for item_ref in item_refs {
-                self.add_selected_item_ref(item_ref, import.span(self.db));
+                self.add_selected_item_ref(item_ref, import.span(self.db), target);
             }
             return;
         }
@@ -289,14 +290,19 @@ impl<'db> ModuleEnvBuilder<'db> {
         }
     }
 
-    fn add_selected_item_ref(&mut self, item_ref: ItemRef<'db>, span: Span<'db>) {
+    fn add_selected_item_ref(
+        &mut self,
+        item_ref: ItemRef<'db>,
+        span: Span<'db>,
+        provider: ModuleId<'db>,
+    ) {
         self.check_selected_conflict(&item_ref, span);
         if item_ref.namespace == Namespace::Term && !item_ref.public_name.contains('.') {
             self.imported_terms
                 .entry(item_ref.public_name.clone())
                 .or_insert(span);
         }
-        self.add_item_ref_surface(&item_ref, None);
+        self.add_item_ref_surface(&item_ref, None, provider);
     }
 
     fn check_selected_conflict(&mut self, item_ref: &ItemRef<'db>, span: Span<'db>) {
@@ -366,7 +372,7 @@ impl<'db> ModuleEnvBuilder<'db> {
 
         let interface = public_interface(self.db, target);
         for item_ref in &interface.item_refs {
-            self.add_item_ref_surface(item_ref, Some(qualifier));
+            self.add_item_ref_surface(item_ref, Some(qualifier), target);
         }
         self.add_private_item_surfaces(qualifier, target, &interface);
 
@@ -488,7 +494,13 @@ impl<'db> ModuleEnvBuilder<'db> {
         }
     }
 
-    fn add_item_ref_surface(&mut self, item_ref: &ItemRef<'db>, qualifier: Option<&str>) {
+    /// Adds the names that `item_ref`, imported from `provider`, makes visible.
+    fn add_item_ref_surface(
+        &mut self,
+        item_ref: &ItemRef<'db>,
+        qualifier: Option<&str>,
+        provider: ModuleId<'db>,
+    ) {
         let name = qualified_surface_name(qualifier, &item_ref.public_name);
         match item_ref.namespace {
             Namespace::Term => {
@@ -500,7 +512,7 @@ impl<'db> ModuleEnvBuilder<'db> {
                 if let Some(resolution) = resolution_for_item_ref(self.db, item_ref) {
                     self.env.types.entry(name.clone()).or_insert(resolution);
                 }
-                self.add_constructor_surface(item_ref, &name);
+                self.add_constructor_surface(item_ref, &name, provider);
             }
             Namespace::Class => {
                 if let Some(resolution) = resolution_for_item_ref(self.db, item_ref) {
@@ -511,7 +523,12 @@ impl<'db> ModuleEnvBuilder<'db> {
         }
     }
 
-    fn add_constructor_surface(&mut self, item_ref: &ItemRef<'db>, type_name: &str) {
+    fn add_constructor_surface(
+        &mut self,
+        item_ref: &ItemRef<'db>,
+        type_name: &str,
+        provider: ModuleId<'db>,
+    ) {
         let visible = match &item_ref.constructors {
             ConstructorVisibility::NotData => return,
             ConstructorVisibility::OpaqueData => None,
@@ -541,6 +558,16 @@ impl<'db> ModuleEnvBuilder<'db> {
                 .or_default();
             if let Some(visible) = visible {
                 partial_data.extend(visible.iter().cloned());
+            }
+            for fact in hidden_constructor_facts(self.db, item_ref, visible, provider) {
+                if !self
+                    .env
+                    .hidden_constructors
+                    .iter()
+                    .any(|known| known.ty == fact.ty && known.index == fact.index)
+                {
+                    self.env.hidden_constructors.push(fact);
+                }
             }
         }
         for (ctor_name, index) in all {

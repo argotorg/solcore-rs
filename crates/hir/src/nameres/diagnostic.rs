@@ -117,6 +117,13 @@ pub enum NameresDiagnostic {
         /// Optional contextual note, such as the enclosing contract.
         context: Option<String>,
     },
+    /// `SC0122`: constructor of an imported data type that is not exported.
+    HiddenConstructor {
+        /// Source span of the constructor reference.
+        span: LabelSpan,
+        /// The hidden constructor.
+        constructor: HiddenConstructor,
+    },
 }
 
 impl NameresDiagnostic {
@@ -282,8 +289,60 @@ impl NameresDiagnostic {
                 }
                 diagnostic
             }
+            NameresDiagnostic::HiddenConstructor { span, constructor } => {
+                hidden_constructor_diagnostic(span, constructor)
+            }
         }
     }
+}
+
+/// Builds the `SC0122` diagnostic for a reference to a constructor that the
+/// module its data type was imported from does not export.
+pub fn hidden_constructor_diagnostic(
+    span: &LabelSpan,
+    constructor: &HiddenConstructor,
+) -> Diagnostic {
+    let HiddenConstructor {
+        type_name,
+        constructor: name,
+        is_struct,
+        module,
+        span: declaration,
+    } = constructor;
+    let subject = if *is_struct {
+        format!("the constructor of `{type_name}`")
+    } else {
+        format!("constructor `{type_name}.{name}`")
+    };
+    Diagnostic::error(format!("{subject} is not exported by module `{module}`"))
+        .with_code(DiagnosticCode::NAMERES_HIDDEN_CONSTRUCTOR)
+        .with_primary_label_span(span.clone(), Some("constructor not exported"))
+        .with_secondary_label_span(declaration.clone(), Some("constructor declared here"))
+        .with_note(format!(
+            "module `{module}` exports `{type_name}` without this constructor"
+        ))
+}
+
+/// Builds the `SC0122` diagnostic for a field access through a constructor
+/// that the module its data type was imported from does not export.
+pub fn hidden_field_diagnostic(
+    span: &LabelSpan,
+    field: &str,
+    declaration: &LabelSpan,
+    constructor: &HiddenConstructor,
+) -> Diagnostic {
+    let HiddenConstructor {
+        type_name, module, ..
+    } = constructor;
+    Diagnostic::error(format!(
+        "field `{field}` of `{type_name}` is not exported by module `{module}`"
+    ))
+    .with_code(DiagnosticCode::NAMERES_HIDDEN_CONSTRUCTOR)
+    .with_primary_label_span(span.clone(), Some("field not exported"))
+    .with_secondary_label_span(declaration.clone(), Some("field declared here"))
+    .with_note(format!(
+        "module `{module}` exports `{type_name}` without its constructor, which also hides its fields"
+    ))
 }
 
 fn replace_with_suggestion(

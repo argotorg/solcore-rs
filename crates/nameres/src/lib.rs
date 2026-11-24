@@ -49,6 +49,7 @@ mod auto_import;
 mod diagnostics;
 mod env;
 mod graph;
+mod hidden;
 mod instances;
 mod interface;
 mod item_refs;
@@ -76,6 +77,7 @@ use diagnostics::{
 use env::module_has_parse_errors;
 pub use env::{module_env, module_env_for_hir_module, module_import_surface, resolve_module_full};
 pub use graph::{module_graph, module_imports, reachable_modules, resolve_reachable_full};
+use hidden::{SurfaceWithHiddenConstructors, hidden_constructor_facts};
 pub use instances::{
     instance_import_modules, instance_import_modules_for_hir_module, instance_imports,
     instance_imports_for_file, instance_imports_for_hir_module, module_instances,
@@ -95,10 +97,10 @@ use item_refs::{
 };
 pub use model::{
     AutoImportCandidate, AutoImportModuleCandidate, ConstructorVisibility, Db,
-    FullResolutionSummary, InstanceImports, Interface, ItemRef, LibraryId, ModuleAlias, ModuleEdge,
-    ModuleEnv, ModuleFileSnapshot, ModuleFsSnapshot, ModuleGraph, ModuleId, ModuleImportSurface,
-    ModuleImports, ModuleKey, ModulePathRef, ModuleTree, Namespace, Origin, ResolvedModulePath,
-    ValidationSummary, VisibleConstructors,
+    FullResolutionSummary, HiddenConstructorFact, InstanceImports, Interface, ItemRef, LibraryId,
+    ModuleAlias, ModuleEdge, ModuleEnv, ModuleFileSnapshot, ModuleFsSnapshot, ModuleGraph,
+    ModuleId, ModuleImportSurface, ModuleImports, ModuleKey, ModulePathRef, ModuleTree, Namespace,
+    Origin, ResolvedModulePath, ValidationSummary, VisibleConstructors,
 };
 use modes::{BodyDiagnosticPolicy, CtorInclusion, ExportResolutionMode};
 use paths::{module_path_span, path_segments};

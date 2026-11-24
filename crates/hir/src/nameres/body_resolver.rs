@@ -311,6 +311,14 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
                             {
                                 return Resolution::Err;
                             }
+                            if let Some(diagnostic) = self.hidden_constructor_diag(
+                                qualifier_text,
+                                ident_text_str(self.db, name),
+                                name.span(self.db),
+                            ) {
+                                self.map.diagnostics.push(diagnostic);
+                                return Resolution::Err;
+                            }
                             let kind = if self.lookup_type(qualifier_text).is_some()
                                 || self.lookup_module(qualifier_text).is_some()
                             {
@@ -675,11 +683,16 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
                 } | Resolution::Builtin(BuiltinKind::Type(_) | BuiltinKind::Class(_))
             )
         ) {
-            self.map.diagnostics.push(self.undefined_name_diag(
-                field_text,
-                field.span(self.db),
-                UndefinedNameKind::Field,
-            ));
+            let diagnostic = self
+                .hidden_constructor_diag(&qualifier, field_text, field.span(self.db))
+                .unwrap_or_else(|| {
+                    self.undefined_name_diag(
+                        field_text,
+                        field.span(self.db),
+                        UndefinedNameKind::Field,
+                    )
+                });
+            self.map.diagnostics.push(diagnostic);
             return Some(Resolution::Err);
         }
 
@@ -759,6 +772,29 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
             private_candidate,
             hint,
         )
+    }
+
+    /// Returns an `SC0122` diagnostic when `qualifier` names an imported data
+    /// type whose constructor `name` the module it was imported from does not
+    /// export.
+    fn hidden_constructor_diag(
+        &self,
+        qualifier: &str,
+        name: &str,
+        span: Span<'db>,
+    ) -> Option<NameresDiagnostic> {
+        let Some(Resolution::Def {
+            def,
+            kind: DefResolutionKind::Adt,
+        }) = self.lookup_type(qualifier)
+        else {
+            return None;
+        };
+        let constructor = self.imports.hidden_constructor(self.db, def, name)?;
+        Some(NameresDiagnostic::HiddenConstructor {
+            span: LabelSpan::from_span(self.db, span),
+            constructor,
+        })
     }
 
     fn undefined_type_ctor_diag(&self, name: &str, span: Span<'db>) -> NameresDiagnostic {

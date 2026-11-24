@@ -78,6 +78,8 @@ impl DiagnosticCode {
     pub const MODULE_MISSING_EXTERNAL_ROOT: &'static str = "SC0118";
     pub const MODULE_AMBIGUOUS_SELECTED_IMPORT: &'static str = "SC0120";
     pub const MODULE_CONFLICTING_UNQUALIFIED_NAME: &'static str = "SC0121";
+    /// A constructor or field of an imported data type is not exported.
+    pub const NAMERES_HIDDEN_CONSTRUCTOR: &'static str = "SC0122";
 
     pub const TYPECK_MISMATCH: &'static str = "SC0201";
     pub const TYPECK_RECURSIVE_TYPE_OR_UNKNOWN_INSTANCE_METHOD: &'static str = "SC0202";
@@ -244,6 +246,10 @@ impl DiagnosticCode {
         DiagnosticCodeEntry::new(
             "MODULE_CONFLICTING_UNQUALIFIED_NAME",
             Self::MODULE_CONFLICTING_UNQUALIFIED_NAME,
+        ),
+        DiagnosticCodeEntry::new(
+            "NAMERES_HIDDEN_CONSTRUCTOR",
+            Self::NAMERES_HIDDEN_CONSTRUCTOR,
         ),
         DiagnosticCodeEntry::new("TYPECK_MISMATCH", Self::TYPECK_MISMATCH),
         DiagnosticCodeEntry::new(

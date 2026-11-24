@@ -1,0 +1,13 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/nameres/hidden_ctor_visible_elsewhere/main.sol
+---
+error[SC0101]: undefined name: Blue
+ --> /main/main.sol:7:18
+  |
+6 | function main() returns (Color) {
+7 |     return Color.Blue(0);
+  |                  ^^^^ unknown name
+8 | }
+  |

@@ -416,6 +416,20 @@ pub struct ModuleImportSurface<'db> {
     pub instances: Vec<Origin<'db>>,
 }
 
+/// Constructor of an imported data type that an import did not include.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, salsa::SalsaValue)]
+pub struct HiddenConstructorFact<'db> {
+    /// Data type that declares the constructor.
+    pub ty: DefId<'db>,
+    /// Position of the constructor in the data type declaration.
+    pub index: hir_nameres::CtorIndex,
+    /// Field names of the constructor with their declaration spans, empty for
+    /// an enum constructor.
+    pub fields: Vec<(String, LabelSpan)>,
+    /// Diagnostic details of the constructor.
+    pub constructor: hir_nameres::HiddenConstructor,
+}
+
 /// Imported-name environment supplied to HIR name resolution.
 ///
 /// This compatibility composite keeps diagnostics together with the import
@@ -429,6 +443,12 @@ pub struct ModuleEnv<'db> {
     pub item_scope: Option<hir_nameres::ItemScope<'db>>,
     /// Diagnostics found while building the import environment.
     pub diagnostics: Vec<ModuleDiagnostic<'db>>,
+    /// Constructors of imported data types that an import did not include.
+    /// Only diagnostics read them.
+    ///
+    /// A constructor listed here may still be visible through another import;
+    /// [`Self::find_hidden_constructor`] checks that against the surface terms.
+    pub hidden_constructors: Vec<HiddenConstructorFact<'db>>,
 }
 
 impl<'db> ModuleImportSurface<'db> {
@@ -459,6 +479,7 @@ impl<'db> ModuleEnv<'db> {
             surface: ModuleImportSurface::empty(),
             item_scope: None,
             diagnostics: Vec::new(),
+            hidden_constructors: Vec::new(),
         }
     }
 
@@ -592,6 +613,15 @@ impl<'db> hir_nameres::ImportedNames<'db> for ModuleEnv<'db> {
     ) -> Option<hir_nameres::PrivateCandidate> {
         self.surface
             .private_candidate(db, namespace, qualifier, name)
+    }
+
+    fn hidden_constructor(
+        &self,
+        _db: &'db dyn hir::Db,
+        ty: DefId<'db>,
+        name: &str,
+    ) -> Option<hir_nameres::HiddenConstructor> {
+        self.find_hidden_constructor(ty, name)
     }
 }
 

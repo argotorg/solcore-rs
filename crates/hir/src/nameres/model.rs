@@ -58,6 +58,23 @@ pub struct PrivateCandidate {
     pub span: LabelSpan,
 }
 
+/// Constructor of an imported data type that the module it was imported from
+/// does not export.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
+pub struct HiddenConstructor {
+    /// Name of the data type as declared.
+    pub type_name: String,
+    /// Name of the constructor as declared.
+    pub constructor: String,
+    /// Whether the constructor belongs to a struct, which has exactly one
+    /// constructor named like the type.
+    pub is_struct: bool,
+    /// Module the data type was imported from.
+    pub module: String,
+    /// Span of the constructor declaration.
+    pub span: LabelSpan,
+}
+
 /// Kind of user definition reached by a resolution.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub enum DefResolutionKind {
@@ -777,6 +794,17 @@ pub trait ImportedNames<'db> {
         _qualifier: &str,
         _name: &str,
     ) -> Option<PrivateCandidate> {
+        None
+    }
+
+    /// Returns the constructor `name` of the data type `ty` when `ty` is
+    /// imported without that constructor and no visible term resolves to it.
+    fn hidden_constructor(
+        &self,
+        _db: &'db dyn Db,
+        _ty: DefId<'db>,
+        _name: &str,
+    ) -> Option<HiddenConstructor> {
         None
     }
 }
