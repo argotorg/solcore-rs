@@ -478,12 +478,20 @@ fn validate_expression_statement_terminators(
         let is_final = index + 1 == stmts.len();
         match &stmt.kind {
             ParsedStmtKind::Expr {
+                expr,
                 trailing_semi: false,
-                ..
-            } if !(allow_final_unterminated && is_final) => errors.push(ParsedError::new(
-                stmt.span,
-                "expression statement requires trailing `;`; only a final named function body expression may omit it",
-            )),
+            } if !(allow_final_unterminated && is_final) => {
+                let mut error = ParsedError::new(
+                    stmt.span,
+                    "expression statement requires trailing `;`; only a final named function body expression may omit it",
+                );
+                if let Some((ty, name)) = typed_local_declaration(expr, stmts.get(index + 1)) {
+                    error = error.with_note(format!(
+                        "to declare a local variable, write `let {name}: {ty} = ...;`"
+                    ));
+                }
+                errors.push(error);
+            }
             ParsedStmtKind::Match { arms, .. } => {
                 for arm in arms {
                     validate_expression_statement_terminators(&arm.body, false, errors);
@@ -508,6 +516,25 @@ fn validate_expression_statement_terminators(
             _ => {}
         }
     }
+}
+
+/// Returns the type and variable names of a Solidity-style local declaration
+/// such as `address from = x;`, which parses as the expression statement
+/// `address` followed by the assignment `from = x;`.
+fn typed_local_declaration<'src>(
+    expr: &ParsedExpr<'src>,
+    next: Option<&ParsedStmt<'src>>,
+) -> Option<(&'src str, &'src str)> {
+    let ParsedExprKind::Ident((ty, _)) = &expr.kind else {
+        return None;
+    };
+    let ParsedStmtKind::Assign { lhs, .. } = &next?.kind else {
+        return None;
+    };
+    let ParsedExprKind::Ident((name, _)) = &lhs.kind else {
+        return None;
+    };
+    Some((ty, name))
 }
 
 #[cfg(test)]

@@ -1,0 +1,14 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/parse/typed_local_declaration/main.sol
+---
+error[SC0001]: expression statement requires trailing `;`; only a final named function body expression may omit it
+ --> /main/main.sol:4:5
+  |
+3 | function main() returns (word) {
+4 |     word total = 1;
+  |     ^^^^
+5 |     return total;
+  |
+  = note: to declare a local variable, write `let total: word = ...;`
