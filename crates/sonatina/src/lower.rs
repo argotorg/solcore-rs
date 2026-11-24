@@ -69,6 +69,7 @@ pub(super) fn translate_hull_program_returning_runtime_entry<'db>(
     db: &'db dyn HirDb,
     program: &HullProgram<'db>,
     entry: &str,
+    stamp_origins: bool,
 ) -> Result<Module, TranslationError> {
     let [object] = program.objects.as_slice() else {
         return Err(TranslationError::new(format!(
@@ -82,7 +83,7 @@ pub(super) fn translate_hull_program_returning_runtime_entry<'db>(
             object.name
         )));
     }
-    let mut translator = Translator::new(db, false);
+    let mut translator = Translator::new(db, stamp_origins);
     translator
         .returning_entries
         .insert("object0.inner0.init".to_owned(), entry.to_owned());

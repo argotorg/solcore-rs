@@ -76,6 +76,30 @@ pub fn compile_hull_program<'db>(
     options: CompileOptions,
 ) -> Result<Vec<CompiledObject>, TranslationError> {
     let module = lower::translate_hull_program(db, program, options.debug_info)?;
+    compile_module(program, module, options)
+}
+
+/// Compiles a contract whose runtime entry returns the named function's value.
+pub fn compile_hull_program_returning_runtime_entry<'db>(
+    db: &'db dyn HirDb,
+    program: &HullProgram<'db>,
+    entry: &str,
+    options: CompileOptions,
+) -> Result<Vec<CompiledObject>, TranslationError> {
+    let module = lower::translate_hull_program_returning_runtime_entry(
+        db,
+        program,
+        entry,
+        options.debug_info,
+    )?;
+    compile_module(program, module, options)
+}
+
+fn compile_module(
+    program: &HullProgram<'_>,
+    module: Module,
+    options: CompileOptions,
+) -> Result<Vec<CompiledObject>, TranslationError> {
     let mut compile = EvmCompile::new(module)
         .with_opt_level(options.opt_level)
         .with_observability(options.debug_info);

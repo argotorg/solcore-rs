@@ -3664,7 +3664,9 @@ dependencies = [
  "dir-test",
  "insta",
  "salsa",
+ "serde_json",
  "smallvec",
+ "solcore-ethdebug",
  "solcore-hir",
  "solcore-hir-ty",
  "solcore-hull",
@@ -3760,6 +3762,7 @@ dependencies = [
  "serde-wasm-bindgen",
  "serde_json",
  "solcore-compiler",
+ "solcore-ethdebug",
  "solcore-hir",
  "solcore-hir-ty",
  "solcore-hull",
@@ -3769,6 +3772,7 @@ dependencies = [
  "solcore-test-directives",
  "solcore-vfs",
  "solcore-yul",
+ "soldb-ethdebug",
  "sonatina-codegen",
  "wasm-bindgen",
 ]
@@ -3789,6 +3793,28 @@ dependencies = [
  "solcore-specialize",
  "solcore-test-utils",
  "url",
+]
+
+[[package]]
+name = "soldb-core"
+version = "0.4.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a099b7bff4fc351cbc4841b070bc070e9acc4f1fff06817a22b730bc7c3a0d2d"
+dependencies = [
+ "bytes",
+ "serde",
+ "thiserror",
+]
+
+[[package]]
+name = "soldb-ethdebug"
+version = "0.4.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "292dc072fc7e707163e823b6e29d0264cbb00c28167cfb65aa53e0a617650f20"
+dependencies = [
+ "serde",
+ "serde_json",
+ "soldb-core",
 ]
 
 [[package]]

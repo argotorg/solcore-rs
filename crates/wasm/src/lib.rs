@@ -5,6 +5,7 @@ mod bytecode;
 mod execution;
 mod sandbox;
 mod test_execution;
+mod trace;
 
 use std::{cell::RefCell, collections::BTreeMap, path::Path};
 
@@ -141,6 +142,10 @@ pub(crate) struct Options {
     pub(crate) emit_bytecode: bool,
     #[serde(default)]
     pub(crate) backend: backend::Backend,
+    #[serde(default)]
+    pub(crate) record_trace: bool,
+    #[serde(default)]
+    pub(crate) breakpoints: trace::Breakpoints,
 }
 
 #[derive(Clone, Serialize)]
@@ -231,7 +236,9 @@ pub(crate) fn run_impl(input: CompileInput) -> CompileResult {
         });
         if let Some(mut result) = cached {
             sandbox::take_events();
-            if let Some(execution) = sandbox::execute_cached(request, &key, &result.contracts) {
+            if let Some(execution) =
+                sandbox::execute_cached(input.options.backend, request, &key, &result.contracts)
+            {
                 result.execution = Some(execution);
                 result.sandbox = sandbox::info(&key);
                 result.events = sandbox::take_events();
@@ -488,7 +495,7 @@ fn run_backend(
             *execution = Some(if let Some(request) = manual {
                 sandbox::execute(options.backend, workspace, &program, request, sandbox_key)
             } else if tests.is_empty() && test_id.is_none() {
-                execution::execute(options.backend, workspace, &program)
+                execution::execute(options.backend, workspace, &program, options.record_trace)
             } else {
                 test_execution::execute(
                     options.backend,
@@ -497,6 +504,8 @@ fn run_backend(
                     tests,
                     test_id,
                     sandbox_key,
+                    (options.record_trace && options.backend == backend::Backend::Sonatina)
+                        .then_some(&options.breakpoints),
                 )
             });
         }
@@ -906,6 +915,7 @@ mod tests {
                 emit_abi: true,
                 emit_bytecode: false,
                 backend: crate::test_backend(),
+                ..Options::default()
             },
         ));
 
@@ -938,6 +948,7 @@ mod tests {
                 emit_abi: false,
                 emit_bytecode: false,
                 backend: crate::test_backend(),
+                ..Options::default()
             },
         ));
 
@@ -966,6 +977,7 @@ mod tests {
                 emit_abi: true,
                 emit_bytecode: false,
                 backend: crate::test_backend(),
+                ..Options::default()
             },
         ));
         assert!(
@@ -1017,6 +1029,7 @@ mod tests {
                 emit_abi: true,
                 emit_bytecode: false,
                 backend: crate::test_backend(),
+                ..Options::default()
             },
             test_id: None,
             sandbox_epoch: 0,
@@ -1027,6 +1040,7 @@ mod tests {
                 constructor_arguments: "[]".into(),
                 simulate: true,
                 reset: false,
+                record_trace: false,
                 caller: None,
             }),
         });
@@ -1064,6 +1078,7 @@ mod tests {
                 emit_abi: true,
                 emit_bytecode: false,
                 backend: crate::test_backend(),
+                ..Options::default()
             },
         ));
 
@@ -1110,6 +1125,7 @@ mod tests {
                 emit_abi: true,
                 emit_bytecode: false,
                 backend: crate::test_backend(),
+                ..Options::default()
             },
         });
 
@@ -1180,6 +1196,7 @@ mod tests {
                 emit_abi: false,
                 emit_bytecode: false,
                 backend: crate::test_backend(),
+                ..Options::default()
             },
         ));
 
@@ -1208,6 +1225,7 @@ mod tests {
                 emit_abi: false,
                 emit_bytecode: false,
                 backend: crate::test_backend(),
+                ..Options::default()
             },
         ));
 

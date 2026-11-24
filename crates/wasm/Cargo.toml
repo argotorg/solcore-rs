@@ -10,14 +10,16 @@ rust-version.workspace = true
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
+ethdebug = { path = "../ethdebug", package = "solcore-ethdebug" }
 solcore-test-directives = { path = "../test-directives" }
 hir = { workspace = true }
 hir-ty = { workspace = true }
 parser = { workspace = true }
 wasm-bindgen = "0.2"
-serde = { version = "1", features = ["derive"] }
+serde = { version = "1", features = ["derive", "rc"] }
 serde-wasm-bindgen = "0.6"
 serde_json = "1"
+soldb-ethdebug = "0.4.7"
 console_error_panic_hook = "0.1"
 compiler = { workspace = true }
 vfs = { workspace = true }

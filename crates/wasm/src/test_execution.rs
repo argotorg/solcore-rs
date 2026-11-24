@@ -3,6 +3,7 @@
 use crate::backend::Backend;
 use crate::execution::{CALLER, RunResult, RunStatus};
 use crate::sandbox::Sandbox;
+use crate::trace::Breakpoints;
 use hir::ast::item::{ContractItem, FuncKind, Item};
 use hir_ty::{AbiParam, AbiType};
 use nameres::Db as _;
@@ -264,6 +265,7 @@ pub(crate) fn execute(
     tests: &mut [TestCase],
     selected: Option<&str>,
     sandbox_key: &str,
+    breakpoints: Option<&Breakpoints>,
 ) -> RunResult {
     if selected.is_some_and(|id| !tests.iter().any(|t| t.id == id)) {
         return RunResult::error(
@@ -276,6 +278,7 @@ pub(crate) fn execute(
         .filter(|t| selected.is_none_or(|id| t.id == id))
         .map(|t| t.contract.clone())
         .collect::<std::collections::BTreeSet<_>>();
+    let mut retained_stop = false;
     for contract in contracts {
         let indices = tests
             .iter()
@@ -283,6 +286,7 @@ pub(crate) fn execute(
             .filter(|(_, t)| t.contract == contract)
             .map(|(i, _)| i)
             .collect::<Vec<_>>();
+        let capture = breakpoints.is_some() && (!retained_stop || selected.is_some());
         let deploy = || {
             Sandbox::deploy(
                 backend,
@@ -293,11 +297,19 @@ pub(crate) fn execute(
                 "[]",
                 CALLER,
                 sandbox_key,
+                capture,
             )
         };
-        if let Err(message) =
-            execute_contract(workspace, tests, &indices, &contract, selected, deploy)
-        {
+        if let Err(message) = execute_contract(
+            workspace,
+            tests,
+            &indices,
+            &contract,
+            selected,
+            deploy,
+            breakpoints,
+            &mut retained_stop,
+        ) {
             for i in indices {
                 if selected.is_none_or(|id| tests[i].id == id) && tests[i].status == "ready" {
                     tests[i].status = "error";
@@ -321,6 +333,7 @@ pub(crate) fn execute(
     result
 }
 
+#[allow(clippy::too_many_arguments)]
 fn execute_contract(
     workspace: &Workspace,
     tests: &mut [TestCase],
@@ -328,6 +341,8 @@ fn execute_contract(
     contract: &str,
     selected: Option<&str>,
     deploy: impl FnOnce() -> Result<Sandbox, String>,
+    breakpoints: Option<&Breakpoints>,
+    retained_stop: &mut bool,
 ) -> Result<(), String> {
     let abis = compiler::collect_contract_abis(
         workspace.db(),
@@ -362,7 +377,9 @@ fn execute_contract(
         }
         let data =
             hex::decode(call.calldata.trim_start_matches("0x")).map_err(|e| e.to_string())?;
-        let called = sandbox.call(CALLER, Bytes::from(data), send);
+        let keep_selected = selected.is_some() && is_selected;
+        let record = breakpoints.is_some() && (!*retained_stop || keep_selected);
+        let (called, replay) = sandbox.call_recorded(CALLER, Bytes::from(data), send, record);
         let mut event_result = match &called {
             Ok(result) => RunResult::from_evm(result.clone(), "call"),
             Err(message) => RunResult::error("call", message),
@@ -385,6 +402,7 @@ fn execute_contract(
             expected: tests[i].expected.clone(),
             passed: None,
             result: event_result,
+            replay: None,
         };
         tests[i].replayed = !is_selected;
         let result = match called {
@@ -392,6 +410,7 @@ fn execute_contract(
             Err(message) => {
                 tests[i].status = "error";
                 tests[i].message = Some(message.clone());
+                event.replay = replay;
                 crate::sandbox::record(event);
                 return Err(message);
             }
@@ -426,6 +445,15 @@ fn execute_contract(
             (_, ExecutionResult::Halt { reason, .. }) => (false, format!("halt: {reason:?}")),
         };
         event.passed = Some(passed);
+        if let Some(recording) = replay {
+            let should_stop = !*retained_stop
+                && (!passed || breakpoints.is_some_and(|lines| recording.hits_breakpoint(lines)));
+            *retained_stop |=
+                should_stop && matches!(recording, crate::trace::Replay::Ready { .. });
+            if should_stop || keep_selected {
+                event.replay = Some(recording);
+            }
+        }
         crate::sandbox::record(event);
         tests[i].status = if passed { "passed" } else { "failed" };
         tests[i].actual = Some(actual.clone());

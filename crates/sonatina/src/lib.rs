@@ -2,6 +2,7 @@
 //! code bytes to source origins.
 
 mod compile;
+pub mod debug;
 mod lower;
 
 use std::{error::Error, fmt};
@@ -12,6 +13,7 @@ use sonatina_ir::{Module, ir_writer::ModuleWriter};
 
 pub use compile::{
     CompileOptions, CompiledObject, CompiledSection, OptLevel, PcRange, compile_hull_program,
+    compile_hull_program_returning_runtime_entry,
 };
 
 /// A failure while translating typed Hull into Sonatina IR.
@@ -69,7 +71,7 @@ pub fn translate_hull_program_returning_runtime_entry<'db>(
     program: &HullProgram<'db>,
     entry: &str,
 ) -> Result<Module, TranslationError> {
-    lower::translate_hull_program_returning_runtime_entry(db, program, entry)
+    lower::translate_hull_program_returning_runtime_entry(db, program, entry, false)
 }
 
 /// Lowers and prints a checked Hull program as textual Sonatina IR.
