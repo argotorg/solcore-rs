@@ -31,7 +31,6 @@ error[SC0101]: undefined name: Method
    |          ^ unknown name
 27 |     function echo(value: word) public returns (word) {
    |
-   = help: did you mean `Mod`?
 ---
 
 error[SC0101]: undefined name: RunContract
