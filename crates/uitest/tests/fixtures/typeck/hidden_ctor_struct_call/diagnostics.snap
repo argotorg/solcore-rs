@@ -1,0 +1,21 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/typeck/hidden_ctor_struct_call/main.sol
+---
+error[SC0122]: the constructor of `Box` is not exported by module `lib`
+  --> /main/main.sol:6:12
+   |
+ 5 | function main() returns (Box) {
+ 6 |     return Box(1);
+   |            ^^^ constructor not exported
+ 7 | }
+   |
+  ::: /main/lib.sol:9
+   |
+ 9 |
+10 | struct Box {
+   |        --- constructor declared here
+11 |     value: word;
+   |
+   = note: module `lib` exports `Box` without this constructor

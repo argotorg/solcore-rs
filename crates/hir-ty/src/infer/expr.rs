@@ -161,9 +161,11 @@ impl<'db> InferCtx<'db> {
                 let receiver =
                     (!self.is_namespace_expr(body, *base)).then(|| self.infer_expr(body, *base));
                 let resolution = self.expr_resolutions.get(&(body, expr_id)).cloned();
+                let mut hidden_field = None;
                 if resolution.is_none()
                     && let Some(receiver) = receiver.clone()
-                    && let Some(field_ty) = self.infer_struct_field(body, expr_id, *base, receiver)
+                    && let Some(field_ty) =
+                        self.infer_struct_field(body, expr_id, *base, receiver, &mut hidden_field)
                 {
                     field_ty
                 } else if resolution.is_none()
@@ -175,14 +177,18 @@ impl<'db> InferCtx<'db> {
                     let resolution = if let Some(resolution) = resolution {
                         resolution
                     } else {
-                        self.emit_expr_error(
-                            body,
-                            expr_id,
-                            TypeckDiagnostic::UnknownField {
-                                span: self.field_label_span(body, expr_id),
-                                field: self.field_name(body, expr_id),
+                        let span = self.field_label_span(body, expr_id);
+                        let field = self.field_name(body, expr_id);
+                        let diagnostic = match hidden_field {
+                            Some((constructor, declaration)) => TypeckDiagnostic::HiddenField {
+                                span,
+                                field,
+                                declaration,
+                                constructor,
                             },
-                        );
+                            None => TypeckDiagnostic::UnknownField { span, field },
+                        };
+                        self.emit_expr_error(body, expr_id, diagnostic);
                         hir_nameres::Resolution::Err
                     };
                     self.infer_resolution(body, expr_id, resolution)
@@ -273,12 +279,16 @@ impl<'db> InferCtx<'db> {
         actual
     }
 
+    /// Types a field projection on a struct value. When the struct's
+    /// constructor is not visible, returns `None` and stores the hidden
+    /// constructor that declares the field in `hidden_field`.
     fn infer_struct_field(
         &mut self,
         body: FuncBody<'db>,
         expr: Id<Expr<'db>>,
         base: Id<Expr<'db>>,
         receiver: InferTy<'db>,
+        hidden_field: &mut Option<(hir_nameres::HiddenConstructor, LabelSpan)>,
     ) -> Option<InferTy<'db>> {
         let loaded_receiver = receiver.clone();
         // CanStore's output is chosen by the solver after expression inference.
@@ -308,6 +318,8 @@ impl<'db> InferCtx<'db> {
         // A projection exposes the product representation just like a
         // constructor pattern.
         if !self.is_adt_ctor_visible(*def, hir_nameres::CtorIndex::from_usize(0)) {
+            let field = self.field_name(body, expr);
+            *hidden_field = self.hidden_field_constructor(*def, &field);
             return None;
         }
         let field = self.field_name(body, expr);

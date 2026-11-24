@@ -1,0 +1,39 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/typeck/hidden_field_storage/main.sol
+---
+error[SC0122]: field `value` of `Box` is not exported by module `lib`
+  --> /main/main.sol:11:20
+   |
+10 |     function read() public returns (uint256) {
+11 |         return box.value;
+   |                    ^^^^^ field not exported
+12 |     }
+   |
+  ::: /main/lib.sol:9
+   |
+ 9 | struct Box {
+10 |     value: uint256;
+   |     ----- field declared here
+11 | }
+   |
+   = note: module `lib` exports `Box` without its constructor, which also hides its fields
+---
+
+error[SC0122]: field `value` of `Box` is not exported by module `lib`
+  --> /main/main.sol:15:13
+   |
+14 |     function write() public {
+15 |         box.value = 1;
+   |             ^^^^^ field not exported
+16 |     }
+   |
+  ::: /main/lib.sol:9
+   |
+ 9 | struct Box {
+10 |     value: uint256;
+   |     ----- field declared here
+11 | }
+   |
+   = note: module `lib` exports `Box` without its constructor, which also hides its fields

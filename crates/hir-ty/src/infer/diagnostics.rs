@@ -146,6 +146,25 @@ pub enum TypeckDiagnostic {
         /// Callee type snapshot.
         callee: String,
     },
+    /// `SC0122`: a constructor of an imported data type is not exported.
+    HiddenConstructor {
+        /// Source span for the constructor reference.
+        span: LabelSpan,
+        /// The hidden constructor.
+        constructor: hir_nameres::HiddenConstructor,
+    },
+    /// `SC0122`: a field of an imported data type is hidden together with its
+    /// constructor.
+    HiddenField {
+        /// Source span for the field projection.
+        span: LabelSpan,
+        /// Field name.
+        field: String,
+        /// Span of the field declaration.
+        declaration: LabelSpan,
+        /// The hidden constructor that declares the field.
+        constructor: hir_nameres::HiddenConstructor,
+    },
     /// `SC0228`: a non-value namespace item appeared in value position.
     NamespaceAsValue {
         /// Source span for the invalid value occurrence.
@@ -694,6 +713,15 @@ impl TypeckDiagnostic {
                     .with_code(DiagnosticCode::TYPECK_NON_CALLABLE)
                     .with_primary_label_span(span.clone(), Some("callee is not callable"))
             }
+            TypeckDiagnostic::HiddenConstructor { span, constructor } => {
+                hir_nameres::hidden_constructor_diagnostic(span, constructor)
+            }
+            TypeckDiagnostic::HiddenField {
+                span,
+                field,
+                declaration,
+                constructor,
+            } => hir_nameres::hidden_field_diagnostic(span, field, declaration, constructor),
             TypeckDiagnostic::NamespaceAsValue {
                 span,
                 name,
