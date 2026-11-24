@@ -195,6 +195,17 @@ fn module_path_suggestion<'db>(
     let parent = file_path.parent()?;
     let requested = file_path.file_stem()?.to_str()?;
     let mut segments = path_segments(db, path);
+    // `ownable.sol` names `ownable/sol.sol`; suggest `ownable` when `ownable.sol` exists.
+    if segments.len() > 1
+        && requested == "sol"
+        && db
+            .module_fs_snapshot()
+            .existing_files(db)
+            .contains(&parent.with_extension("sol"))
+    {
+        segments.pop();
+        return Some(segments.join("."));
+    }
     let candidates = db
         .module_fs_snapshot()
         .sibling_stems(db)

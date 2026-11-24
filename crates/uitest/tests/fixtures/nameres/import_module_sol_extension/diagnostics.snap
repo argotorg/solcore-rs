@@ -1,0 +1,15 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/nameres/import_module_sol_extension/main.sol
+---
+error[SC0109]: import helpers.sol: file not found
+ --> /main/main.sol:3:29
+  |
+2 |
+3 | import { helperValue } from helpers.sol;
+  |                             ^^^^^^^^^^^ module reference
+4 |
+  |
+  = help: check the module path or add the missing source file
+  = help: module paths leave out the `.sol` extension: write `helpers`

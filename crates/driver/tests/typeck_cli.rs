@@ -285,6 +285,42 @@ fn cli_reports_reachable_missing_external_lib_root() {
 }
 
 #[test]
+fn cli_reports_missing_module_at_the_import() {
+    let dir = temp_dir("missing-module");
+    fs::create_dir_all(&dir).expect("create temp dir");
+    let input = dir.join("main.sol");
+    fs::write(
+        &input,
+        "pragma solcore;\nimport util.sol;\nfunction main() returns (word) { return 0; }\n",
+    )
+    .expect("write source");
+    fs::write(dir.join("util.sol"), "pragma solcore;\n").expect("write dependency");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_solcore-driver"))
+        .arg("--color=never")
+        .arg("--root")
+        .arg(&dir)
+        .arg(&input)
+        .output()
+        .expect("run driver");
+
+    let _ = fs::remove_dir_all(&dir);
+
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("error[SC0109]: import util.sol: file not found")
+            && stderr.contains("main.sol:2:8")
+            && stderr.contains("module paths leave out the `.sol` extension: write `util`"),
+        "stderr:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("failed to read module"),
+        "stderr should report the missing module at the import:\n{stderr}"
+    );
+}
+
+#[test]
 fn cli_reports_unreadable_reachable_module_as_io_error() {
     let dir = temp_dir("invalid-utf8-module");
     fs::create_dir_all(&dir).expect("create temp dir");
