@@ -1,5 +1,8 @@
 //! Persistent manual calls and temporary test deployments in the browser worker.
-use std::cell::{Cell, RefCell};
+use std::{
+    cell::{Cell, RefCell},
+    rc::Rc,
+};
 
 use crate::{
     execution::{
@@ -7,11 +10,12 @@ use crate::{
         transaction_gas_limit,
     },
     test_execution::{abi_shape, display_output},
+    trace::{self, Recorder, Replay},
 };
 use hir::ast::item::Item;
 use nameres::Db as _;
 use revm::{
-    Context, ExecuteCommitEvm, ExecuteEvm, MainBuilder, MainContext,
+    Context, ExecuteCommitEvm, ExecuteEvm, InspectCommitEvm, InspectEvm, MainBuilder, MainContext,
     context::TxEnv,
     context_interface::result::{ExecutionResult, Output},
     database::InMemoryDB,
@@ -57,6 +61,8 @@ pub(crate) struct Request {
     pub simulate: bool,
     #[serde(default)]
     pub reset: bool,
+    #[serde(default)]
+    pub record_trace: bool,
     /// Hex address of the account making the call; the default account if absent.
     #[serde(default)]
     pub caller: Option<String>,
@@ -194,6 +200,8 @@ pub(crate) struct Event {
     pub expected: Option<String>,
     pub passed: Option<bool>,
     pub result: RunResult,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub replay: Option<Replay>,
 }
 thread_local! {
     static EVENTS: RefCell<Vec<Event>> = const { RefCell::new(Vec::new()) };
@@ -214,8 +222,26 @@ pub(crate) struct Sandbox {
     key: String,
     contract: String,
     methods: Vec<Method>,
+    trace_program: Option<Result<Rc<trace::Program>, String>>,
 }
 thread_local! { static SESSION: RefCell<Option<Sandbox>> = const { RefCell::new(None) }; }
+
+fn deploy_program<'db>(
+    program: &hull::Program<'db>,
+    contract: &str,
+) -> Result<hull::Program<'db>, String> {
+    let mut program = program.clone();
+    let name = format!("{contract}Deploy");
+    program
+        .objects
+        .retain(|object| object.name.as_str() == name);
+    program.functions.clear();
+    program.entry_points.clear();
+    if program.objects.len() != 1 {
+        return Err("Could not find the contract's deploy object.".to_owned());
+    }
+    Ok(program)
+}
 
 impl Sandbox {
     #[allow(clippy::too_many_arguments)]
@@ -228,8 +254,18 @@ impl Sandbox {
         arguments: &str,
         caller: Address,
         key: &str,
+        record_trace: bool,
     ) -> Result<Self, String> {
-        let deployed = Self::deploy_inner(backend, workspace, program, contract, args, caller, key);
+        let deployed = Self::deploy_inner(
+            backend,
+            workspace,
+            program,
+            contract,
+            args,
+            caller,
+            key,
+            record_trace,
+        );
         let result = match &deployed {
             Ok(sandbox) => sandbox.deployment.clone(),
             Err(message) => RunResult::error("deploy", message),
@@ -245,9 +281,11 @@ impl Sandbox {
             expected: None,
             passed: None,
             result,
+            replay: None,
         });
         deployed
     }
+    #[allow(clippy::too_many_arguments)]
     fn deploy_inner(
         backend: Backend,
         workspace: &Workspace,
@@ -256,21 +294,30 @@ impl Sandbox {
         args: &[u8],
         caller: Address,
         key: &str,
+        record_trace: bool,
     ) -> Result<Self, String> {
-        let mut program = program.clone();
-        program
-            .objects
-            .retain(|o| o.name.as_str() == format!("{contract}Deploy"));
-        program.functions.clear();
-        program.entry_points.clear();
-        if program.objects.len() != 1 {
-            return Err("Could not find the contract's deploy object.".to_owned());
+        let program = deploy_program(program, contract)?;
+        let db = workspace.db();
+        let compile_plain = || {
+            backend::compile_program(backend, db, &program)?
+                .pop()
+                .map(|object| object.init)
+                .ok_or_else(|| "Missing deploy object.".to_owned())
+        };
+        let (mut bytecode, trace_program) = if record_trace && backend == Backend::Sonatina {
+            match trace::compile(db, &program, None) {
+                Ok(object) => {
+                    let snapshot = trace::Program::new(db, &program, &object).map(Rc::new);
+                    (object.init.bytes, Some(snapshot))
+                }
+                Err(error) => (compile_plain()?, Some(Err(error))),
+            }
+        } else {
+            (compile_plain()?, None)
+        };
+        if bytecode.is_empty() {
+            return Err("Missing init bytecode.".to_owned());
         }
-        let mut bytecode = backend::compile_program(backend, workspace.db(), &program)?
-            .pop()
-            .map(|object| object.init)
-            .filter(|init| !init.is_empty())
-            .ok_or("Missing init bytecode.")?;
         bytecode.extend_from_slice(args);
         // Like anvil, every account starts funded, whether or not it ever calls.
         let mut db = InMemoryDB::default();
@@ -296,8 +343,9 @@ impl Sandbox {
                 .find(|c| c.name == contract)
                 .map(|c| c.methods)
                 .unwrap_or_default(),
+            trace_program,
         };
-        let result = sandbox.transact(caller, TxKind::Create, bytecode.into(), true)?;
+        let result = sandbox.transact(caller, TxKind::Create, bytecode.into(), true, None)?;
         sandbox.deployment = RunResult::from_evm(result.clone(), "deploy");
         sandbox.address = match result {
             ExecutionResult::Success {
@@ -314,6 +362,7 @@ impl Sandbox {
         kind: TxKind,
         data: Bytes,
         commit: bool,
+        recorder: Option<&mut Recorder>,
     ) -> Result<ExecutionResult, String> {
         // Each caller keeps its own nonce.
         let nonce = self
@@ -322,7 +371,7 @@ impl Sandbox {
             .accounts
             .get(&caller)
             .map_or(0, |account| account.info.nonce);
-        let mut evm = Context::mainnet()
+        let context = Context::mainnet()
             .with_db(&mut self.db)
             .modify_cfg_chained(|cfg| {
                 cfg.set_spec_and_mainnet_gas_params(SpecId::OSAKA);
@@ -333,8 +382,7 @@ impl Sandbox {
                 block.gas_limit = DEPLOYMENT_GAS_LIMIT;
                 block.number = U256::from(1);
                 block.timestamp = U256::from(1);
-            })
-            .build_mainnet();
+            });
         let tx = TxEnv::builder()
             .caller(caller)
             .kind(kind)
@@ -343,13 +391,26 @@ impl Sandbox {
             .gas_limit(transaction_gas_limit(kind))
             .gas_price(0)
             .build_fill();
-        if commit {
-            evm.transact_commit(tx).map_err(|e| e.to_string())
+        let result = if let Some(recorder) = recorder {
+            let mut evm = context.build_mainnet_with_inspector(recorder);
+            if commit {
+                evm.inspect_tx_commit(tx)
+            } else {
+                evm.inspect_tx(tx).map(|r| r.result)
+            }
         } else {
-            evm.transact(tx)
-                .map(|r| r.result)
-                .map_err(|e| e.to_string())
-        }
+            let mut evm = context.build_mainnet();
+            if commit {
+                evm.transact_commit(tx)
+            } else {
+                evm.transact(tx).map(|r| r.result)
+            }
+        };
+        result.map_err(|e| e.to_string())
+    }
+
+    fn needs_trace_program(&self, backend: Backend, request: &Request) -> bool {
+        request.record_trace && backend == Backend::Sonatina && self.trace_program.is_none()
     }
     pub(crate) fn call(
         &mut self,
@@ -357,7 +418,47 @@ impl Sandbox {
         data: Bytes,
         commit: bool,
     ) -> Result<ExecutionResult, String> {
-        self.transact(caller, TxKind::Call(self.address), data, commit)
+        self.transact(caller, TxKind::Call(self.address), data, commit, None)
+    }
+
+    pub(crate) fn call_recorded(
+        &mut self,
+        caller: Address,
+        data: Bytes,
+        commit: bool,
+        record_trace: bool,
+    ) -> (Result<ExecutionResult, String>, Option<Replay>) {
+        if !record_trace {
+            return (self.call(caller, data, commit), None);
+        }
+        let program = match &self.trace_program {
+            Some(Ok(program)) => Rc::clone(program),
+            status => {
+                let message = status
+                    .as_ref()
+                    .and_then(|entry| entry.as_ref().err())
+                    .map_or(
+                        "Source debugging is available with the Sonatina backend.",
+                        String::as_str,
+                    );
+                let replay = Replay::unavailable(message);
+                return (self.call(caller, data, commit), Some(replay));
+            }
+        };
+        let mut recorder = Recorder::new(program);
+        let result = self.transact(
+            caller,
+            TxKind::Call(self.address),
+            data,
+            commit,
+            Some(&mut recorder),
+        );
+        let replay = if result.is_ok() {
+            recorder.finish()
+        } else {
+            Replay::unavailable("The call stopped before a recording was available.")
+        };
+        (result, Some(replay))
     }
 }
 #[cfg(test)]
@@ -413,15 +514,24 @@ pub(crate) fn execute(
                     &request.constructor_arguments,
                     caller,
                     key,
+                    request.record_trace,
                 )?);
             }
-            Ok::<_, String>(invoke(
-                session.as_mut().unwrap(),
-                request,
-                method,
-                caller,
-                data.into(),
-            ))
+            let session = session.as_mut().unwrap();
+            if session.needs_trace_program(backend, request) {
+                // The sandbox key matches this workspace. Build the debug map on
+                // demand and keep the live deployment and its storage.
+                session.trace_program = Some(
+                    deploy_program(program, &contract.name)
+                        .and_then(|program| {
+                            let db = workspace.db();
+                            let object = trace::compile(db, &program, None)?;
+                            trace::Program::new(db, &program, &object)
+                        })
+                        .map(Rc::new),
+                );
+            }
+            Ok::<_, String>(invoke(session, request, method, caller, data.into()))
         })
     })();
     result.unwrap_or_else(|message| RunResult::error("prepare", message))
@@ -429,6 +539,7 @@ pub(crate) fn execute(
 
 /// Invoke only an existing matching deployment; otherwise the caller must compile.
 pub(crate) fn execute_cached(
+    backend: Backend,
     request: &Request,
     key: &str,
     contracts: &[Contract],
@@ -436,7 +547,11 @@ pub(crate) fn execute_cached(
     SESSION.with(|session| {
         let mut session = session.borrow_mut();
         let session = session.as_mut()?;
-        if request.reset || session.key != key || session.contract != request.contract {
+        if request.reset
+            || session.key != key
+            || session.contract != request.contract
+            || session.needs_trace_program(backend, request)
+        {
             return None;
         }
         let result = (|| {
@@ -466,7 +581,8 @@ fn invoke(
     caller: Address,
     data: Bytes,
 ) -> RunResult {
-    let called = session.call(caller, data, !request.simulate);
+    let (called, replay) =
+        session.call_recorded(caller, data, !request.simulate, request.record_trace);
     let decoded = match &called {
         Ok(ExecutionResult::Success { output, .. }) => {
             Some(display_output(output.data(), &method.outputs))
@@ -488,6 +604,7 @@ fn invoke(
         expected: None,
         passed: None,
         result: result.clone(),
+        replay,
     });
     result
 }
@@ -584,13 +701,14 @@ mod tests {
             key: String::new(),
             contract: String::new(),
             methods: vec![],
+            trace_program: None,
         };
         // A 6,000-byte runtime whose first instruction sequence loops forever.
         // Depositing it needs over 1m gas, but calling it must still stop at 1m.
         let mut init = revm::primitives::hex::decode("61177061000d5f396117705ff35b600056").unwrap();
         init.resize(13 + 6_000, 0);
         let deployment = sandbox
-            .transact(CALLER, TxKind::Create, init.into(), true)
+            .transact(CALLER, TxKind::Create, init.into(), true, None)
             .unwrap();
         assert!(deployment.tx_gas_used() > CALL_GAS_LIMIT);
         assert!(deployment.tx_gas_used() < DEPLOYMENT_GAS_LIMIT);
@@ -652,6 +770,7 @@ contract Counter {
             constructor_arguments: "[]".into(),
             simulate,
             reset: false,
+            record_trace: false,
             caller: None,
         });
         let result = run_impl(input);
@@ -667,6 +786,7 @@ contract Counter {
         clear();
         let first = call(SOURCE, "set(uint256)", "[5]", false, 0);
         let key = input(SOURCE).sandbox_key();
+        let backend = crate::test_backend();
         let mut request = Request {
             contract: "Counter".into(),
             signature: "read()".into(),
@@ -674,26 +794,27 @@ contract Counter {
             constructor_arguments: "[]".into(),
             simulate: false,
             reset: false,
+            record_trace: false,
             caller: None,
         };
         assert_eq!(
-            execute_cached(&request, &key, &first.contracts)
+            execute_cached(backend, &request, &key, &first.contracts)
                 .unwrap()
                 .decoded
                 .as_deref(),
             Some("5")
         );
-        assert!(execute_cached(&request, "changed source", &first.contracts).is_none());
+        assert!(execute_cached(backend, &request, "changed source", &first.contracts).is_none());
         request.reset = true;
-        assert!(execute_cached(&request, &key, &first.contracts).is_none());
+        assert!(execute_cached(backend, &request, &key, &first.contracts).is_none());
         request.reset = false;
         request.contract = "Other".into();
-        assert!(execute_cached(&request, &key, &first.contracts).is_none());
+        assert!(execute_cached(backend, &request, &key, &first.contracts).is_none());
         request.contract = "Counter".into();
         request.signature = "set(uint256)".into();
         request.arguments = "[false]".into();
         assert_eq!(
-            execute_cached(&request, &key, &first.contracts)
+            execute_cached(backend, &request, &key, &first.contracts)
                 .unwrap()
                 .status,
             crate::execution::RunStatus::Error
@@ -707,7 +828,7 @@ contract Counter {
             Some("5")
         );
         clear();
-        assert!(execute_cached(&request, &key, &first.contracts).is_none());
+        assert!(execute_cached(backend, &request, &key, &first.contracts).is_none());
     }
 
     #[test]
@@ -887,6 +1008,7 @@ contract Tally {
                 constructor_arguments: "[]".into(),
                 simulate: false,
                 reset: false,
+                record_trace: false,
                 caller: caller.map(Into::into),
             });
             let result = run_impl(input);
@@ -959,6 +1081,7 @@ contract Tally {
             constructor_arguments: r#"["42"]"#.into(),
             simulate: true,
             reset: false,
+            record_trace: false,
             caller: None,
         });
         let result = run_impl(input);

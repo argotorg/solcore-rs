@@ -7,6 +7,8 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+ethdebug = { path = "../ethdebug", package = "solcore-ethdebug" }
+serde_json = "1"
 hir = { workspace = true }
 hull = { path = "../hull", package = "solcore-hull" }
 smallvec = { workspace = true }

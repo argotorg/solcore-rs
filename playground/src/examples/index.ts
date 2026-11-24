@@ -22,6 +22,8 @@ import comptimeAnswer from "./comptime/Answer.sol?raw";
 import workshop1Token from "./workshop-1/Token.sol?raw";
 import workshop1DoneToken from "./workshop-1-done/Token.sol?raw";
 import workshop2Token from "./workshop-2/Token.sol?raw";
+import replayCheckout from "./replay-call/Checkout.sol?raw";
+import replayFee from "./replay-call/fee.sol?raw";
 import workshop2DoneToken from "./workshop-2-done/Token.sol?raw";
 import workshop3Token from "./workshop-3/Token.sol?raw";
 import workshop3Ownable from "./workshop-3/ownable.sol?raw";
@@ -72,6 +74,16 @@ export const examples: PlaygroundExample[] = [
     entry: "Hello.sol",
     files: [
       { path: "Hello.sol", content: contractOutputHello },
+    ],
+  },
+  {
+    id: "replay-call",
+    name: "Replay a failed call",
+    description: "Call checkout with [8] to inspect the revert in the editor.",
+    entry: "Checkout.sol",
+    files: [
+      { path: "Checkout.sol", content: replayCheckout },
+      { path: "fee.sol", content: replayFee },
     ],
   },
   {

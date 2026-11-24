@@ -115,7 +115,7 @@ test('project view links restore files, tests, backend, and history without runn
     const href = window.location.href;
     assert.equal(new URL(href).searchParams.get('project'), '../projects/one.json');
     assert.equal(new URL(href).searchParams.get('embed'), '1');
-    assert.match(new URL(href).hash, /^#\/project\?/);
+    assert.equal(new URL(href).hash, '#/project');
     store.getState().setRunActivity('tests');
     const count = window.history.entries.length;
     window.location = new URL(href);

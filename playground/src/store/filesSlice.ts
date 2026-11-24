@@ -76,6 +76,7 @@ interface PersistedWorkspace {
   entry: string;
   activePath: string;
   exampleId: string;
+  breakpoints?: Breakpoints;
 }
 
 function readStoredWorkspace(): PersistedWorkspace | null {
@@ -136,7 +137,14 @@ function readStoredWorkspace(): PersistedWorkspace | null {
         ? parsed.exampleId
         : defaultExample.id);
 
-    return { files, order, entry, activePath, exampleId };
+    const breakpoints = Object.fromEntries(files.flatMap(({ path, content }) => {
+      const lines = parsed.breakpoints?.[path];
+      const count = content.split(/\r\n|\r|\n/).length;
+      if (!Array.isArray(lines)) return [];
+      const valid = [...new Set(lines.filter((line) => Number.isInteger(line) && line > 0 && line <= count))].sort((a, b) => a - b);
+      return valid.length ? [[path, valid]] : [];
+    }));
+    return { files, order, entry, activePath, exampleId, breakpoints };
   } catch {
     return null;
   }
@@ -174,6 +182,7 @@ export function persistWorkspace(state: WorkspaceState): void {
     entry: state.entry,
     activePath: state.activePath,
     exampleId: state.exampleId,
+    breakpoints: state.breakpoints,
   };
 
   try {
@@ -214,6 +223,8 @@ export interface WorkspaceFile {
   content: string;
 }
 
+export type Breakpoints = Record<string, readonly number[]>;
+
 export interface FilesSlice {
   files: Record<string, WorkspaceFile>;
   order: string[];
@@ -221,6 +232,8 @@ export interface FilesSlice {
   activePath: string;
   exampleId: string;
   workspaceVersion: number;
+  breakpoints: Breakpoints;
+  setBreakpoints: (path: string, lines: readonly number[]) => void;
   setContent: (path: string, content: string) => void;
   createFile: (path: string) => string;
   renameFile: (from: string, to: string) => string | null;
@@ -242,6 +255,8 @@ export function createFilesSlice(set: StoreApi<WorkspaceState>["setState"], get:
       runActivity: "calls",
       viewedTestId: null,
       sourceSelection: null,
+      replayLocation: null,
+      breakpoints: {},
     }));
     persistWorkspace(get());
   };
@@ -249,6 +264,18 @@ export function createFilesSlice(set: StoreApi<WorkspaceState>["setState"], get:
   return {
     ...initialWorkspace,
     workspaceVersion: 0,
+    breakpoints: storedWorkspace?.breakpoints ?? {},
+    setBreakpoints(path, lines) {
+      const state = get();
+      if (!Object.hasOwn(state.files, path)) return;
+      const previous = state.breakpoints[path] ?? [];
+      if (lines.length === previous.length && lines.every((line, i) => line === previous[i])) return;
+      const breakpoints = { ...state.breakpoints };
+      if (lines.length) breakpoints[path] = lines;
+      else delete breakpoints[path];
+      set({ breakpoints });
+      persistWorkspace(get());
+    },
     setContent(path, content) {
       const normalizedPath = normalizePath(path);
 
@@ -309,6 +336,11 @@ export function createFilesSlice(set: StoreApi<WorkspaceState>["setState"], get:
 
       set((currentState) => {
         const nextFiles = { ...currentState.files };
+        const breakpoints = { ...currentState.breakpoints };
+        if (Object.hasOwn(breakpoints, fromPath)) {
+          breakpoints[toPath] = breakpoints[fromPath];
+          if (toPath !== fromPath) delete breakpoints[fromPath];
+        }
         delete nextFiles[fromPath];
         nextFiles[toPath] = {
           path: toPath,
@@ -317,6 +349,7 @@ export function createFilesSlice(set: StoreApi<WorkspaceState>["setState"], get:
 
         return {
           files: nextFiles,
+          breakpoints,
           order: currentState.order.map((path) => (path === fromPath ? toPath : path)),
           entry: currentState.entry === fromPath ? toPath : currentState.entry,
           activePath: currentState.activePath === fromPath ? toPath : currentState.activePath,
@@ -338,7 +371,9 @@ export function createFilesSlice(set: StoreApi<WorkspaceState>["setState"], get:
 
       const nextOrder = state.order.filter((filePath) => filePath !== normalizedPath);
       const nextFiles = { ...state.files };
+      const breakpoints = { ...state.breakpoints };
       delete nextFiles[normalizedPath];
+      delete breakpoints[normalizedPath];
       const nextEntry = state.entry === normalizedPath ? nextOrder[0] : state.entry;
       const nextActive = state.activePath === normalizedPath ? nextEntry : state.activePath;
 
@@ -348,6 +383,7 @@ export function createFilesSlice(set: StoreApi<WorkspaceState>["setState"], get:
 
       set({
         files: nextFiles,
+        breakpoints,
         order: nextOrder,
         entry: nextEntry,
         activePath: nextActive,

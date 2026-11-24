@@ -19,13 +19,16 @@ export function CallControls(): JSX.Element | null {
   const deployed = sandbox?.contract === contract?.name && sandboxVersion === version;
   if (!contract) return null;
 
+  const call = (): void => {
+    if (!method) return;
+    update({ contract: contract.name, signature: method.signature });
+    void useWorkspaceStore.getState().runCall();
+  };
+
   return (
     <form className="call-controls" onSubmit={(event) => {
       event.preventDefault();
-      const state = useWorkspaceStore.getState();
-      if (!method) return;
-      update({ contract: contract.name, signature: method.signature });
-      void state.runCall();
+      call();
     }}>
       <div className="call-controls__sandbox">
         <span>{deployed ? `${contract.name} is ready. Each call continues from here.`
@@ -79,7 +82,6 @@ export function CallControls(): JSX.Element | null {
           <Play size={14} aria-hidden="true" />Call function
         </button>
       </div>
-      <p className="call-controls__hint">Each click calls this function once. Changes are kept until you reset the contract.</p>
       {selected ? <div className="call-controls__hint">Inputs copied from <code>{selected.file}:{selected.line}</code>. This calls the function without running its test setup.</div> : null}
     </form>
   );

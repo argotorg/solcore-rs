@@ -827,6 +827,93 @@
 .run-action summary, .run-tests > summary { cursor: pointer; font-size: var(--font-size-ui); }
 .run-action p { margin: var(--space-2) 0; }
 .run-action__details dd { margin: 0; min-width: 0; }
+.call-replay__toggle { margin: var(--space-2) 0; }
+.editor-debug-idle {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--surface-2);
+  font-size: var(--font-size-meta);
+  color: var(--text-secondary);
+}
+.editor-debug-idle span:first-of-type { color: var(--text-primary); font-weight: var(--font-weight-bold); }
+.editor-debug-idle svg { color: var(--accent); }
+.monaco-editor .glyph-margin { cursor: pointer; }
+.monaco-editor .debug-breakpoint { cursor: pointer; }
+.monaco-editor .debug-breakpoint::after {
+  content: "";
+  position: absolute;
+  width: 9px;
+  height: 9px;
+  left: 5px;
+  top: 6px;
+  border-radius: 50%;
+  background: var(--error);
+}
+.editor-replay {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  flex: 0 0 auto;
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--surface-2);
+  --programs-accent-blue: var(--accent);
+  --programs-bg-primary: var(--surface-1);
+}
+.editor-replay__toolbar, .editor-replay__status {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.editor-replay__toolbar select {
+  width: 108px;
+  flex: 0 0 auto;
+  padding: var(--space-1) var(--space-2);
+  color: var(--text-primary);
+  background: var(--surface-1);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-2);
+  font: inherit;
+}
+.editor-replay__toolbar .button {
+  flex: 0 0 auto;
+  width: 34px;
+  padding: 0;
+}
+.editor-replay__toolbar .button[aria-disabled="true"] { opacity: 0.45; cursor: default; }
+.editor-replay__status strong, .editor-replay__status span, .editor-replay__instruction code {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--font-size-meta);
+}
+.editor-replay__status { justify-content: space-between; color: var(--text-secondary); }
+.editor-replay__status strong { max-width: 52%; }
+.editor-replay__instruction {
+  display: grid;
+  grid-template-columns: minmax(48px, 1fr) auto;
+  align-items: center;
+  gap: var(--space-3);
+  color: var(--text-secondary);
+}
+.editor-replay__note { margin: 0; color: var(--text-secondary); font-size: var(--font-size-meta); }
+.editor-replay__rail.trace-progress { background: var(--surface-3); margin: var(--space-1) 0; }
+.monaco-editor .replay-source-range { background-color: var(--accent-soft); box-shadow: inset 0 -2px var(--accent); }
+.monaco-editor .replay-source-gutter::after {
+  content: "";
+  position: absolute;
+  top: 6px;
+  left: 1px;
+  border-top: 5px solid transparent;
+  border-bottom: 5px solid transparent;
+  border-left: 7px solid var(--accent);
+}
 .run-activities { display: flex; gap: var(--space-2); margin-bottom: var(--space-3); border-bottom: 1px solid var(--border-subtle); }
 .run-activities button { padding: var(--space-2); border: 0; background: none; color: var(--text-secondary); cursor: pointer; }
 .run-activities button[aria-selected="true"] { color: var(--text-primary); border-bottom: 2px solid var(--accent); }

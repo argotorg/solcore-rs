@@ -1,7 +1,10 @@
 import { attachSourceSelection, revealSourceSelection } from "../monaco/sourceSelection";
+import { attachBreakpoints } from "../monaco/breakpoints";
+import { attachReplayLocation } from "../monaco/replayLocation";
 import { attachTestControls } from "../monaco/testControls";
 import { useTestDiscovery } from "./useTestDiscovery";
 import { TabList } from "./TabList";
+import { ReplaySession } from "./ReplaySession";
 import Editor, { type BeforeMount, type OnMount } from "@monaco-editor/react";
 import type * as Monaco from "monaco-editor";
 import { useCallback, useEffect, useMemo, useRef } from "react";
@@ -79,7 +82,7 @@ function normalizeMarkerRange(range: Pos): Monaco.IRange {
     startLineNumber: range.startLine,
     startColumn: range.startCol,
     endLineNumber: range.endLine,
-    endColumn: Math.max(range.endCol, range.startCol + 1),
+    endColumn: range.startLine === range.endLine ? Math.max(range.endCol, range.startCol + 1) : range.endCol,
   };
 }
 
@@ -131,6 +134,7 @@ export function EditorPane({ onCursorChange }: EditorPaneProps): JSX.Element {
   const workspaceVersion = useWorkspaceStore((state) => state.workspaceVersion);
   const lastCompiledVersion = useWorkspaceStore((state) => state.lastCompiledVersion);
   const theme = useWorkspaceStore((state) => state.theme);
+  const replaying = useWorkspaceStore((state) => state.replaySelection !== null);
   const setActive = useWorkspaceStore((state) => state.setActive);
   const setContent = useWorkspaceStore((state) => state.setContent);
   const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
@@ -154,6 +158,7 @@ export function EditorPane({ onCursorChange }: EditorPaneProps): JSX.Element {
       fontSize: 14,
       // Tooltips can extend over adjacent panes without being clipped by them.
       fixedOverflowWidgets: true,
+      glyphMargin: true,
       lineHeight: 22,
       lineNumbers: "on",
       minimap: { enabled: false },
@@ -209,6 +214,10 @@ export function EditorPane({ onCursorChange }: EditorPaneProps): JSX.Element {
       revealSourceSelection(editor);
       const selection = attachSourceSelection(editor, monaco);
       editor.onDidDispose(() => selection.dispose());
+      const replayLocation = attachReplayLocation(editor);
+      editor.onDidDispose(() => replayLocation.dispose());
+      const breakpoints = attachBreakpoints(editor, monaco);
+      editor.onDidDispose(() => breakpoints.dispose());
       monaco.editor.setTheme(monacoThemeFor(theme));
       onCursorChange({
         line: editor.getPosition()?.lineNumber ?? 1,
@@ -289,6 +298,7 @@ export function EditorPane({ onCursorChange }: EditorPaneProps): JSX.Element {
         })}
       </TabList>
 
+      <ReplaySession />
       <div className="editor-surface" role="tabpanel" id="source-panel" aria-labelledby={`source-tab-${encodeURIComponent(activePath)}`} tabIndex={0}>
         <Editor
           beforeMount={beforeMount}
@@ -297,7 +307,7 @@ export function EditorPane({ onCursorChange }: EditorPaneProps): JSX.Element {
           language={SOLCORE_LANGUAGE_ID}
           onChange={(value) => setContent(activePath, value ?? "")}
           onMount={onMount}
-          options={{ ...editorOptions, ariaLabel: `${activePath} source` }}
+          options={{ ...editorOptions, ariaLabel: `${activePath} source`, stickyScroll: { enabled: !replaying } }}
           path={editorUri}
           theme={monacoThemeFor(theme)}
           value={activeFile?.content ?? ""}

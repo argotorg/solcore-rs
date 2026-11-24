@@ -13,6 +13,8 @@ export interface CompileInput {
     emitAbi: boolean;
     emitBytecode?: boolean;
     backend?: Backend;
+    recordTrace?: boolean;
+    breakpoints?: Record<string, readonly number[]>;
   };
 }
 
@@ -90,7 +92,19 @@ export interface ManualCall {
   constructorArguments: string;
   simulate: boolean;
   reset?: boolean;
+  recordTrace?: boolean;
   caller: string;
+}
+
+export interface RecordedCall {
+  kind: "ready";
+  program: {
+    json: string;
+    sources: Array<{ id: number; path: string; contents: string }>;
+    locations: Array<[number, { source_id: number; offset: number; length: number }]>;
+  };
+  steps: Array<{ pc: number; opcode: number }>;
+  incomplete: string | null;
 }
 
 export interface ExecutionEvent {
@@ -104,6 +118,7 @@ export interface ExecutionEvent {
   expected: string | null;
   passed: boolean | null;
   result: ExecutionResult;
+  replay?: RecordedCall | { kind: "unavailable"; message: string };
 }
 
 export interface RecentAction {
