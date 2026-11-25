@@ -73,6 +73,7 @@ fn lowers_word_bool_and_structural_aggregates_to_verified_ir() {
         functions: vec![
             Function {
                 span,
+                generated: None,
                 name: "id".into(),
                 args: vec![Arg {
                     span,
@@ -87,6 +88,7 @@ fn lowers_word_bool_and_structural_aggregates_to_verified_ir() {
             },
             Function {
                 span,
+                generated: None,
                 name: "choose".into(),
                 args: vec![Arg {
                     span,
@@ -110,6 +112,7 @@ fn lowers_word_bool_and_structural_aggregates_to_verified_ir() {
             },
             Function {
                 span,
+                generated: None,
                 name: "aggregate_id".into(),
                 args: vec![Arg {
                     span,
@@ -142,6 +145,7 @@ fn hull_function_symbols_are_injective_and_separate_from_section_entries() {
     let unit = Ty::unit(span);
     let function = |name: &'static str| Function {
         span,
+        generated: None,
         name: name.into(),
         args: Vec::new(),
         ret: unit.clone(),
@@ -184,6 +188,7 @@ fn aggregate_locals_are_zero_initialized_recursively() {
         functions: vec![
             Function {
                 span,
+                generated: None,
                 name: "main".into(),
                 args: Vec::new(),
                 ret: word.clone(),
@@ -218,6 +223,7 @@ fn aggregate_locals_are_zero_initialized_recursively() {
             },
             Function {
                 span,
+                generated: None,
                 name: "zero_sum".into(),
                 args: Vec::new(),
                 ret: sum.clone(),
@@ -316,6 +322,7 @@ fn lowers_direct_nary_injections_matches_and_terminal_builtins() {
         functions: vec![
             Function {
                 span,
+                generated: None,
                 name: "pick".into(),
                 args: vec![Arg {
                     span,
@@ -334,6 +341,7 @@ fn lowers_direct_nary_injections_matches_and_terminal_builtins() {
             },
             Function {
                 span,
+                generated: None,
                 name: "halt".into(),
                 args: Vec::new(),
                 ret: Ty::unit(span),
@@ -357,6 +365,7 @@ fn lowers_direct_nary_injections_matches_and_terminal_builtins() {
             },
             Function {
                 span,
+                generated: None,
                 name: "main".into(),
                 args: Vec::new(),
                 ret: word.clone(),
@@ -406,6 +415,7 @@ fn runtime_return_wrapper_uses_an_explicit_checked_entry() {
     let span = test_span(&db);
     let function = |name: &str, value: &str| Function {
         span,
+        generated: None,
         name: name.into(),
         args: Vec::new(),
         ret: Ty::word(span),
@@ -978,6 +988,7 @@ fn zero_return_inline_yul_function_calls_are_valid_expression_statements() {
         entry_points: Vec::new(),
         functions: vec![Function {
             span,
+            generated: None,
             name: "main".into(),
             args: Vec::new(),
             ret: Ty::unit(span),
@@ -1035,6 +1046,7 @@ fn inline_yul_functions_do_not_capture_outer_values() {
         entry_points: Vec::new(),
         functions: vec![Function {
             span,
+            generated: None,
             name: "main".into(),
             args: Vec::new(),
             ret: word.clone(),
@@ -1089,6 +1101,7 @@ fn inline_yul_functions_do_not_inherit_outer_loop_targets() {
         entry_points: Vec::new(),
         functions: vec![Function {
             span,
+            generated: None,
             name: "main".into(),
             args: Vec::new(),
             ret: Ty::unit(span),
@@ -1198,6 +1211,7 @@ fn literal_revert_enforces_one_word_message_boundary() {
         entry_points: Vec::new(),
         functions: vec![Function {
             span,
+            generated: None,
             name: "main".into(),
             args: Vec::new(),
             ret: Ty::unit(span),

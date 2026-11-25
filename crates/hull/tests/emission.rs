@@ -1077,3 +1077,113 @@ fn regressions_strings_revert_literal(fixture: Fixture<&str>) {
         assert!(!hull.contains("0x6e128399"), "{hull}");
     });
 }
+
+/// Number of leading spaces of an origin listing line.
+fn listing_indent(line: &str) -> usize {
+    line.len() - line.trim_start().len()
+}
+
+/// The lines below the header of the listed function whose name starts with
+/// `name_prefix`, up to the next node at the header's depth or above.
+fn listing_function<'a>(listing: &'a str, name_prefix: &str) -> Vec<&'a str> {
+    let lines = listing.lines().collect::<Vec<_>>();
+    let header = lines
+        .iter()
+        .position(|line| {
+            line.trim_start()
+                .strip_prefix("fn ")
+                .is_some_and(|rest| rest.starts_with(name_prefix))
+        })
+        .unwrap_or_else(|| panic!("missing listed function {name_prefix:?}\n{listing}"));
+    let depth = listing_indent(lines[header]);
+    lines[header + 1..]
+        .iter()
+        .copied()
+        .take_while(|line| listing_indent(line) > depth)
+        .collect()
+}
+
+/// Every listed function whose name starts with `prefix`, and each of its
+/// statements, has the generated reason `reason`.
+fn assert_helpers_are_generated(listing: &str, prefix: &str, reason: &str) {
+    let marker = format!(" gen {reason} ");
+    let names = listing
+        .lines()
+        .filter_map(|line| line.trim_start().strip_prefix("fn "))
+        .filter(|rest| rest.starts_with(prefix))
+        .filter_map(|rest| rest.split_whitespace().next())
+        .collect::<Vec<_>>();
+    assert!(!names.is_empty(), "no `{prefix}` helper\n{listing}");
+    for name in names {
+        let header = listing
+            .lines()
+            .find(|line| line.trim_start().starts_with(&format!("fn {name} ")))
+            .expect("listed function");
+        assert!(header.contains(&marker), "{header}\n{listing}");
+        let function = listing_function(listing, name);
+        let statements = function
+            .iter()
+            .filter(|line| line.trim_start().starts_with("S "))
+            .collect::<Vec<_>>();
+        assert!(!statements.is_empty(), "{name}\n{listing}");
+        for statement in statements {
+            assert!(statement.contains(&marker), "{statement}\n{listing}");
+        }
+    }
+}
+
+/// The statements of the listed function whose name starts with `prefix` are
+/// source: written code is not marked as generated.
+fn assert_statements_are_source(listing: &str, prefix: &str) {
+    let function = listing_function(listing, prefix);
+    let statements = function
+        .iter()
+        .filter(|line| line.trim_start().starts_with("S "))
+        .collect::<Vec<_>>();
+    assert!(!statements.is_empty(), "{prefix}\n{listing}");
+    for statement in statements {
+        assert!(statement.contains(" src "), "{statement}\n{listing}");
+    }
+}
+
+#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/regressions/strings/objectless_string_materializer", glob: "main.sol")]
+fn locations_string_literal_helpers_are_generated(fixture: Fixture<&str>) {
+    with_emission(fixture, FixtureOptions::default(), |db, emitted| {
+        let listing = solcore_hull::origin_listing(db, &emitted.program);
+        assert_helpers_are_generated(&listing, "__strlit_", "literal");
+    });
+}
+
+#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/regressions/strings/nested_revert_literal", glob: "main.sol")]
+fn locations_revert_literal_helpers_are_generated(fixture: Fixture<&str>) {
+    with_emission(fixture, FixtureOptions::default(), |db, emitted| {
+        let listing = solcore_hull::origin_listing(db, &emitted.program);
+        assert_helpers_are_generated(&listing, "__revertlit_", "literal");
+    });
+}
+
+/// Struct field getters and setters are shared per struct type and field, so
+/// they are generated code: no field access owns them.
+#[dir_test(dir: "$CARGO_MANIFEST_DIR/../../tests/e2e/struct-storage", glob: "main.sol")]
+fn locations_struct_accessors_are_generated(fixture: Fixture<&str>) {
+    with_emission(fixture, FixtureOptions::default(), |db, emitted| {
+        let listing = solcore_hull::origin_listing(db, &emitted.program);
+        assert_helpers_are_generated(&listing, "struct_get_", "derived");
+        assert_helpers_are_generated(&listing, "struct_set_", "derived");
+        // Silent: the functions that use the accessors are written code.
+        assert_statements_are_source(&listing, "main_C_getX_");
+        assert_statements_are_source(&listing, "main_C_setX_");
+    });
+}
+
+/// The function that decodes constructor arguments is made by the compiler for
+/// the whole constructor, so it is generated entry code. The constructor body
+/// is written code.
+#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/regressions/constructor_arguments", glob: "main.sol")]
+fn locations_constructor_argument_copy_is_generated(fixture: Fixture<&str>) {
+    with_emission(fixture, FixtureOptions::default(), |db, emitted| {
+        let listing = solcore_hull::origin_listing(db, &emitted.program);
+        assert_helpers_are_generated(&listing, "main_C_copy_arguments_for_constructor_", "entry");
+        assert_statements_are_source(&listing, "main_C_init__");
+    });
+}

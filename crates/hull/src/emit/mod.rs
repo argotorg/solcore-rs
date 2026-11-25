@@ -24,8 +24,9 @@ use hir_ty::{
 use parser::parse_file_to_hir;
 use specialize::{
     MonoArm, MonoBuiltinCtor, MonoCallOrigin, MonoContract, MonoEntry, MonoExpr, MonoExprArm,
-    MonoExprKind, MonoFunction, MonoId, MonoIntrinsic, MonoItem, MonoModule, MonoPat, MonoPatKind,
-    MonoStmt, MonoStmtKind, MonoStorageIndexKind, collect_leaking_let_stmts, decode_string_literal,
+    MonoExprKind, MonoFunction, MonoFunctionOrigin, MonoId, MonoIntrinsic, MonoItem, MonoModule,
+    MonoPat, MonoPatKind, MonoRuntimeMainOrigin, MonoStmt, MonoStmtKind, MonoStorageIndexKind,
+    collect_leaking_let_stmts, decode_string_literal,
 };
 
 use crate::{
@@ -33,6 +34,7 @@ use crate::{
         Alt, Arg, CodeBlock, Con, Expr, ExprKind, Function, Object, Pat, PatKind, Program, Stmt,
         StmtKind, Ty, TyKind,
     },
+    origin::GeneratedReason,
     scope_stack::ScopeStack,
     word::{canonical_word_literal, wrap_word_literal},
 };
