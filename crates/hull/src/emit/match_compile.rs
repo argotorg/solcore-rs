@@ -34,14 +34,21 @@ struct MatchColumn<'db> {
 struct MatchRow<'db> {
     span: Span<'db>,
     pats: Vec<MatrixPat>,
-    bindings: Vec<(String, Occurrence)>,
+    bindings: Vec<(PatVar, Occurrence)>,
     body: Vec<MonoStmt<'db>>,
+}
+
+/// A pattern variable: its name and, when it may be listed, the debug binder.
+#[derive(Debug, Clone)]
+struct PatVar {
+    name: String,
+    binder: DebugBinder,
 }
 
 #[derive(Debug, Clone)]
 enum MatrixPat {
     Wildcard,
-    Var { name: String },
+    Var { var: PatVar },
     Lit { lit: LitKind },
     Con { ctor: String, args: Vec<MatrixPat> },
     Tuple { elems: Vec<MatrixPat> },
@@ -52,7 +59,7 @@ enum MatrixPat {
 #[derive(Debug, Clone)]
 enum DecisionTree<'db> {
     Leaf {
-        bindings: Vec<(String, Occurrence)>,
+        bindings: Vec<(PatVar, Occurrence)>,
         body: Vec<MonoStmt<'db>>,
     },
     Fail {
@@ -143,8 +150,8 @@ impl<'db> MatchMatrix<'db> {
             body,
         } = row;
         for (pat, column) in pats.into_iter().zip(self.columns) {
-            if let MatrixPat::Var { name } = pat {
-                bindings.push((name, column.occurrence));
+            if let MatrixPat::Var { var } = pat {
+                bindings.push((var, column.occurrence));
             }
         }
         DecisionTree::Leaf { bindings, body }
@@ -215,6 +222,7 @@ impl<'db> Emitter<'db> {
             materialized_scrutinees.push(Stmt {
                 span: scrutinee.span,
                 kind: StmtKind::Let {
+                    binds: DebugBinder::default(),
                     name: temp.clone().into(),
                     ty: ty.clone(),
                 },
@@ -222,6 +230,7 @@ impl<'db> Emitter<'db> {
             materialized_scrutinees.push(Stmt {
                 span: scrutinee.span,
                 kind: StmtKind::Assign {
+                    binds: DebugBinder::default(),
                     lhs: Expr::var(scrutinee.span, temp.clone(), ty.clone()),
                     rhs: expr,
                 },
@@ -251,11 +260,7 @@ impl<'db> Emitter<'db> {
                 }
                 Some(MatchRow {
                     span: arm.span,
-                    pats: arm
-                        .pats
-                        .iter()
-                        .map(|pat| matrix_pat(self.db, pat))
-                        .collect(),
+                    pats: arm.pats.iter().map(|pat| matrix_pat(self, pat)).collect(),
                     bindings: Vec::new(),
                     body: arm.body.clone(),
                 })
@@ -394,10 +399,10 @@ impl<'db> Emitter<'db> {
                 MatrixPat::Con { ctor, args, .. } if self.single_ctor_matches(test.ty, &ctor) => {
                     next_rows.push(row_with_pats(row_rest, args));
                 }
-                MatrixPat::Var { name, .. } => {
+                MatrixPat::Var { var, .. } => {
                     next_rows.push(row_with_binding_and_wildcards(
                         row_rest,
-                        name,
+                        var,
                         test.occurrence.clone(),
                         fields.len(),
                         test.span,
@@ -598,7 +603,7 @@ impl<'db> Emitter<'db> {
                 let mut captured = Vec::new();
                 // Pattern bindings are simultaneous: every initializer must
                 // read the scrutinees before any source name is shadowed.
-                for (name, occurrence) in bindings {
+                for (var, occurrence) in bindings {
                     if let Some(expr) = occurrences.get(occurrence).cloned() {
                         let temp = this.fresh_temp("match_bind");
                         materialized.push(Stmt {
@@ -606,6 +611,7 @@ impl<'db> Emitter<'db> {
                             kind: StmtKind::Let {
                                 name: temp.clone().into(),
                                 ty: expr.ty.clone(),
+                                binds: DebugBinder::default(),
                             },
                         });
                         materialized.push(Stmt {
@@ -613,17 +619,20 @@ impl<'db> Emitter<'db> {
                             kind: StmtKind::Assign {
                                 lhs: Expr::var(span, temp.clone(), expr.ty.clone()),
                                 rhs: expr.clone(),
+                                binds: DebugBinder::default(),
                             },
                         });
-                        captured.push((name, Expr::var(span, temp, expr.ty)));
+                        captured.push((var, Expr::var(span, temp, expr.ty)));
                     }
                 }
-                for (name, rhs) in captured {
+                for (var, rhs) in captured {
+                    let name = var.name.clone();
                     materialized.push(Stmt {
                         span,
                         kind: StmtKind::Let {
                             name: name.clone().into(),
                             ty: rhs.ty.clone(),
+                            binds: DebugBinder::default(),
                         },
                     });
                     let lhs = Expr::var(span, name.clone(), rhs.ty.clone());
@@ -632,9 +641,10 @@ impl<'db> Emitter<'db> {
                         kind: StmtKind::Assign {
                             lhs: lhs.clone(),
                             rhs,
+                            binds: var.binder,
                         },
                     });
-                    this.bind_expr(name.clone(), lhs);
+                    this.bind_expr(name, lhs);
                 }
                 materialized.extend(this.emit_stmts(body));
                 // The arm's binders and locals belong to this lexical scope,
@@ -824,11 +834,15 @@ impl MatrixPat {
     }
 }
 
-fn matrix_pat<'db>(db: &'db dyn hir_ty::Db, pat: &MonoPat<'db>) -> MatrixPat {
+fn matrix_pat<'db>(emitter: &mut Emitter<'db>, pat: &MonoPat<'db>) -> MatrixPat {
+    let db = emitter.db;
     match &pat.kind {
         MonoPatKind::Wildcard => MatrixPat::Wildcard,
         MonoPatKind::Var(id) => MatrixPat::Var {
-            name: id.name.clone(),
+            var: PatVar {
+                name: id.name.clone(),
+                binder: emitter.source_binder(&id.name, id.span, id.ty.ty()),
+            },
         },
         MonoPatKind::Lit(lit) => MatrixPat::Lit {
             lit: wrap_word_lit_kind(lit),
@@ -842,15 +856,15 @@ fn matrix_pat<'db>(db: &'db dyn hir_ty::Db, pat: &MonoPat<'db>) -> MatrixPat {
             if ctor.is_builtin_ctor(db, MonoBuiltinCtor::Pair) && args.len() == 2 =>
         {
             MatrixPat::Tuple {
-                elems: args.iter().map(|pat| matrix_pat(db, pat)).collect(),
+                elems: args.iter().map(|pat| matrix_pat(emitter, pat)).collect(),
             }
         }
         MonoPatKind::Con { ctor, args } => MatrixPat::Con {
             ctor: ctor.name.clone(),
-            args: args.iter().map(|pat| matrix_pat(db, pat)).collect(),
+            args: args.iter().map(|pat| matrix_pat(emitter, pat)).collect(),
         },
         MonoPatKind::Tuple(elems) => MatrixPat::Tuple {
-            elems: elems.iter().map(|pat| matrix_pat(db, pat)).collect(),
+            elems: elems.iter().map(|pat| matrix_pat(emitter, pat)).collect(),
         },
         MonoPatKind::ComptimeLabel(_) => MatrixPat::ComptimeLabel,
         MonoPatKind::Error => MatrixPat::Error,
@@ -929,12 +943,12 @@ fn row_with_wildcards<'db>(row: MatchRow<'db>, count: usize, _span: Span<'db>) -
 
 fn row_with_binding_and_wildcards<'db>(
     mut row: MatchRow<'db>,
-    name: String,
+    var: PatVar,
     occurrence: Occurrence,
     count: usize,
     span: Span<'db>,
 ) -> MatchRow<'db> {
-    row.bindings.push((name, occurrence));
+    row.bindings.push((var, occurrence));
     row_with_wildcards(row, count, span)
 }
 
@@ -965,7 +979,7 @@ fn project_constructor_rows<'db>(
                 };
                 branch_rows[branch].push(row_with_pats(row_rest, args));
             }
-            MatrixPat::Var { name, .. } => {
+            MatrixPat::Var { var, .. } => {
                 push_constructor_var_rows(
                     test,
                     layout,
@@ -973,7 +987,7 @@ fn project_constructor_rows<'db>(
                     &mut branch_rows,
                     include_default.then_some(&mut default_rows),
                     row_rest,
-                    name,
+                    var,
                 );
             }
             MatrixPat::Wildcard | MatrixPat::Error => {
@@ -1000,13 +1014,13 @@ fn push_constructor_var_rows<'db>(
     branch_rows: &mut [Vec<MatchRow<'db>>],
     default_rows: Option<&mut Vec<MatchRow<'db>>>,
     row_rest: MatchRow<'db>,
-    name: String,
+    var: PatVar,
 ) {
     for (branch, index) in head_ctors.iter().copied().enumerate() {
         let count = layout.ctors[index].fields.len();
         branch_rows[branch].push(row_with_binding_and_wildcards(
             row_rest.clone(),
-            name.clone(),
+            var.clone(),
             test.occurrence.clone(),
             count,
             test.span,
@@ -1014,7 +1028,7 @@ fn push_constructor_var_rows<'db>(
     }
     if let Some(default_rows) = default_rows {
         let mut row = row_rest;
-        row.bindings.push((name, test.occurrence.clone()));
+        row.bindings.push((var, test.occurrence.clone()));
         default_rows.push(row);
     }
 }
@@ -1052,9 +1066,9 @@ fn project_atomic_rows<'db>(
                     branch_rows[branch].push(row_rest);
                 }
             }
-            MatrixPat::Var { name, .. } => {
+            MatrixPat::Var { var, .. } => {
                 let mut row_rest = row_rest;
-                row_rest.bindings.push((name, test.occurrence.clone()));
+                row_rest.bindings.push((var, test.occurrence.clone()));
                 push_projected_row(row_rest, &mut branch_rows, Some(&mut default_rows));
             }
             MatrixPat::Wildcard | MatrixPat::Error => {
@@ -1099,8 +1113,8 @@ fn default_rows<'db>(
         .filter_map(|row| {
             let (first, mut row) = split_row(row);
             match first {
-                MatrixPat::Var { name, .. } => {
-                    row.bindings.push((name, occurrence.clone()));
+                MatrixPat::Var { var, .. } => {
+                    row.bindings.push((var, occurrence.clone()));
                     Some(row)
                 }
                 MatrixPat::Wildcard | MatrixPat::Error => Some(row),

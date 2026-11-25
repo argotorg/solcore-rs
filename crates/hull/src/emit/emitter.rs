@@ -27,6 +27,8 @@ impl<'db> Emitter<'db> {
             next_revert_literal: 0,
             storage_array_index_used: false,
             fresh: 0,
+            binders: Vec::new(),
+            binder_scope: None,
         }
     }
 
@@ -91,7 +93,10 @@ impl<'db> Emitter<'db> {
                     .collect(),
                 functions: functions.into_values().collect(),
                 objects: Vec::new(),
-                debug: DebugTables::default(),
+                debug: DebugTables {
+                    binders: std::mem::take(&mut self.binders),
+                    ..DebugTables::default()
+                },
             }
         } else {
             let all_functions = functions.values().cloned().collect::<Vec<_>>();
@@ -99,7 +104,10 @@ impl<'db> Emitter<'db> {
                 .iter()
                 .map(|contract| self.emit_contract(contract, &all_functions))
                 .collect();
-            let mut debug = DebugTables::default();
+            let mut debug = DebugTables {
+                binders: std::mem::take(&mut self.binders),
+                ..DebugTables::default()
+            };
             for contract in &contracts {
                 let facts = self.contract_field_facts(contract.def);
                 debug.contracts.insert(contract.name.clone(), facts);
@@ -121,7 +129,9 @@ impl<'db> Emitter<'db> {
     }
 
     fn emit_function(&mut self, function: &MonoFunction<'db>) -> Function<'db> {
-        self.with_scope(|this| {
+        let generated = self.generated_reason(function);
+        self.binder_scope = generated.is_none().then_some(function.span);
+        let emitted = self.with_scope(|this| {
             let args = function
                 .params
                 .iter()
@@ -140,26 +150,12 @@ impl<'db> Emitter<'db> {
                         span: param.span,
                         name: param.name.clone().into(),
                         ty,
+                        binder: this.param_binder(function, param),
                     })
                 })
                 .collect::<Vec<_>>();
             let ret = this.hull_ty(function.ret.ty(), function.span);
             let body = this.emit_stmts(&function.body);
-            let generated = match function.origin {
-                MonoFunctionOrigin::DerivedGeneric { .. }
-                | MonoFunctionOrigin::DerivedClass { .. }
-                | MonoFunctionOrigin::StructAccessor => Some(GeneratedReason::Derived),
-                // The constructor-argument decoder is made by the compiler for
-                // the whole constructor, like the deployment entry that calls it.
-                _ if function
-                    .source
-                    .and_then(|def| hir_ty::contract_overlay_backend_name(this.db, def))
-                    == Some("copy_arguments_for_constructor") =>
-                {
-                    Some(GeneratedReason::Entry)
-                }
-                _ => None,
-            };
             Function {
                 span: function.span,
                 generated,
@@ -168,7 +164,117 @@ impl<'db> Emitter<'db> {
                 ret,
                 body,
             }
-        })
+        });
+        self.binder_scope = None;
+        emitted
+    }
+
+    /// The binding of a parameter, which is declared before the body. The
+    /// parameters that a lifted lambda gains for the variables it captures carry
+    /// the span of a use inside the body instead: they are copies of variables
+    /// of the enclosing function, not bindings of this function's source, so
+    /// they are not listed.
+    fn param_binder(
+        &mut self,
+        function: &MonoFunction<'db>,
+        param: &MonoParam<'db>,
+    ) -> DebugBinder {
+        let at = param.span.resolve_to_absolute(self.db);
+        let used_in_body = function.body.iter().any(|stmt| {
+            if stmt.span == function.span {
+                return false;
+            }
+            let stmt = stmt.span.resolve_to_absolute(self.db);
+            stmt.file == at.file
+                && stmt.start.as_u32() <= at.start.as_u32()
+                && at.end.as_u32() <= stmt.end.as_u32()
+        });
+        if used_in_body {
+            return DebugBinder::default();
+        }
+        self.source_binder(&param.name, param.span, param.ty.ty())
+    }
+
+    /// The span of the first whole-word occurrence of `name` in `span`'s text.
+    fn identifier_span(&self, name: &str, span: Span<'db>) -> Option<Span<'db>> {
+        let absolute = span.resolve_to_absolute(self.db);
+        let text = absolute.file.content(self.db).as_deref()?;
+        let region = text.get(absolute.start.as_usize()..absolute.end.as_usize())?;
+        let is_word = |c: char| c.is_alphanumeric() || c == '_';
+        let at = region.match_indices(name).map(|(at, _)| at).find(|&at| {
+            !region[..at].chars().next_back().is_some_and(is_word)
+                && !region[at + name.len()..]
+                    .chars()
+                    .next()
+                    .is_some_and(is_word)
+        })?;
+        let begin = span.begin().as_u32() + at as u32;
+        Some(Span::new(
+            span.anchor(),
+            hir::diag::Offset::new(begin),
+            hir::diag::Offset::new(begin + name.len() as u32),
+        ))
+    }
+
+    /// Why the compiler, not source text, made this function, if it did.
+    fn generated_reason(&self, function: &MonoFunction<'db>) -> Option<GeneratedReason> {
+        match function.origin {
+            MonoFunctionOrigin::DerivedGeneric { .. }
+            | MonoFunctionOrigin::DerivedClass { .. }
+            | MonoFunctionOrigin::StructAccessor => Some(GeneratedReason::Derived),
+            // The constructor-argument decoder is made by the compiler for
+            // the whole constructor, like the deployment entry that calls it.
+            _ if function
+                .source
+                .and_then(|def| hir_ty::contract_overlay_backend_name(self.db, def))
+                == Some("copy_arguments_for_constructor") =>
+            {
+                Some(GeneratedReason::Entry)
+            }
+            _ => None,
+        }
+    }
+
+    /// Marks a source binding for debug information, when it may be listed. The
+    /// function must be the source's own (not generated); the name must be the
+    /// source's, since every name the compiler makes contains `$`, which no Core
+    /// identifier does; and the declaration must lie in the function's own text.
+    /// A binding declared elsewhere, as in a function that specialization
+    /// inlined here, is left out: where it is visible is not known here.
+    pub(super) fn source_binder(
+        &mut self,
+        name: &str,
+        declaration: Span<'db>,
+        ty: SemTy<'db>,
+    ) -> DebugBinder {
+        let Some(scope) = self.binder_scope else {
+            return DebugBinder::default();
+        };
+        if name.contains('$') {
+            return DebugBinder::default();
+        }
+        // A parameter's span covers its type too, so the identifier is found in
+        // the text. Without the text, or without the name in it, nothing is
+        // listed: a wrong declaration range is worse than a missing binding.
+        let Some(declaration) = self.identifier_span(name, declaration) else {
+            return DebugBinder::default();
+        };
+        let outer = scope.resolve_to_absolute(self.db);
+        let inner = declaration.resolve_to_absolute(self.db);
+        if outer.file != inner.file
+            || inner.start.as_u32() < outer.start.as_u32()
+            || inner.end.as_u32() > outer.end.as_u32()
+        {
+            return DebugBinder::default();
+        }
+        let id = BinderId(self.binders.len() as u32);
+        self.binders.push(SourceBinder {
+            name: name.to_owned(),
+            declaration,
+            function: scope,
+            ty,
+        });
+        DebugBinder(Some(id))
     }
 
     pub(super) fn emit_stmts(&mut self, stmts: &[MonoStmt<'db>]) -> Vec<Stmt<'db>> {
@@ -203,19 +309,26 @@ impl<'db> Emitter<'db> {
                                 kind: StmtKind::Let {
                                     name: default.clone().into(),
                                     ty: predeclared.ty.clone(),
+                                    binds: DebugBinder::default(),
                                 },
                             });
                             Expr::var(stmt.span, default, predeclared.ty.clone())
                         }
                     };
+                    let binds = self.source_binder(&id.name, id.span, id.ty.ty());
                     let local = Expr::var(id.span, predeclared.backend_name, predeclared.ty);
                     self.bind_expr(id.name.clone(), local.clone());
                     out.push(Stmt {
                         span: stmt.span,
-                        kind: StmtKind::Assign { lhs: local, rhs },
+                        kind: StmtKind::Assign {
+                            lhs: local,
+                            rhs,
+                            binds,
+                        },
                     });
                     return out;
                 }
+                let binds = self.source_binder(&id.name, id.span, id.ty.ty());
                 let mut out = Vec::new();
                 if let Some(init) = init {
                     // The initializer is resolved in the pre-binder scope. Materialize it
@@ -229,6 +342,7 @@ impl<'db> Emitter<'db> {
                             kind: StmtKind::Let {
                                 name: temp.clone().into(),
                                 ty: declared.clone(),
+                                binds: DebugBinder::default(),
                             },
                         });
                         out.push(Stmt {
@@ -236,6 +350,7 @@ impl<'db> Emitter<'db> {
                             kind: StmtKind::Assign {
                                 lhs: Expr::var(stmt.span, temp.clone(), declared.clone()),
                                 rhs: rhs.clone(),
+                                binds: DebugBinder::default(),
                             },
                         });
                         temp
@@ -245,6 +360,7 @@ impl<'db> Emitter<'db> {
                         kind: StmtKind::Let {
                             name: id.name.clone().into(),
                             ty: declared.clone(),
+                            binds: DebugBinder::default(),
                         },
                     });
                     out.push(Stmt {
@@ -254,6 +370,7 @@ impl<'db> Emitter<'db> {
                             rhs: captured_init
                                 .map(|temp| Expr::var(stmt.span, temp, declared.clone()))
                                 .unwrap_or(rhs),
+                            binds,
                         },
                     });
                 } else {
@@ -262,6 +379,7 @@ impl<'db> Emitter<'db> {
                         kind: StmtKind::Let {
                             name: id.name.clone().into(),
                             ty: declared.clone(),
+                            binds,
                         },
                     });
                 }
@@ -292,6 +410,7 @@ impl<'db> Emitter<'db> {
             } => vec![Stmt {
                 span: stmt.span,
                 kind: StmtKind::Assign {
+                    binds: DebugBinder::default(),
                     lhs: self.emit_expr(lhs),
                     rhs: self.emit_expr(rhs),
                 },
@@ -417,6 +536,7 @@ impl<'db> Emitter<'db> {
         vec![Stmt {
             span,
             kind: StmtKind::Assign {
+                binds: DebugBinder::default(),
                 lhs: lhs_expr,
                 rhs: call,
             },
@@ -514,6 +634,7 @@ impl<'db> Emitter<'db> {
             out.push(Stmt {
                 span: let_stmt.span,
                 kind: StmtKind::Let {
+                    binds: DebugBinder::default(),
                     name: backend_name.into(),
                     ty,
                 },
@@ -936,6 +1057,7 @@ impl<'db> Emitter<'db> {
                 Stmt {
                     span,
                     kind: StmtKind::Let {
+                        binds: DebugBinder::default(),
                         name: pointer.into(),
                         ty: word.clone(),
                     },

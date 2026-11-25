@@ -8,8 +8,9 @@ use hir::{
     ast::function::{YulExpr, YulExprKind, YulLitKind, YulStmt, YulStmtKind},
 };
 use hull::{
-    Con, Expr as HullExpr, ExprKind, Function as HullFunction, Object as HullObject, PatKind,
-    Program as HullProgram, Stmt as HullStmt, StmtKind, Ty as HullTy, TyKind, origin::stmt_origin,
+    BinderId, Con, DebugBinder, Expr as HullExpr, ExprKind, Function as HullFunction,
+    Object as HullObject, PatKind, Program as HullProgram, Stmt as HullStmt, StmtKind,
+    Ty as HullTy, TyKind, origin::stmt_origin,
 };
 use smallvec::{SmallVec, smallvec};
 use sonatina_ir::{
@@ -51,8 +52,14 @@ use sonatina_verifier::{VerificationLevel, VerifierConfig, verify_module};
 use crate::TranslationError;
 
 mod reachability;
+mod tags;
 
 use reachability::Reachability;
+use tags::{InstTag, SetId};
+
+pub(crate) use tags::DebugTags;
+
+use crate::locals::Frame;
 
 /// With `stamp_origins`, instructions carry the origin of the Hull statement
 /// that made them (`hull::origin::stmt_origin`); without it, no instruction has
@@ -62,6 +69,16 @@ pub(super) fn translate_hull_program<'db>(
     program: &HullProgram<'db>,
     stamp_origins: bool,
 ) -> Result<Module, TranslationError> {
+    translate_hull_program_tagged(db, program, stamp_origins).map(|(module, _)| module)
+}
+
+/// Like [`translate_hull_program`], with the visible source bindings around each
+/// instruction that has an origin.
+pub(super) fn translate_hull_program_tagged<'db>(
+    db: &'db dyn HirDb,
+    program: &HullProgram<'db>,
+    stamp_origins: bool,
+) -> Result<(Module, DebugTags), TranslationError> {
     Translator::new(db, stamp_origins).translate(program)
 }
 
@@ -86,7 +103,7 @@ pub(super) fn translate_hull_program_returning_runtime_entry<'db>(
     translator
         .returning_entries
         .insert("object0.inner0.init".to_owned(), entry.to_owned());
-    translator.translate(program)
+    translator.translate(program).map(|(module, _)| module)
 }
 
 fn evm_isa() -> Evm {
@@ -146,6 +163,8 @@ struct Translator<'db> {
     next_yul_function: usize,
     /// Whether statements stamp the instructions they make with their origin.
     stamp_origins: bool,
+    /// The visible source bindings around each stamped instruction.
+    tags: DebugTags,
 }
 
 impl<'db> Translator<'db> {
@@ -154,6 +173,7 @@ impl<'db> Translator<'db> {
         let builder = ModuleBuilder::new(ModuleCtx::new(&isa));
         Self {
             stamp_origins,
+            tags: DebugTags::default(),
             db,
             builder,
             isa,
@@ -173,7 +193,10 @@ impl<'db> Translator<'db> {
         self.isa.inst_set()
     }
 
-    fn translate(mut self, program: &HullProgram<'db>) -> Result<Module, TranslationError> {
+    fn translate(
+        mut self,
+        program: &HullProgram<'db>,
+    ) -> Result<(Module, DebugTags), TranslationError> {
         if program.objects.is_empty() {
             let entry_function = match program.entry_points.as_slice() {
                 [] => None,
@@ -237,7 +260,7 @@ impl<'db> Translator<'db> {
                 "Sonatina verification failed:\n{report}"
             )));
         }
-        Ok(module)
+        Ok((module, self.tags))
     }
 
     fn declare_object_code(
@@ -495,6 +518,7 @@ impl<'db> Translator<'db> {
         for (index, arg) in function.args.iter().enumerate() {
             let value = lowerer.fb.func.arg_values[index];
             lowerer.bind_parameter(arg.name.as_str(), &arg.ty, value)?;
+            lowerer.add_binder(arg.binder);
         }
         let terminated = lowerer.lower_stmts(&function.body)?;
         lowerer.finish(terminated)
@@ -597,6 +621,13 @@ struct FunctionLowerer<'a, 'db> {
     /// Instructions a finished statement has taken, whether it stamped them or
     /// left them unmapped.
     claimed: HashSet<InstId>,
+    func_ref: FuncRef,
+    /// The source bindings declared in each open scope, as binder ids in the
+    /// order they became visible. Frames follow [`Self::scopes`], and the body
+    /// and the step of a loop have frames of their own.
+    binder_frames: Vec<Vec<u32>>,
+    /// The set of all bindings in `binder_frames`.
+    visible: SetId,
 }
 
 impl<'a, 'db> FunctionLowerer<'a, 'db> {
@@ -610,6 +641,7 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
         let mut fb = module.builder.func_builder::<InstInserter>(func_ref);
         let entry = fb.append_block();
         fb.switch_to_block(entry);
+        let visible = module.tags.intern(&[]);
         Self {
             module,
             scope: scope.to_owned(),
@@ -623,6 +655,9 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
             yul_returns: None,
             function,
             claimed: HashSet::new(),
+            func_ref,
+            binder_frames: vec![Vec::new()],
+            visible,
         }
     }
 
@@ -746,10 +781,73 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
 
     fn push_scope(&mut self) {
         self.scopes.push(HashMap::new());
+        self.push_frame();
     }
 
     fn pop_scope(&mut self) {
         self.scopes.pop();
+        self.pop_frame();
+    }
+
+    fn push_frame(&mut self) {
+        self.binder_frames.push(Vec::new());
+    }
+
+    /// Leaves a scope of source bindings. The bindings that were declared in it
+    /// are no longer visible after the last instruction made so far.
+    fn pop_frame(&mut self) {
+        let declared = self
+            .binder_frames
+            .pop()
+            .is_some_and(|frame| !frame.is_empty());
+        if declared {
+            self.refresh_visible();
+            self.retag_last();
+        }
+    }
+
+    fn refresh_visible(&mut self) {
+        let set: Vec<u32> = self.binder_frames.iter().flatten().copied().collect();
+        self.visible = self.module.tags.intern(&set);
+    }
+
+    /// Makes the source binding visible, in the innermost scope, from here on.
+    /// Returns whether there is one. Nothing is tracked unless instructions carry
+    /// origins.
+    fn add_binder(&mut self, binder: DebugBinder) -> bool {
+        let Some(BinderId(id)) = binder.0 else {
+            return false;
+        };
+        if !self.module.stamp_origins {
+            return false;
+        }
+        self.binder_frames
+            .last_mut()
+            .expect("binder frames are never empty")
+            .push(id);
+        self.refresh_visible();
+        true
+    }
+
+    /// States that the instruction made last in the current block completes with
+    /// the bindings that are visible now. The change in what is visible executes
+    /// nothing, so the state after that instruction is the state at this point.
+    /// A block with no instruction yet, or one that ends in a terminator or in
+    /// an instruction without an origin, is left alone: the change then shows from
+    /// the next instruction on.
+    fn retag_last(&mut self) {
+        if !self.module.stamp_origins {
+            return;
+        }
+        let Some(inst) = self.fb.last_inst() else {
+            return;
+        };
+        if self.fb.is_terminator(inst) {
+            return;
+        }
+        if let Some(tag) = self.module.tags.insts.get_mut(&(self.func_ref, inst)) {
+            tag.after = self.visible;
+        }
     }
 
     fn lower_stmts(&mut self, stmts: &[HullStmt<'db>]) -> Result<bool, TranslationError> {
@@ -766,9 +864,20 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
     /// an enclosing statement only claims what its children did not (loop
     /// headers, branches, join code).
     fn lower_stmt(&mut self, stmt: &HullStmt<'db>) -> Result<bool, TranslationError> {
+        let start = self.visible;
         let watermark = self.fb.func.dfg.num_insts();
         let result = self.lower_stmt_inner(stmt);
-        self.stamp_insts_since(watermark, stmt.span);
+        let leaves_scopes = matches!(stmt.kind, StmtKind::Break | StmtKind::Continue);
+        self.stamp_insts_since(watermark, stmt.span, start, leaves_scopes);
+        if matches!(result, Ok(false)) {
+            let binds = match &stmt.kind {
+                StmtKind::Let { binds, .. } | StmtKind::Assign { binds, .. } => *binds,
+                _ => DebugBinder::default(),
+            };
+            if self.add_binder(binds) {
+                self.retag_last();
+            }
+        }
         result
     }
 
@@ -778,7 +887,13 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
     /// so an enclosing statement does not claim them. Code that no statement
     /// made (the implicit return, the fall-through stop, phis made when blocks
     /// are sealed) is never stamped and stays unmapped.
-    fn stamp_insts_since(&mut self, watermark: usize, span: hir::span::Span<'db>) {
+    fn stamp_insts_since(
+        &mut self,
+        watermark: usize,
+        span: hir::span::Span<'db>,
+        visible: SetId,
+        leaves_scopes: bool,
+    ) {
         let end = self.fb.func.dfg.num_insts();
         if !self.module.stamp_origins || end == watermark {
             return;
@@ -795,17 +910,35 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
                 self.fb
                     .func
                     .set_inst_frontend_origin(inst, Arc::clone(origin));
+                let dfg = &self.fb.func.dfg;
+                let frame = if dfg.is_call(inst) {
+                    Frame::Call
+                } else if dfg.is_return(inst) {
+                    Frame::Return
+                } else if leaves_scopes {
+                    Frame::Jump
+                } else {
+                    Frame::Plain
+                };
+                self.module.tags.insts.insert(
+                    (self.func_ref, inst),
+                    InstTag {
+                        before: visible,
+                        after: visible,
+                        frame,
+                    },
+                );
             }
         }
     }
 
     fn lower_stmt_inner(&mut self, stmt: &HullStmt<'db>) -> Result<bool, TranslationError> {
         match &stmt.kind {
-            StmtKind::Let { name, ty } => {
+            StmtKind::Let { name, ty, .. } => {
                 self.declare_binding(name.as_str(), ty)?;
                 Ok(false)
             }
-            StmtKind::Assign { lhs, rhs } => {
+            StmtKind::Assign { lhs, rhs, .. } => {
                 let value = self.lower_expr(rhs)?;
                 self.assign(lhs, value)?;
                 Ok(false)
@@ -1141,14 +1274,23 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
         self.fb.switch_to_block(body_block);
         self.break_targets.push(done);
         self.continue_targets.push(post_block);
+        // The body and the step are scopes of the source, though they share the
+        // loop's scope here.
+        self.push_frame();
         let body_terminated = self.lower_stmts(body)?;
+        self.pop_frame();
         self.continue_targets.pop();
         self.break_targets.pop();
         if !body_terminated {
             self.emit_jump(post_block);
         }
-        if self.switch_to_reachable_block(post_block) && !self.lower_stmts(post)? {
-            self.emit_jump(header);
+        if self.switch_to_reachable_block(post_block) {
+            self.push_frame();
+            let post_terminated = self.lower_stmts(post)?;
+            self.pop_frame();
+            if !post_terminated {
+                self.emit_jump(header);
+            }
         }
         self.fb.switch_to_block(done);
         self.pop_scope();
@@ -1167,10 +1309,11 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
         alts: &[hull::Alt<'db>],
         condition: Option<hir::span::Span<'db>>,
     ) -> Result<bool, TranslationError> {
+        let start = self.visible;
         let watermark = self.fb.func.dfg.num_insts();
         let value = self.lower_expr(scrutinee)?;
         if let Some(condition) = condition {
-            self.stamp_insts_since(watermark, condition);
+            self.stamp_insts_since(watermark, condition, start, false);
         }
         let done = self.fb.append_block();
         let mut exhaustive = false;
@@ -1189,7 +1332,7 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
                         let cond = self.pattern_condition(value, target, pat)?;
                         self.emit_branch(cond, arm, next.expect("non-catch-all has a next block"));
                         if let Some(condition) = condition {
-                            self.stamp_insts_since(watermark, condition);
+                            self.stamp_insts_since(watermark, condition, start, false);
                         }
                     }
                 }
@@ -1677,9 +1820,10 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
     }
 
     fn lower_yul_stmt(&mut self, stmt: &YulStmt<'db>) -> Result<bool, TranslationError> {
+        let start = self.visible;
         let watermark = self.fb.func.dfg.num_insts();
         let result = self.lower_yul_stmt_inner(stmt);
-        self.stamp_insts_since(watermark, stmt.span);
+        self.stamp_insts_since(watermark, stmt.span, start, false);
         result
     }
 

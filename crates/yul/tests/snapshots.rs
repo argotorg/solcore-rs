@@ -390,6 +390,7 @@ fn word_literals_wrap_to_256_bits_in_yul_expressions_and_patterns() {
                         generated: None,
                         name: "pick".into(),
                         args: vec![HullArg {
+                            binder: Default::default(),
                             span: sp,
                             name: "x".into(),
                             ty: word.clone(),
@@ -489,6 +490,7 @@ fn copy_locs_rejects_arity_mismatch() {
                         HullStmt {
                             span: sp,
                             kind: HullStmtKind::Let {
+                                binds: Default::default(),
                                 name: "x".into(),
                                 ty: target.clone(),
                             },
@@ -496,6 +498,7 @@ fn copy_locs_rejects_arity_mismatch() {
                         HullStmt {
                             span: sp,
                             kind: HullStmtKind::Assign {
+                                binds: Default::default(),
                                 lhs: HullExpr::var(sp, "x", target),
                                 rhs: HullExpr::word(sp, "0"),
                             },

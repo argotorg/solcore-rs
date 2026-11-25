@@ -115,8 +115,10 @@ fn write_arg<'db>(arg: &Arg<'db>) -> String {
 
 fn write_stmt<'db>(db: &'db dyn HirDb, out: &mut String, stmt: &Stmt<'db>, indent: usize) {
     match &stmt.kind {
-        StmtKind::Let { name, ty } => line(out, indent, &format!("let {name} : {}", write_ty(ty))),
-        StmtKind::Assign { lhs, rhs } => line(
+        StmtKind::Let { name, ty, .. } => {
+            line(out, indent, &format!("let {name} : {}", write_ty(ty)))
+        }
+        StmtKind::Assign { lhs, rhs, .. } => line(
             out,
             indent,
             &format!("{} := {}", write_expr(lhs), write_expr(rhs)),
@@ -214,8 +216,8 @@ fn write_stmt_list_inline(stmts: &[Stmt<'_>]) -> String {
 
 fn write_stmt_inline(stmt: &Stmt<'_>) -> String {
     match &stmt.kind {
-        StmtKind::Let { name, ty } => format!("let {name} : {}", write_ty(ty)),
-        StmtKind::Assign { lhs, rhs } => format!("{} := {}", write_expr(lhs), write_expr(rhs)),
+        StmtKind::Let { name, ty, .. } => format!("let {name} : {}", write_ty(ty)),
+        StmtKind::Assign { lhs, rhs, .. } => format!("{} := {}", write_expr(lhs), write_expr(rhs)),
         StmtKind::Expr(expr) => write_expr(expr),
         StmtKind::Return(expr) => format!("return {}", write_expr(expr)),
         StmtKind::Block(stmts) => {

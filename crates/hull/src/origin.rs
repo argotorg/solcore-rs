@@ -497,6 +497,7 @@ mod tests {
             generated,
             name: name.into(),
             args: vec![Arg {
+                binder: Default::default(),
                 span: fn_span,
                 name: "x".into(),
                 ty: word.clone(),

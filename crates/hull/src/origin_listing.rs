@@ -137,7 +137,7 @@ impl<'db> Listing<'db> {
         let within = stmt.span.resolve_to_absolute(self.db);
         let inner = depth + 1;
         match &stmt.kind {
-            StmtKind::Assign { lhs, rhs } => {
+            StmtKind::Assign { lhs, rhs, .. } => {
                 self.expr(lhs, within, inner);
                 self.expr(rhs, within, inner);
             }

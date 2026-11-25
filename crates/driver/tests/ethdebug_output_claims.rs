@@ -6,7 +6,7 @@ use std::{collections::BTreeSet, process::Command};
 #[path = "support/ethdebug_output.rs"]
 mod ethdebug_output;
 
-use ethdebug_output::{cases, compile, std_root};
+use ethdebug_output::{cases, compile, repo_root, std_root};
 
 /// "Debug information exists only for bytecode compiled with the Sonatina
 /// backend; the Yul output carries none." The Yul text has no source annotation
@@ -124,4 +124,72 @@ fn generated_code_carries_a_remark_and_no_range() {
             "no instruction is `generated: {reason}`: {seen:?}"
         );
     }
+}
+
+/// "Each runtime instruction lists the contract's storage fields with their
+/// types, except a field that a local of the same name hides." In `Hiding` a
+/// field and a local are both `count`: before the local exists the field is
+/// listed, afterwards only the local is, and every other field stays listed.
+#[test]
+fn a_field_that_a_local_of_the_same_name_hides_is_not_listed() {
+    let dir = repo_root().join("tests/ethdebug/scopes");
+    let text = std::fs::read_to_string(dir.join("main.sol")).unwrap();
+    let output = compile(&dir, &["--ethdebug"]);
+    let main = output.source_id("main.sol");
+    let [_, (runtime, _)] = output.programs("Hiding");
+
+    let local_statement = text.find("let count").unwrap() as u64;
+    let local = local_statement + 4;
+    let local_end =
+        local_statement + text[local_statement as usize..].find(';').unwrap() as u64 + 1;
+
+    let (mut with_field, mut with_local) = (0, 0);
+    for instruction in runtime["instructions"].as_array().unwrap() {
+        let Some(variables) = instruction["context"]["variables"].as_array() else {
+            continue;
+        };
+        let counts: Vec<_> = variables
+            .iter()
+            .filter(|variable| variable["identifier"] == "count")
+            .collect();
+        let [count] = counts[..] else {
+            panic!("`count` is listed {} times: {instruction}", counts.len());
+        };
+        assert!(
+            variables
+                .iter()
+                .any(|variable| variable["identifier"] == "other"),
+            "the field `other` is hidden by nothing: {instruction}"
+        );
+        // A field is listed without a declaration (the program lists them
+        // with one); a local has the declaration of its `let`.
+        let is_local = match count.get("declaration") {
+            None => {
+                assert_eq!(count["pointer"]["location"], "storage", "{instruction}");
+                false
+            }
+            Some(declaration) => {
+                assert_eq!(declaration["source"]["id"], main, "{instruction}");
+                assert_eq!(declaration["range"]["offset"], local, "{instruction}");
+                true
+            }
+        };
+        // The instructions of the statements after the `let` list the local,
+        // except those that list no local at all (a jump lists the fields only).
+        let lists_locals = variables
+            .iter()
+            .any(|variable| variable.get("declaration").is_some());
+        let code = &instruction["context"]["code"];
+        if code["source"]["id"] == main && code["range"]["offset"].as_u64().unwrap() >= local_end {
+            assert_eq!(is_local, lists_locals, "after the `let`: {instruction}");
+        }
+        if is_local {
+            with_local += 1;
+        } else {
+            with_field += 1;
+        }
+    }
+    println!("`count` is the field at {with_field} instructions and the local at {with_local}");
+    assert!(with_field > 0, "the field is never listed");
+    assert!(with_local > 0, "the local is never listed");
 }

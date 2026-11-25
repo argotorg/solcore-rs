@@ -77,6 +77,7 @@ fn lowers_word_bool_and_structural_aggregates_to_verified_ir() {
                 generated: None,
                 name: "id".into(),
                 args: vec![Arg {
+                    binder: Default::default(),
                     span,
                     name: "x".into(),
                     ty: word.clone(),
@@ -92,6 +93,7 @@ fn lowers_word_bool_and_structural_aggregates_to_verified_ir() {
                 generated: None,
                 name: "choose".into(),
                 args: vec![Arg {
+                    binder: Default::default(),
                     span,
                     name: "flag".into(),
                     ty: bool_ty.clone(),
@@ -116,6 +118,7 @@ fn lowers_word_bool_and_structural_aggregates_to_verified_ir() {
                 generated: None,
                 name: "aggregate_id".into(),
                 args: vec![Arg {
+                    binder: Default::default(),
                     span,
                     name: "x".into(),
                     ty: sum.clone(),
@@ -199,6 +202,7 @@ fn aggregate_locals_are_zero_initialized_recursively() {
                     Stmt {
                         span,
                         kind: StmtKind::Let {
+                            binds: Default::default(),
                             name: "pair".into(),
                             ty: pair.clone(),
                         },
@@ -206,6 +210,7 @@ fn aggregate_locals_are_zero_initialized_recursively() {
                     Stmt {
                         span,
                         kind: StmtKind::Assign {
+                            binds: Default::default(),
                             lhs: Expr {
                                 span,
                                 ty: word.clone(),
@@ -234,6 +239,7 @@ fn aggregate_locals_are_zero_initialized_recursively() {
                     Stmt {
                         span,
                         kind: StmtKind::Let {
+                            binds: Default::default(),
                             name: "sum".into(),
                             ty: sum.clone(),
                         },
@@ -330,6 +336,7 @@ fn lowers_direct_nary_injections_matches_and_terminal_builtins() {
                 generated: None,
                 name: "pick".into(),
                 args: vec![Arg {
+                    binder: Default::default(),
                     span,
                     name: "choice".into(),
                     ty: three_way.clone(),
@@ -484,6 +491,7 @@ fn runtime_return_wrapper_uses_an_explicit_checked_entry() {
     program.objects[0].inners[0].code.functions[1]
         .args
         .push(Arg {
+            binder: Default::default(),
             span,
             name: "arg".into(),
             ty: Ty::word(span),
@@ -1064,6 +1072,7 @@ fn inline_yul_functions_do_not_capture_outer_values() {
                 Stmt {
                     span,
                     kind: StmtKind::Let {
+                        binds: Default::default(),
                         name: "outer".into(),
                         ty: word.clone(),
                     },

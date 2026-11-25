@@ -56,6 +56,7 @@ fn identity_function_snapshot() {
             generated: None,
             name: "id".into(),
             args: vec![Arg {
+                binder: Default::default(),
                 span: sp,
                 name: "x".into(),
                 ty: word.clone(),
@@ -94,11 +95,13 @@ fn maybe_option_snapshot() {
             name: "maybe$Word".into(),
             args: vec![
                 Arg {
+                    binder: Default::default(),
                     span: sp,
                     name: "n".into(),
                     ty: word.clone(),
                 },
                 Arg {
+                    binder: Default::default(),
                     span: sp,
                     name: "o".into(),
                     ty: option.clone(),
@@ -145,6 +148,7 @@ fn maybe_option_snapshot() {
                                 Stmt {
                                     span: sp,
                                     kind: StmtKind::Let {
+                                        binds: Default::default(),
                                         name: "var_1".into(),
                                         ty: alt_ty.clone(),
                                     },
@@ -152,6 +156,7 @@ fn maybe_option_snapshot() {
                                 Stmt {
                                     span: sp,
                                     kind: StmtKind::Assign {
+                                        binds: Default::default(),
                                         lhs: Expr::var(sp, "var_1", alt_ty.clone()),
                                         rhs: Expr::var(sp, "$alt", alt_ty.clone()),
                                     },
@@ -211,6 +216,7 @@ fn color_enum_snapshot() {
             generated: None,
             name: "fromEnum".into(),
             args: vec![Arg {
+                binder: Default::default(),
                 span: sp,
                 name: "c".into(),
                 ty: color.clone(),
@@ -369,6 +375,7 @@ fn add1_contract_object_snapshot() {
             Stmt {
                 span: sp,
                 kind: StmtKind::Let {
+                    binds: Default::default(),
                     name: "res".into(),
                     ty: word.clone(),
                 },
@@ -489,6 +496,7 @@ fn assembly_checker_rejects_bad_assignments_and_usr_call_arity() {
                 generated: None,
                 name: "id".into(),
                 args: vec![Arg {
+                    binder: Default::default(),
                     span: sp,
                     name: "x".into(),
                     ty: word.clone(),
@@ -509,6 +517,7 @@ fn assembly_checker_rejects_bad_assignments_and_usr_call_arity() {
                     Stmt {
                         span: sp,
                         kind: StmtKind::Let {
+                            binds: Default::default(),
                             name: "x".into(),
                             ty: word.clone(),
                         },
@@ -516,6 +525,7 @@ fn assembly_checker_rejects_bad_assignments_and_usr_call_arity() {
                     Stmt {
                         span: sp,
                         kind: StmtKind::Let {
+                            binds: Default::default(),
                             name: "b".into(),
                             ty: bool_sum,
                         },
@@ -614,6 +624,7 @@ fn assembly_checker_rejects_multi_return_arity_mismatch() {
                 Stmt {
                     span: sp,
                     kind: StmtKind::Let {
+                        binds: Default::default(),
                         name: "x".into(),
                         ty: word.clone(),
                     },
@@ -621,6 +632,7 @@ fn assembly_checker_rejects_multi_return_arity_mismatch() {
                 Stmt {
                     span: sp,
                     kind: StmtKind::Let {
+                        binds: Default::default(),
                         name: "y".into(),
                         ty: word.clone(),
                     },
@@ -628,6 +640,7 @@ fn assembly_checker_rejects_multi_return_arity_mismatch() {
                 Stmt {
                     span: sp,
                     kind: StmtKind::Let {
+                        binds: Default::default(),
                         name: "z".into(),
                         ty: word.clone(),
                     },
@@ -688,6 +701,7 @@ fn assembly_functions_do_not_overwrite_same_named_hull_functions() {
         generated: None,
         name: "foo".into(),
         args: vec![Arg {
+            binder: Default::default(),
             span: sp,
             name: "value".into(),
             ty: word.clone(),
@@ -708,6 +722,7 @@ fn assembly_functions_do_not_overwrite_same_named_hull_functions() {
             Stmt {
                 span: sp,
                 kind: StmtKind::Let {
+                    binds: Default::default(),
                     name: "result".into(),
                     ty: word.clone(),
                 },
@@ -815,6 +830,7 @@ fn assembly_function_bodies_cannot_capture_outer_hull_values() {
                 Stmt {
                     span: sp,
                     kind: StmtKind::Let {
+                        binds: Default::default(),
                         name: "outer".into(),
                         ty: word.clone(),
                     },
@@ -881,6 +897,7 @@ fn assembly_for_post_values_do_not_leak_into_the_body_block() {
                 Stmt {
                     span: sp,
                     kind: StmtKind::Let {
+                        binds: Default::default(),
                         name: "result".into(),
                         ty: word.clone(),
                     },
@@ -970,6 +987,7 @@ fn expression_type_annotations_must_match_inferred_type() {
                 Stmt {
                     span: sp,
                     kind: StmtKind::Let {
+                        binds: Default::default(),
                         name: "x".into(),
                         ty: word,
                     },

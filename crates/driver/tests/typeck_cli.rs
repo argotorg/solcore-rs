@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeSet,
     fs,
     path::{Path, PathBuf},
     process::Command,
@@ -1231,6 +1232,188 @@ fn cli_ethdebug_lists_the_storage_fields_at_every_instruction() {
             .iter()
             .all(|instruction| instruction["context"].get("variables").is_none())
     );
+}
+
+/// The parameters and locals in scope at the statements of `storage-fields`.
+#[test]
+fn cli_ethdebug_lists_the_parameters_and_locals_in_scope() {
+    let (output, text) = storage_fields();
+    let resources = output.resources();
+    let types = resources["types"].as_object().unwrap();
+    let main = output.source_id("main.sol");
+    let runtime = output.json("StorageFields_ethdebug-runtime.json");
+    let instructions = runtime["instructions"].as_array().unwrap();
+    // The parameters and locals in scope after the opcodes of named statements,
+    // as (identifier, declaration offset, type label). An opcode lists what holds
+    // after it ran, so the opcode that completes a `let` already lists the new
+    // binding and the opcodes before it do not.
+    type Local = (String, Option<u64>, Option<String>);
+    let label_of = |variable: &serde_json::Value| -> Option<String> {
+        let ty = variable.get("type")?;
+        let ty = match ty.get("id").and_then(|id| id.as_str()) {
+            Some(id) => &types[id],
+            None => ty,
+        };
+        ty["label"].as_str().map(str::to_owned)
+    };
+    let locals = |instruction: &serde_json::Value| -> BTreeSet<Local> {
+        instruction["context"]["variables"]
+            .as_array()
+            .expect("variables")
+            .iter()
+            .filter(|variable| variable["declaration"]["source"]["id"] == main)
+            .map(|variable| {
+                (
+                    variable["identifier"].as_str().unwrap().to_owned(),
+                    variable["declaration"]["range"]["offset"].as_u64(),
+                    label_of(variable),
+                )
+            })
+            .collect()
+    };
+    let statement = |needle: &str| -> Vec<&serde_json::Value> {
+        let start = text.find(needle).unwrap_or_else(|| panic!("`{needle}`")) as u64;
+        let end = start + needle.len() as u64;
+        let found: Vec<_> = instructions
+            .iter()
+            .filter(|instruction| {
+                let code = &instruction["context"]["code"];
+                let range = &code["range"];
+                code["source"]["id"] == main
+                    && range["offset"].as_u64().is_some_and(|offset| {
+                        offset >= start && offset + range["length"].as_u64().unwrap() <= end
+                    })
+            })
+            .collect();
+        assert!(!found.is_empty(), "no opcode of `{needle}`");
+        found
+    };
+    let local = |name: &str, near: &str, shift: usize, label: &str| -> Local {
+        let at = text.find(near).unwrap_or_else(|| panic!("`{near}`")) + shift;
+        assert_eq!(&text[at..at + name.len()], name, "{near}");
+        (name.to_owned(), Some(at as u64), Some(label.to_owned()))
+    };
+    let total_first = local("total", "let total: uint256 = count", 4, "uint256");
+    let total_second = local(
+        "total",
+        "let total: uint256 = total + uint256(1);",
+        4,
+        "uint256",
+    );
+    let bonus = local("bonus", "let bonus", 4, "uint256");
+    // Every opcode of a statement that only reads and assigns lists the same
+    // bindings, whichever of the opcodes it is, except a `JUMP` or `JUMPI` (the
+    // opcode after it may run in another frame or past the end of a scope, so it
+    // lists no local) and,
+    // when `exit` is given, the last opcode, which is followed by code outside
+    // the statement's block.
+    let every_opcode = |needle: &str, expected: &[&Local], exit: Option<&[&Local]>| {
+        let set = |locals: &[&Local]| -> BTreeSet<Local> {
+            locals.iter().map(|local| (*local).clone()).collect()
+        };
+        let expected = set(expected);
+        let opcodes = statement(needle);
+        let mut with_locals = 0;
+        for (at, instruction) in opcodes.iter().enumerate() {
+            let listed = locals(instruction);
+            if let (Some(exit), true) = (exit, at + 1 == opcodes.len()) {
+                assert_eq!(listed, set(exit), "`{needle}`: {instruction}");
+                continue;
+            }
+            if listed.is_empty() {
+                assert!(
+                    ["JUMP", "JUMPI"]
+                        .contains(&instruction["operation"]["mnemonic"].as_str().unwrap()),
+                    "{instruction}"
+                );
+            } else {
+                assert_eq!(listed, expected, "`{needle}`: {instruction}");
+                with_locals += 1;
+            }
+        }
+        assert!(with_locals > 0, "`{needle}`");
+    };
+    every_opcode(
+        "total = total + bonus;",
+        &[&total_first, &bonus],
+        Some(&[&total_first]),
+    );
+    // The assignment ends the block of the `if`: the opcode that completes it
+    // already lists what holds outside the block, without `bonus`.
+    // The shadowing initializer: the old `total` while it runs, the new one once
+    // it completes, and never both. `bonus` is out of scope after the `if`.
+    let shadowing = statement("let total: uint256 = total + uint256(1);");
+    assert_eq!(locals(shadowing[0]), BTreeSet::from([total_first.clone()]));
+    let last = locals(shadowing[shadowing.len() - 1]);
+    assert_eq!(last, BTreeSet::from([total_second.clone()]), "{last:?}");
+    for instruction in &shadowing {
+        let listed = locals(instruction);
+        assert!(!listed.contains(&bonus), "{instruction}");
+        assert!(
+            !(listed.contains(&total_first) && listed.contains(&total_second)),
+            "{instruction}"
+        );
+    }
+    // Pattern binders and parameters, once per specialized copy of `first`.
+    let p = |label: &str| local("p", "(p: Pair<a, b>)", 1, label);
+    let x = |label: &str| local("x", "Pair(x, y)", 5, label);
+    let y = |label: &str| local("y", "Pair(x, y)", 8, label);
+    let copies: BTreeSet<BTreeSet<Local>> = statement("return x;")
+        .into_iter()
+        .map(&locals)
+        .filter(|listed| !listed.is_empty())
+        .collect();
+    let copy = |p_label: &str, element: &str| {
+        BTreeSet::from([p(p_label), x(element), y(&element_of(p_label))])
+    };
+    fn element_of(label: &str) -> String {
+        // `Pair<a, b>`: `y` has the type of `b`.
+        label
+            .trim_start_matches("Pair<")
+            .trim_end_matches('>')
+            .split(", ")
+            .nth(1)
+            .unwrap()
+            .to_owned()
+    }
+    assert_eq!(
+        copies,
+        BTreeSet::from([
+            copy("Pair<word, word>", "word"),
+            copy("Pair<bool, uint256>", "bool"),
+        ])
+    );
+    // A type with three constructors has no description, so `s` has no type.
+    let shape: Local = (
+        "s".to_owned(),
+        Some(text.find("(s: Shape)").unwrap() as u64 + 1),
+        None,
+    );
+    let lo = local("lo", "Seg(lo, hi)", 4, "uint256");
+    let hi = local("hi", "Seg(lo, hi)", 8, "uint256");
+    every_opcode("return hi - lo;", &[&shape, &lo, &hi], None);
+    // A lambda lists its own parameter and not the `total` it captures.
+    let v = local("v", "lam (v: uint256)", 5, "uint256");
+    for instruction in statement("return v + total;") {
+        let listed = locals(instruction);
+        assert!(
+            listed.is_empty() || listed == BTreeSet::from([v.clone()]),
+            "{instruction}"
+        );
+    }
+    // Locals that were bound by the time of `return count;`.
+    let after_all = statement("return count;");
+    let at_return = locals(after_all[0]);
+    let names: BTreeSet<&str> = at_return.iter().map(|local| local.0.as_str()).collect();
+    assert_eq!(names, BTreeSet::from(["total", "w", "flag", "width"]));
+    assert!(at_return.contains(&total_second), "{at_return:?}");
+    // Compile-time and callable bindings are erased before the program is made.
+    for instruction in instructions {
+        for variable in instruction["context"]["variables"].as_array().unwrap() {
+            let name = variable["identifier"].as_str().unwrap();
+            assert!(name != "seed" && name != "f", "{instruction}");
+        }
+    }
 }
 
 /// Variables grow every instruction, so the size is shown and bounded.

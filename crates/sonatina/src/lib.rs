@@ -3,6 +3,7 @@
 
 mod compile;
 pub mod debug;
+mod locals;
 mod lower;
 
 use std::{error::Error, fmt};
@@ -12,8 +13,10 @@ use hull::Program as HullProgram;
 use sonatina_ir::{Module, ir_writer::ModuleWriter};
 
 pub use compile::{
-    CompileOptions, CompiledObject, CompiledSection, OptLevel, PcRange, compile_hull_program,
+    CompileOptions, CompiledObject, CompiledSection, OptLevel, PcDebug, PcRange,
+    compile_hull_program,
 };
+pub use locals::{Frame, LocalsTag};
 
 /// A failure while translating typed Hull into Sonatina IR.
 #[derive(Debug, Clone, PartialEq, Eq)]

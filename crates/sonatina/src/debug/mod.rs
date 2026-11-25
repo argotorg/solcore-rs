@@ -1,6 +1,7 @@
 //! Source attribution and contract storage fields for Sonatina bytecode shared by
 //! native and browser callers.
 
+mod locals;
 mod storage;
 #[cfg(test)]
 mod test_support;
@@ -60,8 +61,9 @@ impl<'db> Resources<'db> {
 ///
 /// With `resources`, the runtime program of a contract also lists the contract's
 /// storage fields, in the program-level context and after every instruction, and
-/// the types and templates they need are added to `resources`. Without it the
-/// program has no variables and no type ids.
+/// the parameters and local variables in scope after each instruction (see
+/// `locals`). The types and templates they need are added to `resources`.
+/// Without it the program has no variables and no type ids.
 pub fn program_json<'db>(
     db: &'db dyn hir_ty::Db,
     table: &SourceTable,
@@ -82,7 +84,8 @@ pub fn program_json<'db>(
     let ranges = ranges(table, section)?;
 
     // The create program has no variables: deployment is not recorded, so
-    // nothing would check them.
+    // nothing would check them. The runtime program lists the contract's fields
+    // and, after each opcode, the parameters and locals in scope there.
     let mut lists = Vec::new();
     let mut program_variables = None;
     let mut variables_at = Vec::new();
@@ -91,14 +94,19 @@ pub fn program_json<'db>(
         let facts = facts.map_or(&[][..], Vec::as_slice);
         let env = Env { db, sources: table };
         let fields = storage::fields(&env, resources, &object.contract, facts);
-        if !fields.program.is_empty() {
-            lists = vec![fields.per_instruction, fields.program];
+        lists = vec![fields.per_instruction, fields.program];
+        if !lists[1].is_empty() {
             program_variables = Some(1);
-            variables_at = ethdebug::instruction_offsets(code)
-                .into_iter()
-                .map(|offset| (offset, 0))
-                .collect();
         }
+        variables_at = locals::per_opcode(
+            &env,
+            resources,
+            &program.debug.binders,
+            code,
+            section,
+            &mut lists,
+            0,
+        );
     }
     let program = Program {
         contract: &object.contract,

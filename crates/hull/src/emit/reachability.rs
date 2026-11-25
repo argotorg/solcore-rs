@@ -46,7 +46,7 @@ fn collect_stmt_callees<'db>(
     match &stmt.kind {
         StmtKind::Let { .. } | StmtKind::Break | StmtKind::Continue | StmtKind::Comment(_) => {}
         StmtKind::Revert(_) => {}
-        StmtKind::Assign { lhs, rhs } => {
+        StmtKind::Assign { lhs, rhs, .. } => {
             collect_expr_callees(lhs, out);
             collect_expr_callees(rhs, out);
         }

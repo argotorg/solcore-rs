@@ -25,14 +25,15 @@ use parser::parse_file_to_hir;
 use specialize::{
     MonoArm, MonoBuiltinCtor, MonoCallOrigin, MonoContract, MonoEntry, MonoExpr, MonoExprArm,
     MonoExprKind, MonoFunction, MonoFunctionOrigin, MonoId, MonoIntrinsic, MonoItem, MonoModule,
-    MonoPat, MonoPatKind, MonoRuntimeMainOrigin, MonoStmt, MonoStmtKind, MonoStorageIndexKind,
-    collect_leaking_let_stmts, decode_string_literal,
+    MonoParam, MonoPat, MonoPatKind, MonoRuntimeMainOrigin, MonoStmt, MonoStmtKind,
+    MonoStorageIndexKind, collect_leaking_let_stmts, decode_string_literal,
 };
 
 use crate::{
     ir::{
-        Alt, Arg, CodeBlock, Con, DebugCondition, DebugTables, Expr, ExprKind, FieldFacts,
-        Function, Object, Pat, PatKind, Program, Stmt, StmtKind, Ty, TyKind,
+        Alt, Arg, BinderId, CodeBlock, Con, DebugBinder, DebugCondition, DebugTables, Expr,
+        ExprKind, FieldFacts, Function, Object, Pat, PatKind, Program, SourceBinder, Stmt,
+        StmtKind, Ty, TyKind,
     },
     origin::GeneratedReason,
     scope_stack::ScopeStack,
@@ -91,6 +92,11 @@ struct Emitter<'db> {
     next_revert_literal: usize,
     storage_array_index_used: bool,
     fresh: usize,
+    /// The source bindings that statements mark for debug information.
+    binders: Vec<SourceBinder<'db>>,
+    /// The span of the function being emitted when its bindings are the source's
+    /// own; `None` inside generated functions.
+    binder_scope: Option<Span<'db>>,
 }
 
 /// Identity of a declaration occurrence in the immutable Mono tree currently

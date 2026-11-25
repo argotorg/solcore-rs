@@ -5,6 +5,11 @@
 //! stamp of each surviving instruction is handed to Sonatina as its
 //! post-optimization provenance, and Sonatina reports, for every range of code
 //! bytes, either that provenance or the reason the range has none.
+//!
+//! At `OptLevel::O0` the provenance of an instruction also carries a
+//! [`LocalsTag`]: which source bindings are visible before and after it. The tag
+//! follows the origin after a newline and is split off again in the byte map, so
+//! `PcRange::origin` is the origin alone.
 
 use std::collections::HashMap;
 
@@ -18,7 +23,14 @@ use sonatina_ir::{InstId, Module, module::FuncRef};
 
 pub use sonatina_codegen::OptLevel;
 
-use crate::{TranslationError, lower};
+use crate::{
+    TranslationError,
+    locals::LocalsTag,
+    lower::{self, DebugTags},
+};
+
+/// The tag of an instruction that lowering gave no locals tag.
+const NO_TAG: &str = "-";
 
 /// Options of [`compile_hull_program`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -64,6 +76,22 @@ pub struct PcRange {
     /// `hull::origin::ResolvedOrigin::parse`); `Err` is Sonatina's reason for
     /// leaving the range unmapped.
     pub origin: Result<String, &'static str>,
+    /// What the range says about the scope of the source bindings. Only with
+    /// debug info.
+    pub debug: PcDebug,
+}
+
+/// Where a range of code bytes is in the IR, and which source bindings were
+/// visible around the IR instruction that made it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PcDebug {
+    /// The name of the IR function.
+    pub func: String,
+    /// The IR block, by its index in the function.
+    pub block: u32,
+    /// Present only at `OptLevel::O0`, where instructions keep the identity they
+    /// had at lowering, and only for an instruction that lowering tagged.
+    pub tag: Option<LocalsTag>,
 }
 
 /// Compiles every top-level object of `program` to EVM bytecode.
@@ -75,20 +103,50 @@ pub fn compile_hull_program<'db>(
     program: &HullProgram<'db>,
     options: CompileOptions,
 ) -> Result<Vec<CompiledObject>, TranslationError> {
-    let module = lower::translate_hull_program(db, program, options.debug_info)?;
+    let (module, tags) = lower::translate_hull_program_tagged(db, program, options.debug_info)?;
+    compile_module(program, module, &tags, options)
+}
+
+fn compile_module(
+    program: &HullProgram<'_>,
+    module: Module,
+    tags: &DebugTags,
+    options: CompileOptions,
+) -> Result<Vec<CompiledObject>, TranslationError> {
     let mut compile = EvmCompile::new(module)
         .with_opt_level(options.opt_level)
         .with_observability(options.debug_info);
     if options.debug_info {
         let mut origins = optimized_origins(compile.optimize());
-        compile.stamp_all_post_opt_provenance(|func, inst| origins.remove(&(func, inst.raw())));
+        // At O0 no pass runs, so an instruction keeps the identity it had at
+        // lowering and its tag still describes it. At other levels the origin
+        // goes through unchanged.
+        let tagged = options.opt_level == OptLevel::O0;
+        compile.stamp_all_post_opt_provenance(|func, inst| {
+            let origin = origins.remove(&(func, inst.raw()))?;
+            Some(if tagged {
+                let tag = tags
+                    .tag(func, inst.raw())
+                    .map_or_else(|| NO_TAG.to_owned(), |tag| tag.encode());
+                format!("{origin}\n{tag}")
+            } else {
+                origin
+            })
+        });
     }
     let artifacts = compile.compile().map_err(|errors| {
         TranslationError::new(format!("EVM bytecode generation failed: {errors:?}"))
     })?;
     artifacts
         .into_iter()
-        .map(|artifact| compiled_object(program, artifact, options.debug_info))
+        .map(|artifact| {
+            compiled_object(
+                program,
+                artifact,
+                options.debug_info,
+                options.opt_level == OptLevel::O0,
+            )
+        })
         .collect()
 }
 
@@ -114,6 +172,7 @@ fn compiled_object(
     program: &HullProgram<'_>,
     artifact: ObjectArtifact,
     debug_info: bool,
+    tagged: bool,
 ) -> Result<CompiledObject, TranslationError> {
     let object = artifact.object.0.to_string();
     let contract = program
@@ -126,9 +185,15 @@ fn compiled_object(
     let mut runtime = None;
     for (name, section) in artifact.sections {
         match name.0.as_str() {
-            "init" => init = Some(compiled_section(&object, "init", section, debug_info)?),
+            "init" => {
+                init = Some(compiled_section(
+                    &object, "init", section, debug_info, tagged,
+                )?)
+            }
             "runtime" => {
-                runtime = Some(compiled_section(&object, "runtime", section, debug_info)?);
+                runtime = Some(compiled_section(
+                    &object, "runtime", section, debug_info, tagged,
+                )?);
             }
             _ => {}
         }
@@ -149,6 +214,7 @@ fn compiled_section(
     name: &str,
     section: SectionArtifact,
     debug_info: bool,
+    tagged: bool,
 ) -> Result<CompiledSection, TranslationError> {
     if !debug_info {
         return Ok(CompiledSection {
@@ -166,18 +232,43 @@ fn compiled_section(
     entries.sort_by_key(|entry| (entry.pc_start, entry.pc_end));
     let map: Vec<PcRange> = entries
         .into_iter()
-        .map(|entry| PcRange {
-            start: entry.pc_start,
-            end: entry.pc_end,
-            origin: match &entry.attribution {
+        .map(|entry| {
+            let mut tag = None;
+            let origin = match &entry.attribution {
+                PcAttribution::Mapped {
+                    post_opt_provenance,
+                    ..
+                } if tagged => {
+                    let (origin, text) = post_opt_provenance
+                        .rsplit_once('\n')
+                        .ok_or_else(|| {
+                            TranslationError::new(format!(
+                                "section `{name}` of object `{object}` has a range without a locals tag"
+                            ))
+                        })?;
+                    if text != NO_TAG {
+                        tag = Some(LocalsTag::parse(text).map_err(TranslationError::new)?);
+                    }
+                    Ok(origin.to_owned())
+                }
                 PcAttribution::Mapped {
                     post_opt_provenance,
                     ..
                 } => Ok(post_opt_provenance.clone()),
                 PcAttribution::Unmapped { reason, .. } => Err(reason.as_str()),
-            },
+            };
+            Ok(PcRange {
+                start: entry.pc_start,
+                end: entry.pc_end,
+                origin,
+                debug: PcDebug {
+                    func: entry.func_name.clone(),
+                    block: entry.block.0,
+                    tag,
+                },
+            })
         })
-        .collect();
+        .collect::<Result<_, TranslationError>>()?;
     let accounted =
         u64::from(observability.mapped_code_bytes) + u64::from(observability.unmapped_code_bytes);
     check_conservation(&map, observability.code_bytes, accounted).map_err(|message| {
@@ -238,6 +329,11 @@ mod tests {
             start,
             end,
             origin: Err("synthetic"),
+            debug: PcDebug {
+                func: String::new(),
+                block: 0,
+                tag: None,
+            },
         }
     }
 

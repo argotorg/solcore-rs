@@ -2,7 +2,10 @@
 //! does not change the bytes, and every mapped range names an origin of the
 //! program.
 
-use std::{collections::BTreeMap, path::PathBuf};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    path::PathBuf,
+};
 
 use hir::{
     ast::function::{ExprKind as HirExprKind, FuncBody, StmtKind as HirStmtKind},
@@ -39,6 +42,20 @@ const FIXTURES: [&str; 5] = [
 /// The fixture of the debug information of contract storage fields. It is not
 /// under `tests/e2e`, which the attribution tests measure as a corpus.
 const STORAGE_FIELDS: &str = "tests/ethdebug/storage-fields";
+/// The fewest locals that each fixture of `tests/ethdebug` must list over all its
+/// statements (see `origin_listed_locals_follow_name_resolution`). Each minimum is
+/// about half of what the fixture lists today. A fixture without a line here
+/// fails the test, so that a new fixture gets a minimum.
+const MINIMUM_LISTINGS: [(&str, usize); 6] = [
+    ("storage-fields", 500),
+    ("scopes", 800),
+    ("stack-values", 500),
+    ("storage-slots", 200),
+    ("no-std", 6),
+    ("types", 150),
+];
+/// The fewest locals each `tests/e2e` fixture of the corpus must list.
+const MIN_E2E: usize = 500;
 const LEVELS: [OptLevel; 2] = [OptLevel::O0, OptLevel::O2];
 
 /// The directories of `tests/ethdebug`, relative to the repository, each a program
@@ -296,6 +313,282 @@ fn origin_is_stamped_only_by_the_lowering_that_is_asked_to() {
     assert!(probe_origins(&plain).iter().all(Option::is_none));
     let stamped = translate_hull_program_with_origins(&db, &program).expect("lowering");
     assert!(probe_origins(&stamped).iter().any(Option::is_some));
+}
+
+/// A binding that name resolution records: where it is visible, and the syntax
+/// that is evaluated before it is introduced. Byte offsets in the file.
+struct Scoped {
+    name: String,
+    scope: (u32, u32),
+    introduced_after: (u32, u32),
+}
+
+fn contains(outer: (u32, u32), inner: (u32, u32)) -> bool {
+    outer.0 <= inner.0 && inner.1 <= outer.1
+}
+
+/// The bindings of every function body of every file of the program, by the
+/// file's url, as the language server obtains them.
+fn scoped_bindings(db: &'static TestDb, table: &SourceTable) -> BTreeMap<String, Vec<Scoped>> {
+    let mut by_url = BTreeMap::<String, Vec<Scoped>>::new();
+    for (_, url, file) in table.entries() {
+        let module = parse_file_to_hir(db, file).module(db);
+        for body in hir::nameres::resolve_module(db, module).bodies {
+            for binding in body.scoped_bindings {
+                let range = |span: Span<'_>| {
+                    let absolute = span.resolve_to_absolute(db);
+                    (absolute.start.as_u32(), absolute.end.as_u32())
+                };
+                by_url.entry(url.to_owned()).or_default().push(Scoped {
+                    name: binding.name,
+                    scope: range(binding.scope),
+                    introduced_after: range(binding.introduced_after),
+                });
+            }
+        }
+    }
+    by_url
+}
+
+/// The text range of every lambda expression of every file of the program, by
+/// the file's url. A lambda is lowered to a function of its own, whose frame
+/// holds its parameters, its own locals and what it captures, so the bindings
+/// of the enclosing function that name resolution makes visible inside it are
+/// not all in the frame.
+fn lambda_spans(db: &'static TestDb, table: &SourceTable) -> BTreeMap<String, Vec<(u32, u32)>> {
+    fn walk<'db>(db: &'db TestDb, body: FuncBody<'db>, found: &mut Vec<(u32, u32)>) {
+        for (_, expr) in body.exprs(db).iter() {
+            if let HirExprKind::Lambda { body, .. } = &expr.kind {
+                let range = expr.span.resolve_to_absolute(db);
+                found.push((range.start.as_u32(), range.end.as_u32()));
+                walk(db, *body, found);
+            }
+        }
+    }
+    let mut by_url = BTreeMap::<String, Vec<(u32, u32)>>::new();
+    for (_, url, file) in table.entries() {
+        let module = parse_file_to_hir(db, file).module(db);
+        let mut found = Vec::new();
+        for map in hir::nameres::resolve_module(db, module).bodies {
+            for expr in map.exprs {
+                walk(db, expr.body, &mut found);
+            }
+        }
+        found.sort();
+        found.dedup();
+        by_url.insert(url.to_owned(), found);
+    }
+    by_url
+}
+
+/// Name resolution is the authority on what is in scope. Lowering tags every
+/// instruction with the bindings visible before it (`PcRange.debug.tag`), and the
+/// program's debug tables say what each binding is. Every binding listed for the
+/// statement that made the instruction, and not declared in another function that
+/// specialization inlined here, must be one that name resolution makes visible at
+/// the statement, and the innermost of its name. The converse also holds: every
+/// binding that name resolution makes visible at the statement (the innermost of
+/// its name, written in the function that holds the statement and not in an
+/// enclosing function of a lambda) and that has a binder is in the tag. Each
+/// fixture must list at least a stated number of locals, so that a lowering that
+/// lists nothing cannot pass.
+#[test]
+fn origin_listed_locals_follow_name_resolution() {
+    run_in_large_stack(|| {
+        let cases = FIXTURES
+            .into_iter()
+            .map(|name| (name.to_owned(), MIN_E2E, lower_fixture(name)))
+            .chain(ethdebug_fixtures().into_iter().map(|name| {
+                let short = name.trim_start_matches("tests/ethdebug/");
+                let minimum = MINIMUM_LISTINGS
+                    .iter()
+                    .find(|(fixture, _)| *fixture == short)
+                    .unwrap_or_else(|| panic!("{name} needs a minimum in MINIMUM_LISTINGS"))
+                    .1;
+                let lowered = lower_case(&name);
+                (name, minimum, lowered)
+            }));
+        for (name, minimum, (db, program)) in cases {
+            let table = SourceTable::from_program(db, &program);
+            let resolved = scoped_bindings(db, &table);
+            let lambdas = lambda_spans(db, &table);
+            let binders: Vec<_> = program
+                .debug
+                .binders
+                .iter()
+                .map(|binder| {
+                    let declaration = binder.declaration.resolve_to_absolute(db);
+                    let function = binder.function.resolve_to_absolute(db);
+                    (
+                        binder.name.clone(),
+                        declaration.file.url(db).as_str().to_owned(),
+                        (declaration.start.as_u32(), declaration.end.as_u32()),
+                        function.file.url(db).as_str().to_owned(),
+                        (function.start.as_u32(), function.end.as_u32()),
+                    )
+                })
+                .collect();
+            let (mut ranges, mut listings, mut innermost_shadowing) = (0, 0, 0);
+            let (mut required, mut without_binder) = (0, 0);
+            for object in compile(db, &program, OptLevel::O0, true) {
+                for section in [Some(&object.init), object.runtime.as_ref()]
+                    .into_iter()
+                    .flatten()
+                {
+                    for range in &section.map {
+                        let (Ok(stamp), Some(tag)) = (&range.origin, &range.debug.tag) else {
+                            continue;
+                        };
+                        let origin = ResolvedOrigin::parse(stamp).expect("an origin");
+                        if origin.generated.is_some() {
+                            continue;
+                        }
+                        ranges += 1;
+                        let statement = (origin.start, origin.end);
+                        // Of several bindings of one name, the one bound last.
+                        let mut seen = BTreeSet::new();
+                        for &id in tag.before.iter().rev() {
+                            let (binding, url, declaration, function_url, function) =
+                                &binders[id as usize];
+                            if !seen.insert(binding.clone()) {
+                                innermost_shadowing += 1;
+                                continue;
+                            }
+                            if *function_url != origin.url || !contains(*function, statement) {
+                                continue;
+                            }
+                            assert_eq!(*url, origin.url, "{name}: `{binding}`");
+                            let bindings = &resolved[url];
+                            // The statement introduces it before its own range starts,
+                            // except for the loop whose initializer declares it: the
+                            // loop's condition and back edge are made by the whole
+                            // `for` statement, which starts before the binding does and
+                            // is exactly its scope.
+                            let visible = |candidate: &&Scoped| {
+                                candidate.name == *binding
+                                    && contains(candidate.scope, statement)
+                                    && (candidate.introduced_after.1 <= statement.0
+                                        || candidate.scope == statement)
+                            };
+                            let found: Vec<_> = bindings
+                                .iter()
+                                .filter(|candidate| {
+                                    candidate.name == *binding
+                                        && contains(candidate.introduced_after, *declaration)
+                                })
+                                .collect();
+                            let [found] = found[..] else {
+                                panic!(
+                                    "{name}: `{binding}` at {declaration:?} matches {} bindings",
+                                    found.len()
+                                );
+                            };
+                            assert!(
+                                visible(&found),
+                                "{name}: `{binding}` at {declaration:?} is listed for a statement at {statement:?} of {} where it is not visible (scope {:?}, introduced after {:?})",
+                                origin.url,
+                                found.scope,
+                                found.introduced_after
+                            );
+                            let later = bindings
+                                .iter()
+                                .filter(visible)
+                                .any(|other| other.introduced_after.1 > found.introduced_after.1);
+                            assert!(
+                                !later,
+                                "{name}: `{binding}` at {declaration:?} is shadowed at {statement:?}"
+                            );
+                            listings += 1;
+                        }
+                        // The converse. Every binding that name resolution makes
+                        // visible at the statement, the innermost of its name, is
+                        // in the tag, unless it has no binder: a binding that
+                        // exists only at compile time (a `comptime` value or a
+                        // function value) is erased before the program is made.
+                        // A binding is looked for only in the function whose text
+                        // holds the statement, as lowering tags the bindings of the
+                        // frame, and the code of a function that specialization
+                        // inlined into another has the other function's. The tag
+                        // of a jump is complete too; the listing of the program
+                        // leaves a jump out (see `debug/locals.rs`), which is
+                        // decided after the tag and is not what is checked here.
+                        let listed: Vec<(&String, (u32, u32))> = tag
+                            .before
+                            .iter()
+                            .map(|&id| (&binders[id as usize].0, binders[id as usize].2))
+                            .collect();
+                        let visible_here = |candidate: &&Scoped| {
+                            contains(candidate.scope, statement)
+                                && (candidate.introduced_after.1 <= statement.0
+                                    || candidate.scope == statement)
+                        };
+                        let in_scope: Vec<&Scoped> = resolved
+                            .get(&origin.url)
+                            .into_iter()
+                            .flatten()
+                            .filter(visible_here)
+                            .collect();
+                        for candidate in &in_scope {
+                            let innermost = in_scope
+                                .iter()
+                                .filter(|other| other.name == candidate.name)
+                                .all(|other| {
+                                    other.introduced_after.1 <= candidate.introduced_after.1
+                                });
+                            // Declared outside a lambda that holds the statement: the
+                            // frame of the lambda has it only when it is captured, and
+                            // a captured variable is not listed (see
+                            // `a_lambda_lists_its_parameter_and_not_a_variable_it_captures`).
+                            let outside_lambda = lambdas
+                                .get(&origin.url)
+                                .into_iter()
+                                .flatten()
+                                .any(|&lambda| {
+                                    contains(lambda, statement)
+                                        && !contains(lambda, candidate.introduced_after)
+                                });
+                            if !innermost || outside_lambda {
+                                continue;
+                            }
+                            let declared: Vec<_> = binders
+                                .iter()
+                                .filter(|binder| {
+                                    binder.0 == candidate.name
+                                        && binder.1 == origin.url
+                                        && contains(candidate.introduced_after, binder.2)
+                                        && binder.3 == origin.url
+                                        && contains(binder.4, statement)
+                                })
+                                .collect();
+                            if declared.is_empty() {
+                                without_binder += 1;
+                                continue;
+                            }
+                            required += 1;
+                            assert!(
+                                declared.iter().any(|binder| listed
+                                    .iter()
+                                    .any(|(name, declaration)| **name == binder.0
+                                        && *declaration == binder.2)),
+                                "{name}: `{}` is visible at the statement at {statement:?} of {} (scope {:?}, introduced after {:?}) and is not listed",
+                                candidate.name,
+                                origin.url,
+                                candidate.scope,
+                                candidate.introduced_after
+                            );
+                        }
+                    }
+                }
+            }
+            println!(
+                "{name}: {ranges} statement ranges, {listings} locals checked, {required} visible bindings required in a tag ({without_binder} have no binder), {innermost_shadowing} shadowed entries skipped"
+            );
+            assert!(
+                listings >= minimum && required >= minimum,
+                "{name}: {listings} locals listed and {required} required, at least {minimum} of each expected"
+            );
+        }
+    });
 }
 
 /// The condition of an `if` and its branches are located at the condition. The
