@@ -635,11 +635,25 @@ fn copied_binary_resolves_std_next_to_current_exe() {
     let input = input_dir.join("main.sol");
     write_fake_std_importer(&input);
 
-    let output = Command::new(&copied_driver)
-        .arg(&input)
-        .env_remove("SOLCORE_STD")
-        .output()
-        .expect("run copied driver");
+    // Another test thread can fork while `fs::copy` holds the destination open for writing. The
+    // forked child keeps that descriptor until it execs, and running the copy in that window
+    // fails with ETXTBSY, so the run is retried for up to a second.
+    let mut attempts = 0;
+    let output = loop {
+        let result = Command::new(&copied_driver)
+            .arg(&input)
+            .env_remove("SOLCORE_STD")
+            .output();
+        match result {
+            Err(error)
+                if error.kind() == std::io::ErrorKind::ExecutableFileBusy && attempts < 50 =>
+            {
+                attempts += 1;
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            result => break result.expect("run copied driver"),
+        }
+    };
 
     let _ = fs::remove_dir_all(&dir);
 
