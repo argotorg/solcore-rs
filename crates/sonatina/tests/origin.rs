@@ -38,9 +38,14 @@ const FIXTURES: [&str; 5] = [
 const LEVELS: [OptLevel; 2] = [OptLevel::O0, OptLevel::O2];
 
 fn lower_fixture(name: &str) -> (&'static TestDb, Program<'static>) {
+    lower_case(&format!("tests/e2e/{name}"))
+}
+
+/// The program of the fixture in `name`, a directory relative to the repository.
+fn lower_case(name: &str) -> (&'static TestDb, Program<'static>) {
     let db = Box::leak(Box::new(TestDb::default()));
     let repo = repo_root_from_manifest(env!("CARGO_MANIFEST_DIR"));
-    let case_dir: PathBuf = repo.join("tests/e2e").join(name);
+    let case_dir: PathBuf = repo.join(name);
     let entry = load_fixture_case_with_file_urls(db, &case_dir, &repo, BTreeMap::new());
     load_reachable_modules_with_file_urls(db, entry.clone());
     let db: &'static TestDb = &*db;
@@ -261,4 +266,85 @@ fn origin_is_stamped_only_by_the_lowering_that_is_asked_to() {
     assert!(probe_origins(&plain).iter().all(Option::is_none));
     let stamped = translate_hull_program_with_origins(&db, &program).expect("lowering");
     assert!(probe_origins(&stamped).iter().any(Option::is_some));
+}
+
+/// The condition of an `if` and its branches are located at the condition. The
+/// jumps that leave an arm have no location: the range of the whole `if` also
+/// covers the arms, and the debugger would show the `if` again after them.
+#[test]
+fn origin_locates_the_condition_of_an_if_and_leaves_the_jumps_out_of_its_arms_unmapped() {
+    run_in_large_stack(|| {
+        let case = "crates/sonatina/tests/fixtures/origin/branches";
+        let (db, program) = lower_case(case);
+        let repo = repo_root_from_manifest(env!("CARGO_MANIFEST_DIR"));
+        let text = std::fs::read_to_string(repo.join(case).join("main.sol")).unwrap();
+        let offset = |needle: &str| text.find(needle).unwrap();
+        let whole_if_else = offset("if (x == uint256(1))")..offset("\n        if (r ==");
+        let whole_if = offset("if (r == uint256(11))")..offset("\n        return r;");
+        let pick = offset("function pick")..text.len();
+        let [object] = <[_; 1]>::try_from(compile(db, &program, OptLevel::O0, true)).unwrap();
+        let runtime = object.runtime.expect("a runtime section");
+
+        // What each range of the runtime code is attributed to: its source text,
+        // `-` for no origin and `generated` for code the compiler made.
+        let attributions: Vec<(Option<std::ops::Range<usize>>, &str)> = runtime
+            .map
+            .iter()
+            .map(|range| {
+                let Ok(stamp) = &range.origin else {
+                    return (None, "-");
+                };
+                let origin = ResolvedOrigin::parse(stamp).unwrap();
+                if origin.generated.is_some() || !origin.url.ends_with("/branches/main.sol") {
+                    return (None, "generated");
+                }
+                let span = origin.start as usize..origin.end as usize;
+                let slice = &text[span.clone()];
+                (Some(span), slice)
+            })
+            .collect();
+        for (span, slice) in &attributions {
+            assert!(
+                span.as_ref()
+                    .is_none_or(|span| *span != whole_if_else && *span != whole_if),
+                "an instruction is attributed to a whole `if`: {slice}"
+            );
+        }
+
+        // The ranges of `pick`, with repeats merged.
+        let first = attributions
+            .iter()
+            .position(|(span, _)| span.as_ref().is_some_and(|span| pick.contains(&span.start)))
+            .expect("pick has source ranges");
+        let last = attributions
+            .iter()
+            .rposition(|(span, _)| span.as_ref().is_some_and(|span| pick.contains(&span.start)))
+            .unwrap();
+        let mut sequence: Vec<&str> = Vec::new();
+        for (_, slice) in &attributions[first..=last] {
+            if sequence.last() != Some(slice) {
+                sequence.push(slice);
+            }
+        }
+        // The condition and its branch, an arm, and an unmapped jump out of the
+        // arm; the `else` arm is entered by a second test of the condition. The
+        // `if` without an `else` ends in two unmapped jumps.
+        assert_eq!(
+            sequence,
+            [
+                "x == uint256(1)",
+                "r = r + uint256(10);",
+                "-",
+                "x == uint256(1)",
+                "r = r + uint256(20);",
+                "-",
+                "r == uint256(11)",
+                "r = r + uint256(1);",
+                "-",
+                "r == uint256(11)",
+                "-",
+                "return r;"
+            ]
+        );
+    });
 }

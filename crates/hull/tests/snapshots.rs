@@ -106,6 +106,7 @@ fn maybe_option_snapshot() {
             body: vec![Stmt {
                 span: sp,
                 kind: StmtKind::Match {
+                    condition: Default::default(),
                     target: option.clone(),
                     scrutinee: Expr::var(sp, "o", option),
                     alts: vec![
@@ -215,6 +216,7 @@ fn color_enum_snapshot() {
             body: vec![Stmt {
                 span: sp,
                 kind: StmtKind::Match {
+                    condition: Default::default(),
                     target: color.clone(),
                     scrutinee: Expr::var(sp, "c", color),
                     alts: vec![
@@ -246,6 +248,7 @@ fn color_enum_snapshot() {
                             body: vec![Stmt {
                                 span: sp,
                                 kind: StmtKind::Match {
+                                    condition: Default::default(),
                                     target: tail.clone(),
                                     scrutinee: Expr::var(sp, "$alt", tail.clone()),
                                     alts: vec![

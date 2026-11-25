@@ -877,7 +877,8 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
                 target,
                 scrutinee,
                 alts,
-            } => self.lower_match(target, scrutinee, alts),
+                condition,
+            } => self.lower_match(target, scrutinee, alts, condition.0),
             StmtKind::Assembly(stmts) => self.lower_yul_stmts(stmts),
             StmtKind::Revert(message) => {
                 let bytes = message.as_bytes();
@@ -1154,13 +1155,23 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
         Ok(false)
     }
 
+    /// Lowers a `match`. For a statement that stands for a source `if`, the
+    /// span of its `condition` is given: the scrutinee and the pattern tests
+    /// belong to the condition's text, and the jumps that leave an arm to no
+    /// text, because the range of the whole `if` also covers the arms and a jump
+    /// after an arm must not show it again.
     fn lower_match(
         &mut self,
         target: &HullTy<'db>,
         scrutinee: &HullExpr<'db>,
         alts: &[hull::Alt<'db>],
+        condition: Option<hir::span::Span<'db>>,
     ) -> Result<bool, TranslationError> {
+        let watermark = self.fb.func.dfg.num_insts();
         let value = self.lower_expr(scrutinee)?;
+        if let Some(condition) = condition {
+            self.stamp_insts_since(watermark, condition);
+        }
         let done = self.fb.append_block();
         let mut exhaustive = false;
         for alt in alts {
@@ -1174,8 +1185,12 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
                 match &alt.pat.kind {
                     PatKind::Wildcard | PatKind::Var(_) => unreachable!(),
                     pat => {
+                        let watermark = self.fb.func.dfg.num_insts();
                         let cond = self.pattern_condition(value, target, pat)?;
                         self.emit_branch(cond, arm, next.expect("non-catch-all has a next block"));
+                        if let Some(condition) = condition {
+                            self.stamp_insts_since(watermark, condition);
+                        }
                     }
                 }
             }
@@ -1189,7 +1204,7 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
             let terminated = self.lower_stmts(&alt.body)?;
             self.pop_scope();
             if !terminated {
-                self.emit_jump(done);
+                self.emit_jump_to_done(done, condition.is_some());
             }
             if let Some(next) = next {
                 self.fb.switch_to_block(next);
@@ -1198,9 +1213,21 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
             }
         }
         if !exhaustive {
-            self.emit_jump(done);
+            self.emit_jump_to_done(done, condition.is_some());
         }
         Ok(!self.switch_to_reachable_block(done))
+    }
+
+    /// Emits the jump that ends an arm of a `match`. With `unmapped`, no
+    /// enclosing statement may claim it, so it stays without an origin.
+    fn emit_jump_to_done(&mut self, done: BlockId, unmapped: bool) {
+        let watermark = self.fb.func.dfg.num_insts();
+        self.emit_jump(done);
+        if unmapped {
+            for index in watermark..self.fb.func.dfg.num_insts() {
+                self.claimed.insert(InstId(index as u32));
+            }
+        }
     }
 
     fn pattern_condition(

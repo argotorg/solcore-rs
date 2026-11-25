@@ -475,6 +475,7 @@ impl<'db> Emitter<'db> {
                         body: else_stmts,
                     },
                 ],
+                condition: DebugCondition(Some(cond.span)),
             },
         });
         out

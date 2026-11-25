@@ -395,6 +395,7 @@ fn word_literals_wrap_to_256_bits_in_yul_expressions_and_patterns() {
                         body: vec![HullStmt {
                             span: sp,
                             kind: HullStmtKind::Match {
+                                condition: Default::default(),
                                 target: word.clone(),
                                 scrutinee: HullExpr::var(sp, "x", word.clone()),
                                 alts: vec![

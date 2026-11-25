@@ -308,6 +308,7 @@ impl<'db> Translator<'db> {
                 target,
                 scrutinee,
                 alts,
+                ..
             } => {
                 let (mut out, loc) = self.gen_expr(scrutinee)?;
                 let normalized = normalize_loc(loc);

@@ -809,6 +809,7 @@ impl<'db> Emitter<'db> {
                 target,
                 scrutinee,
                 alts,
+                condition: Default::default(),
             },
         }
     }
@@ -1283,6 +1284,7 @@ fn build_nested_sum_match_from_slice<'db>(
                             body: vec![rest_stmt],
                         },
                     ],
+                    condition: Default::default(),
                 },
             }
         }

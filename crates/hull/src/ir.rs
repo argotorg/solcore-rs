@@ -44,6 +44,25 @@ pub struct Program<'db> {
     pub objects: Vec<Object<'db>>,
 }
 
+/// Marks a `Match` that stands for a source `if` and holds the span of the
+/// `if`'s condition, which the scrutinee does not always keep: a variable
+/// condition carries the span of its declaration. It is a debug annotation:
+/// all values are equal and hash alike, and it is not printed.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct DebugCondition<'db>(pub Option<Span<'db>>);
+
+impl PartialEq for DebugCondition<'_> {
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
+}
+
+impl Eq for DebugCondition<'_> {}
+
+impl std::hash::Hash for DebugCondition<'_> {
+    fn hash<H: std::hash::Hasher>(&self, _: &mut H) {}
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Ty<'db> {
     pub span: Span<'db>,
@@ -142,6 +161,8 @@ pub enum StmtKind<'db> {
         target: Ty<'db>,
         scrutinee: Expr<'db>,
         alts: Vec<Alt<'db>>,
+        /// Set when the statement stands for a source `if`.
+        condition: DebugCondition<'db>,
     },
     Assembly(Vec<YulStmt<'db>>),
     Revert(String),

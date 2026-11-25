@@ -410,6 +410,7 @@ impl<'db> Env<'db> {
                 target,
                 scrutinee,
                 alts,
+                ..
             } => {
                 let scrutinee_ty = self.check_expr(scrutinee);
                 self.expect_type(scrutinee.span, target, &scrutinee_ty);

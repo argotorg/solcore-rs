@@ -546,6 +546,7 @@ impl<'a, 'db> StorageLowerer<'a, 'db> {
                 target,
                 scrutinee,
                 alts,
+                condition,
             } => {
                 let scrutinee = self.expr(scrutinee);
                 let alts = alts
@@ -558,6 +559,7 @@ impl<'a, 'db> StorageLowerer<'a, 'db> {
                         target,
                         scrutinee,
                         alts,
+                        condition,
                     },
                 }]
             }

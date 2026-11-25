@@ -157,6 +157,7 @@ fn write_stmt<'db>(db: &'db dyn HirDb, out: &mut String, stmt: &Stmt<'db>, inden
             target,
             scrutinee,
             alts,
+            ..
         } => {
             line(
                 out,

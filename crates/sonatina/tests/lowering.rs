@@ -333,6 +333,7 @@ fn lowers_direct_nary_injections_matches_and_terminal_builtins() {
                 body: vec![Stmt {
                     span,
                     kind: StmtKind::Match {
+                        condition: Default::default(),
                         target: three_way.clone(),
                         scrutinee: Expr::var(span, "choice", three_way.clone()),
                         alts: vec![alt(0, "10"), alt(1, "20"), alt(2, "30")],

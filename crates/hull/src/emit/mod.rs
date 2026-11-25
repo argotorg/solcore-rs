@@ -31,8 +31,8 @@ use specialize::{
 
 use crate::{
     ir::{
-        Alt, Arg, CodeBlock, Con, Expr, ExprKind, Function, Object, Pat, PatKind, Program, Stmt,
-        StmtKind, Ty, TyKind,
+        Alt, Arg, CodeBlock, Con, DebugCondition, Expr, ExprKind, Function, Object, Pat, PatKind,
+        Program, Stmt, StmtKind, Ty, TyKind,
     },
     origin::GeneratedReason,
     scope_stack::ScopeStack,
