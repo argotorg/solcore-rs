@@ -381,6 +381,11 @@ impl<'db> Evaluator<'db> {
             values.push(value);
             bindings.append(&mut capture_bindings);
         }
+        // The bindings run when the lambda expression is evaluated, so they
+        // are located at the lambda, not at the captured variable.
+        for binding in &mut bindings {
+            locate_capture_binding(binding, expr.span);
+        }
         // Capture the value at closure construction, before a later assignment
         // or shadowing declaration can change what its free variable denotes.
         (
@@ -969,6 +974,14 @@ fn function_ty<'db>(db: &'db dyn Db, params: &[MonoParam<'db>], ret: MonoTy<'db>
         params.iter().map(|param| param.ty.ty()).collect(),
         ret.ty(),
     ))
+}
+
+/// Locates a capture binding, and the name it declares, at `span`.
+fn locate_capture_binding<'db>(binding: &mut MonoStmt<'db>, span: Span<'db>) {
+    binding.span = span;
+    if let MonoStmtKind::Let { id, .. } = &mut binding.kind {
+        id.span = span;
+    }
 }
 
 fn var_expr(id: MonoId<'_>) -> MonoExpr<'_> {
