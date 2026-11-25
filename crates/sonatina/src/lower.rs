@@ -847,7 +847,7 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
         match &expr.kind {
             ExprKind::Word(value) => self.word_value(value),
             ExprKind::Bool(value) => Ok(self.fb.make_imm_value(*value)),
-            ExprKind::Unit => Ok(self.fb.make_undef_value(Type::Unit)),
+            ExprKind::Unit => Ok(self.fb.func.dfg.make_zero_const(Type::Unit)),
             ExprKind::Var(name) => {
                 let binding = self.lookup(name.as_str())?;
                 Ok(self.fb.use_var(binding.var))
@@ -861,7 +861,7 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
                 let rhs = self.lower_expr(rhs)?;
                 let rhs_target = self.module.lower_ty(rhs_ty)?;
                 let rhs = self.coerce(rhs, rhs_target)?;
-                let mut value = self.fb.make_undef_value(ty);
+                let mut value = self.fb.func.dfg.make_zero_const(ty);
                 let zero = self.index_value(0);
                 value = self.fb.insert_inst(
                     InsertValue::new(self.module.inst_set(), value, zero, lhs),
@@ -922,7 +922,7 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
                     let call = Call::new(self.module.inst_set(), func, values);
                     if ret == Type::Unit {
                         self.fb.insert_inst_no_result(call);
-                        Ok(self.fb.make_undef_value(Type::Unit))
+                        Ok(self.fb.func.dfg.make_zero_const(Type::Unit))
                     } else {
                         Ok(self.fb.insert_inst(call, ret))
                     }
@@ -1204,7 +1204,10 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
         let (lhs, rhs) = sum_parts(target)?;
         let payload = if index == 0 { lhs } else { rhs };
         if is_bool_like(target) || is_unit_ty(payload) {
-            return Ok((payload.clone(), self.fb.make_undef_value(Type::Unit)));
+            return Ok((
+                payload.clone(),
+                self.fb.func.dfg.make_zero_const(Type::Unit),
+            ));
         }
         let variant = self.variant_ref(target, index)?;
         self.fb.insert_inst_no_result(EnumAssertVariant::new(
@@ -1449,8 +1452,8 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
         let result_ty = self.module.lower_ty(result)?;
         match self.lower_evm_builtin(name, args)? {
             BuiltinOutcome::Value(value) => self.coerce(value, result_ty),
-            BuiltinOutcome::Unit => Ok(self.fb.make_undef_value(Type::Unit)),
-            BuiltinOutcome::Terminated => Ok(self.fb.make_undef_value(Type::Unit)),
+            BuiltinOutcome::Unit => Ok(self.fb.func.dfg.make_zero_const(Type::Unit)),
+            BuiltinOutcome::Terminated => Ok(self.fb.func.dfg.make_zero_const(Type::Unit)),
         }
     }
 
@@ -2573,17 +2576,17 @@ fn zero_for_type(
     ty: Type,
 ) -> ValueId {
     if ty == Type::Unit {
-        return fb.make_undef_value(ty);
+        return fb.func.dfg.make_zero_const(ty);
     }
     let Type::Compound(compound_ref) = ty else {
         return fb.make_imm_value(Immediate::zero(ty));
     };
     let Some(compound) = ty.resolve_compound(fb.ctx()) else {
-        return fb.make_undef_value(ty);
+        return fb.func.dfg.make_zero_const(ty);
     };
     match compound {
         CompoundType::Struct(data) => {
-            let mut value = fb.make_undef_value(ty);
+            let mut value = fb.func.dfg.make_zero_const(ty);
             for (index, field_ty) in data.fields.into_iter().enumerate() {
                 let field = zero_for_type(fb, inst_set, field_ty);
                 let index = fb.make_imm_value(I256::from(index));
@@ -2592,7 +2595,7 @@ fn zero_for_type(
             value
         }
         CompoundType::Array { elem, len } => {
-            let mut value = fb.make_undef_value(ty);
+            let mut value = fb.func.dfg.make_zero_const(ty);
             for index in 0..len {
                 let field = zero_for_type(fb, inst_set, elem);
                 let index = fb.make_imm_value(I256::from(index));
@@ -2602,7 +2605,7 @@ fn zero_for_type(
         }
         CompoundType::Enum(data) => {
             let Some(variant) = data.variants.first() else {
-                return fb.make_undef_value(ty);
+                return fb.func.dfg.make_zero_const(ty);
             };
             let fields = variant
                 .fields
@@ -2618,7 +2621,7 @@ fn zero_for_type(
         CompoundType::Ptr(_)
         | CompoundType::ObjRef(_)
         | CompoundType::ConstRef(_)
-        | CompoundType::Func { .. } => fb.make_undef_value(ty),
+        | CompoundType::Func { .. } => fb.func.dfg.make_zero_const(ty),
     }
 }
 

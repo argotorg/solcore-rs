@@ -41,10 +41,10 @@ func private %solcore_fn_12_object0_2einit_39_main_5fAggregateContract_5f_5fstar
         evm_revert 28.i256 4.i256;
 
     block4:
-        v24.i256 = sym_size &AggregateContract;
-        v25.i256 = sym_addr &AggregateContract;
-        evm_code_copy 0.i256 v25 v24;
-        evm_return 0.i256 v24;
+        v23.i256 = sym_size &AggregateContract;
+        v24.i256 = sym_addr &AggregateContract;
+        evm_code_copy 0.i256 v24 v23;
+        evm_return 0.i256 v23;
 }
 
 func public %solcore_entry_12_object0_2einit() {
@@ -59,24 +59,24 @@ func private %solcore_fn_19_object0_2einner0_2einit_39_main_5fAggregateContract_
         br v4 block2 block3;
 
     block1:
-        v22.@solcore_product_0 = insert_value undef.@solcore_product_0 0.i256 0.i256;
-        v23.@solcore_product_0 = insert_value v22 1.i256 0.i256;
-        v24.@solcore_sum_1 = enum.make @solcore_sum_1 #inl v23;
-        return v24;
+        v18.@solcore_product_0 = insert_value zero.@solcore_product_0 0.i256 0.i256;
+        v19.@solcore_product_0 = insert_value v18 1.i256 0.i256;
+        v20.@solcore_sum_1 = enum.make @solcore_sum_1 #inl v19;
+        return v20;
 
     block2:
-        v11.@solcore_product_0 = insert_value undef.@solcore_product_0 0.i256 v1;
-        v13.@solcore_product_0 = insert_value v11 1.i256 v2;
-        v14.@solcore_sum_1 = enum.make @solcore_sum_1 #inl v13;
-        return v14;
+        v10.@solcore_product_0 = insert_value zero.@solcore_product_0 0.i256 v1;
+        v12.@solcore_product_0 = insert_value v10 1.i256 v2;
+        v13.@solcore_sum_1 = enum.make @solcore_sum_1 #inl v12;
+        return v13;
 
     block3:
-        v16.i1 = eq v0 0.i1;
-        br v16 block4 block5;
+        v15.i1 = eq v0 0.i1;
+        br v15 block4 block5;
 
     block4:
-        v20.@solcore_sum_1 = enum.make @solcore_sum_1 #inr v2;
-        return v20;
+        v17.@solcore_sum_1 = enum.make @solcore_sum_1 #inr v2;
+        return v17;
 
     block5:
         jump block1;
@@ -120,7 +120,7 @@ func private %solcore_fn_19_object0_2einner0_2einit_39_main_5fAggregateContract_
     block2:
         enum.assert_variant v0 #inl;
         v3.@solcore_product_0 = enum.extract v0 #inl 0.i256;
-        v5.@solcore_product_0 = insert_value undef.@solcore_product_0 0.i256 0.i256;
+        v5.@solcore_product_0 = insert_value zero.@solcore_product_0 0.i256 0.i256;
         v7.@solcore_product_0 = insert_value v5 1.i256 0.i256;
         v8.i256 = extract_value v3 0.i256;
         v9.i256 = extract_value v3 1.i256;

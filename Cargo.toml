@@ -17,10 +17,10 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 smallvec = "1"
 # Pin upstream main.
-sonatina-codegen = { git = "https://github.com/fe-lang/sonatina", rev = "498d6a17eb4d5261e6747a58312bae7a1c847c51" }
-sonatina-ir = { git = "https://github.com/fe-lang/sonatina", rev = "498d6a17eb4d5261e6747a58312bae7a1c847c51" }
-sonatina-triple = { git = "https://github.com/fe-lang/sonatina", rev = "498d6a17eb4d5261e6747a58312bae7a1c847c51" }
-sonatina-verifier = { git = "https://github.com/fe-lang/sonatina", rev = "498d6a17eb4d5261e6747a58312bae7a1c847c51" }
+sonatina-codegen = { git = "https://github.com/fe-lang/sonatina", rev = "4fa21d3ff7e1e7fdf53034a4661f0bb16b5f86cf" }
+sonatina-ir = { git = "https://github.com/fe-lang/sonatina", rev = "4fa21d3ff7e1e7fdf53034a4661f0bb16b5f86cf" }
+sonatina-triple = { git = "https://github.com/fe-lang/sonatina", rev = "4fa21d3ff7e1e7fdf53034a4661f0bb16b5f86cf" }
+sonatina-verifier = { git = "https://github.com/fe-lang/sonatina", rev = "4fa21d3ff7e1e7fdf53034a4661f0bb16b5f86cf" }
 parser = { path = "crates/parser", package = "solcore-parser" }
 hir = { path = "crates/hir", package = "solcore-hir" }
 nameres = { path = "crates/nameres", package = "solcore-nameres" }
