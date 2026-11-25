@@ -518,6 +518,7 @@ mod tests {
             entry_points: Vec::new(),
             functions,
             objects: Vec::new(),
+            debug: crate::ir::DebugTables::default(),
         }
     }
 

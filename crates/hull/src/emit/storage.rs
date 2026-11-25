@@ -41,6 +41,32 @@ impl<'db> Emitter<'db> {
         fields
     }
 
+    /// The fields of a contract as declared, with the lowered and normalized
+    /// type of each. Only debug information reads them: they are built the way
+    /// [`Self::contract_storage_fields`] builds its types, and no pass depends
+    /// on them.
+    pub(super) fn contract_field_facts(&mut self, def: DefId<'db>) -> Vec<FieldFacts<'db>> {
+        let module = parse_file_to_hir(self.db, def.file(self.db)).module(self.db);
+        let Some(contract) = find_contract(self.db, module, def) else {
+            return Vec::new();
+        };
+        let resolutions = storage_item_type_facts(self.db, module);
+        let lowerer =
+            TypeLowering::from_item_resolutions(self.db, &resolutions, BinderEnv::empty());
+        let mut normalizer = AliasNormalizer::new(self.db, module, &resolutions);
+        contract
+            .fields(self.db)
+            .iter()
+            .enumerate()
+            .map(|(index, field)| FieldFacts {
+                name: field.name().atom().text(self.db).to_owned(),
+                declaration: field.name().span(self.db),
+                ty: normalizer.normalize_ty(lowerer.lower_field(field).ty),
+                index,
+            })
+            .collect()
+    }
+
     fn user_adt_storage_field_kind(
         &mut self,
         ty: SemTy<'db>,

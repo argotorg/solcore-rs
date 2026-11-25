@@ -48,6 +48,7 @@ fn identity_function_snapshot() {
     let sp = test_span(&db);
     let word = Ty::word(sp);
     let program = Program {
+        debug: Default::default(),
         span: sp,
         entry_points: Vec::new(),
         functions: vec![Function {
@@ -84,6 +85,7 @@ fn maybe_option_snapshot() {
     let option = Ty::named(sp, "Option", Ty::sum(sp, Ty::unit(sp), Ty::word(sp)));
     let alt_ty = Ty::word(sp);
     let program = Program {
+        debug: Default::default(),
         span: sp,
         entry_points: Vec::new(),
         functions: vec![Function {
@@ -201,6 +203,7 @@ fn color_enum_snapshot() {
     );
     let tail = Ty::sum(sp, Ty::unit(sp), Ty::unit(sp));
     let program = Program {
+        debug: Default::default(),
         span: sp,
         entry_points: Vec::new(),
         functions: vec![Function {
@@ -381,6 +384,7 @@ fn add1_contract_object_snapshot() {
         ],
     };
     let program = Program {
+        debug: Default::default(),
         span: sp,
         entry_points: Vec::new(),
         functions: Vec::new(),
@@ -438,6 +442,7 @@ fn for_condition_must_be_bool_like() {
     let db = TestDb::default();
     let sp = test_span(&db);
     let program = Program {
+        debug: Default::default(),
         span: sp,
         entry_points: Vec::new(),
         functions: vec![Function {
@@ -475,6 +480,7 @@ fn assembly_checker_rejects_bad_assignments_and_usr_call_arity() {
     let word = Ty::word(sp);
     let bool_sum = Ty::sum(sp, Ty::unit(sp), Ty::unit(sp));
     let program = Program {
+        debug: Default::default(),
         span: sp,
         entry_points: Vec::new(),
         functions: vec![
@@ -595,6 +601,7 @@ fn assembly_checker_rejects_multi_return_arity_mismatch() {
     let sp = test_span(&db);
     let word = Ty::word(sp);
     let program = Program {
+        debug: Default::default(),
         span: sp,
         entry_points: Vec::new(),
         functions: vec![Function {
@@ -779,6 +786,7 @@ fn assembly_functions_do_not_overwrite_same_named_hull_functions() {
         ],
     };
     let program = Program {
+        debug: Default::default(),
         span: sp,
         entry_points: Vec::new(),
         functions: vec![global, main],
@@ -794,6 +802,7 @@ fn assembly_function_bodies_cannot_capture_outer_hull_values() {
     let sp = test_span(&db);
     let word = Ty::word(sp);
     let program = Program {
+        debug: Default::default(),
         span: sp,
         entry_points: Vec::new(),
         functions: vec![Function {
@@ -859,6 +868,7 @@ fn assembly_for_post_values_do_not_leak_into_the_body_block() {
         kind: YulExprKind::Ident(spanned_ident(&db, sp, "leaked")),
     };
     let program = Program {
+        debug: Default::default(),
         span: sp,
         entry_points: Vec::new(),
         functions: vec![Function {
@@ -917,6 +927,7 @@ fn terminal_yul_return_satisfies_terminator_analysis() {
     let db = TestDb::default();
     let sp = test_span(&db);
     let program = Program {
+        debug: Default::default(),
         span: sp,
         entry_points: Vec::new(),
         functions: vec![Function {
@@ -946,6 +957,7 @@ fn expression_type_annotations_must_match_inferred_type() {
     let sp = test_span(&db);
     let word = Ty::word(sp);
     let program = Program {
+        debug: Default::default(),
         span: sp,
         entry_points: Vec::new(),
         functions: vec![Function {

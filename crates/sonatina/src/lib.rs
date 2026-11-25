@@ -2,6 +2,7 @@
 //! code bytes to source origins.
 
 mod compile;
+pub mod debug;
 mod lower;
 
 use std::{error::Error, fmt};

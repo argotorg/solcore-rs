@@ -6,9 +6,9 @@ use std::{
 };
 
 use hir::{diag::Diagnostic, input::SourceFile};
-use hull::origin::{GeneratedReason, ResolvedOrigin, SourceCatalog, SourceTable};
+use hull::origin::{SourceCatalog, SourceTable};
 use nameres::ModuleId;
-use sonatina::{CompileOptions, CompiledObject, OptLevel, PcRange};
+use sonatina::{CompileOptions, CompiledObject, OptLevel};
 use url::Url;
 
 use crate::{
@@ -194,41 +194,6 @@ pub(crate) fn opt_level_name(opt_level: OptLevel) -> &'static str {
         .find(|(_, level)| *level == opt_level)
         .expect("every optimization level has a spelling");
     name
-}
-
-/// What the byte map says about a range of code bytes.
-pub(crate) enum Attribution {
-    /// No origin.
-    Unmapped,
-    /// Code the compiler made, for this reason.
-    Generated(GeneratedReason),
-    /// Text of the source file with this id in the program's source table.
-    Source { file: u32, origin: ResolvedOrigin },
-}
-
-/// Reads the origin stamp of a range of the byte map. A stamp that is not an
-/// origin, or that names a file the source table lacks, is an error.
-pub(crate) fn classify(table: &SourceTable, range: &PcRange) -> Result<Attribution, String> {
-    let stamp = match &range.origin {
-        Ok(stamp) => stamp,
-        Err(_) => return Ok(Attribution::Unmapped),
-    };
-    let origin = ResolvedOrigin::parse(stamp).map_err(|err| {
-        format!(
-            "bytes {}..{} have an unreadable origin: {err}",
-            range.start, range.end
-        )
-    })?;
-    let Some(file) = table.id(&origin.url) else {
-        return Err(format!(
-            "bytes {}..{} are attributed to `{}`, which is not a source of the program",
-            range.start, range.end, origin.url
-        ));
-    };
-    Ok(match origin.generated {
-        Some(reason) => Attribution::Generated(reason),
-        None => Attribution::Source { file, origin },
-    })
 }
 
 /// The path under which a source file appears in debug output: relative to the

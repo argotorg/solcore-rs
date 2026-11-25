@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use hir::{ast::function::YulStmt, span::Span};
 
 use crate::origin::GeneratedReason;
@@ -42,7 +44,27 @@ pub struct Program<'db> {
     pub entry_points: Vec<Name>,
     pub functions: Vec<Function<'db>>,
     pub objects: Vec<Object<'db>>,
+    /// Facts for debug information only; see [`DebugTables`].
+    pub debug: DebugTables<'db>,
 }
+
+/// Facts about the source that no compiler decision may depend on. They feed the
+/// debug files and nothing else, so a table is always equal to another and is not
+/// printed as Hull text.
+#[derive(Debug, Clone, Default)]
+pub struct DebugTables<'db> {
+    /// The fields of each contract in declaration order, by the name of the
+    /// contract's runtime object.
+    pub contracts: BTreeMap<String, Vec<FieldFacts<'db>>>,
+}
+
+impl PartialEq for DebugTables<'_> {
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
+}
+
+impl Eq for DebugTables<'_> {}
 
 /// Marks a `Match` that stands for a source `if` and holds the span of the
 /// `if`'s condition, which the scrutinee does not always keep: a variable
@@ -61,6 +83,19 @@ impl Eq for DebugCondition<'_> {}
 
 impl std::hash::Hash for DebugCondition<'_> {
     fn hash<H: std::hash::Hasher>(&self, _: &mut H) {}
+}
+
+/// A contract field as the source declares it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FieldFacts<'db> {
+    pub name: String,
+    /// The span of the field's name.
+    pub declaration: Span<'db>,
+    /// The declared type after alias normalization. A type that mentions a type
+    /// parameter of the contract still has bound variables in it.
+    pub ty: hir_ty::Ty<'db>,
+    /// The position among the contract's fields.
+    pub index: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]

@@ -36,6 +36,9 @@ const FIXTURES: [&str; 5] = [
     "struct-fields",
     "deposit",
 ];
+/// The fixture of the debug information of contract storage fields. It is not
+/// under `tests/e2e`, which the attribution tests measure as a corpus.
+const STORAGE_FIELDS: &str = "tests/ethdebug/storage-fields";
 const LEVELS: [OptLevel; 2] = [OptLevel::O0, OptLevel::O2];
 
 /// The directories of `tests/ethdebug`, relative to the repository, each a program
@@ -107,8 +110,11 @@ fn compile(
 #[test]
 fn origin_debug_info_does_not_change_the_bytes() {
     run_in_large_stack(|| {
-        for name in FIXTURES {
-            let (db, program) = lower_fixture(name);
+        let cases = FIXTURES
+            .into_iter()
+            .map(|name| (name, lower_fixture(name)))
+            .chain([(STORAGE_FIELDS, lower_case(STORAGE_FIELDS))]);
+        for (name, (db, program)) in cases {
             for opt_level in LEVELS {
                 let plain = compile(db, &program, opt_level, false);
                 let mapped = compile(db, &program, opt_level, true);
@@ -229,6 +235,7 @@ fn probe_program(db: &TestDb) -> Program<'_> {
     let whole = span(0, 40);
     let block = StmtKind::Block(vec![mstore(span(5, 5)), mstore(span(10, 20))]);
     Program {
+        debug: Default::default(),
         span: whole,
         entry_points: Vec::new(),
         functions: vec![Function {

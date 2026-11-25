@@ -9,8 +9,8 @@ use std::{
 mod ethdebug_output;
 #[path = "support/ethdebug_schemas.rs"]
 mod ethdebug_schemas;
-use ethdebug_output::decode;
-use ethdebug_schemas::PinnedSchemas;
+use ethdebug_output::{decode, type_ids};
+use ethdebug_schemas::{PinnedSchemas, SchemaSet};
 
 #[test]
 fn cli_prints_help_and_version() {
@@ -957,10 +957,11 @@ fn cli_emits_bytecode_and_ethdebug_files() {
     let _ = fs::remove_dir_all(&dir);
 }
 
-/// Validates the emitted ethdebug documents against the upstream schemas of
-/// ethdebug/format 0.1.0-draft.3, fetched at a pinned commit (see
-/// `support/ethdebug_schemas.rs`). Without the schemas the validation is
-/// skipped, and the version stamps are still checked.
+/// Validates the emitted ethdebug documents against the upstream schemas
+/// (see `support/ethdebug_schemas.rs`): the released 0.1.0-draft.3 set with its
+/// type schemas replaced by those of ethdebug/format pull request #424. Without
+/// the schemas the validation is skipped, and the version stamps are still
+/// checked.
 #[test]
 fn cli_ethdebug_files_validate_against_pinned_schemas() {
     const VERSION: &str = "0.1.0-draft.3";
@@ -978,7 +979,7 @@ fn cli_ethdebug_files_validate_against_pinned_schemas() {
     fs::write(cross.join("main.sol"), ethdebug_output::CROSS_MAIN).unwrap();
     fs::write(cross.join("ops.sol"), ethdebug_output::CROSS_OPS).unwrap();
 
-    let schemas = PinnedSchemas::load();
+    let schemas = PinnedSchemas::load(SchemaSet::DraftTypes);
     let mut documents = 0;
     let mut sample = None;
     for source_dir in [&single, &cross] {
@@ -1063,8 +1064,215 @@ fn cli_ethdebug_files_validate_against_pinned_schemas() {
             "{name} without `instructions` was accepted"
         );
     }
+    assert_type_sets_differ();
 
     let _ = fs::remove_dir_all(&dir);
+}
+
+/// `tests/ethdebug/storage-fields` compiled with `--ethdebug`, and its text.
+fn storage_fields() -> (ethdebug_output::Output, String) {
+    let dir = ethdebug_output::repo_root().join("tests/ethdebug/storage-fields");
+    let text = fs::read_to_string(dir.join("main.sol")).unwrap();
+    (ethdebug_output::compile(&dir, &["--ethdebug"]), text)
+}
+
+/// The identifier of the type table entry of the field `balances`.
+fn mapping_id(resources: &serde_json::Value) -> String {
+    resources["types"]
+        .as_object()
+        .unwrap()
+        .iter()
+        .find(|(_, ty)| ty["label"] == "mapping(address => uint256)")
+        .map(|(id, _)| id.clone())
+        .unwrap()
+}
+
+/// Both files that carry the compilation name the draft of the type objects.
+#[test]
+fn cli_ethdebug_names_the_draft_of_the_type_objects() {
+    let note = format!(
+        "ethdebug/format#424 at {}",
+        ethdebug_schemas::TYPES_DRAFT_COMMIT
+    );
+    let (output, _) = storage_fields();
+    let resources = output.resources();
+    let expected_settings = serde_json::json!({ "ethdebugTypes": note });
+    assert_eq!(output.compilation()["settings"], expected_settings);
+    assert_eq!(resources["compilation"]["settings"], expected_settings);
+    assert_eq!(resources["compilation"], output.compilation());
+}
+
+/// The type table of `storage-fields`: the mapping field's entry, and the ids
+/// that the programs name.
+#[test]
+fn cli_ethdebug_writes_a_mapping_as_a_table_entry_that_the_fields_name() {
+    let (output, _) = storage_fields();
+    let resources = output.resources();
+    // Elementary types are written in place; a mapping is a table entry that the
+    // fields name by id, and every id resolves.
+    let types = resources["types"].as_object().unwrap();
+    let entry = |label: &str| -> &serde_json::Value {
+        let mut found = types.values().filter(|ty| ty["label"] == label);
+        let ty = found.next().unwrap_or_else(|| panic!("no type `{label}`"));
+        assert!(found.next().is_none(), "two types `{label}`");
+        ty
+    };
+    assert_eq!(
+        *entry("mapping(address => uint256)"),
+        serde_json::json!({
+            "kind": "mapping",
+            "label": "mapping(address => uint256)",
+            "contains": {
+                "key": { "type": { "kind": "address", "label": "address" } },
+                "value": { "type": { "kind": "number", "label": "uint256" } },
+            },
+        })
+    );
+    let mapping_id = mapping_id(&resources);
+    let create = output.json("StorageFields_ethdebug.json");
+    let runtime = output.json("StorageFields_ethdebug-runtime.json");
+    let mut referenced = Vec::new();
+    for document in [&resources, &create, &runtime] {
+        type_ids(document, &mut referenced);
+    }
+    assert!(referenced.contains(&mapping_id));
+    for id in &referenced {
+        assert!(types.contains_key(id), "`{id}` names no type");
+    }
+}
+
+/// The fields of `storage-fields` in the runtime program: the context lists them
+/// with their declarations, every instruction lists them without, the mapping's
+/// entries are reached through a template, and deployment lists nothing.
+#[test]
+fn cli_ethdebug_lists_the_storage_fields_at_every_instruction() {
+    let (output, text) = storage_fields();
+    let resources = output.resources();
+    let create = output.json("StorageFields_ethdebug.json");
+    let runtime = output.json("StorageFields_ethdebug-runtime.json");
+    let mapping_id = mapping_id(&resources);
+    // The runtime program's context lists the four fields with their
+    // declarations, and every instruction lists them first, without. The slots
+    // are the sum of the sizes std gives the fields before: 1, 1 and 1.
+    let main = output.source_id("main.sol");
+    let declaration = |identifier: &str| {
+        let offset = text.find(&format!("    {identifier}:")).unwrap() + 4;
+        serde_json::json!({
+            "source": { "id": main },
+            "range": { "offset": offset, "length": identifier.len() },
+        })
+    };
+    let count = serde_json::json!({
+        "identifier": "count",
+        "type": { "kind": "number", "label": "uint256" },
+        "pointer": { "name": "count", "location": "storage", "slot": 0 },
+    });
+    let untouched = serde_json::json!({
+        "identifier": "untouched",
+        "type": { "kind": "number", "label": "uint256" },
+        "pointer": { "name": "untouched", "location": "storage", "slot": 1 },
+    });
+    let label = serde_json::json!({
+        "identifier": "label",
+        "type": { "kind": "string", "label": "string" },
+    });
+    let balances = serde_json::json!({
+        "identifier": "balances",
+        "type": { "id": mapping_id },
+    });
+    let per_instruction = serde_json::json!([count, untouched, label, balances]);
+    let with_declaration = |variable: &serde_json::Value| {
+        let mut variable = variable.clone();
+        variable["declaration"] = declaration(variable["identifier"].as_str().unwrap());
+        variable
+    };
+    let with_declarations = [&count, &untouched, &label, &balances].map(with_declaration);
+    let program_level = serde_json::json!({ "variables": with_declarations });
+    assert_eq!(runtime["context"], program_level);
+    for field in ["count", "untouched", "label", "balances"] {
+        let range = &declaration(field)["range"];
+        let offset = range["offset"].as_u64().unwrap() as usize;
+        assert_eq!(&text[offset..offset + field.len()], field);
+    }
+    let instructions = runtime["instructions"].as_array().unwrap();
+    assert!(!instructions.is_empty());
+    for instruction in instructions {
+        let variables = instruction["context"]["variables"]
+            .as_array()
+            .expect("variables");
+        assert_eq!(
+            serde_json::json!(&variables[..4]),
+            per_instruction,
+            "{instruction}"
+        );
+    }
+    // The mapping's entries are reached through a template named for the
+    // contract and the field; the key is the word the mapping hashes with the
+    // slot of the field, here the fourth.
+    assert_eq!(
+        resources["pointers"],
+        serde_json::json!({
+            "solcore$StorageFields$balances$entry": {
+                "expect": ["key"],
+                "for": {
+                    "name": "entry",
+                    "location": "storage",
+                    "slot": { "~keccak256": [{ "~wordsized": 3 }, { "~wordsized": "key" }] },
+                },
+            },
+        })
+    );
+    // Deployment is not recorded, so the creation program lists nothing.
+    assert!(create.get("context").is_none());
+    assert!(
+        create["instructions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|instruction| instruction["context"].get("variables").is_none())
+    );
+}
+
+/// Variables grow every instruction, so the size is shown and bounded.
+#[test]
+fn cli_ethdebug_output_for_storage_fields_stays_small() {
+    let (output, _) = storage_fields();
+    let runtime = output.json("StorageFields_ethdebug-runtime.json");
+    let instructions = runtime["instructions"].as_array().unwrap();
+    // Variables grow every instruction, so the size is shown and bounded
+    // well below the playground's 2 MiB recording limit.
+    let compact = runtime.to_string().len();
+    println!(
+        "StorageFields_ethdebug-runtime.json: {compact} compact bytes, {} instructions, {} bytes per instruction",
+        instructions.len(),
+        compact / instructions.len()
+    );
+    assert!(compact < 1536 * 1024, "{compact} bytes");
+}
+
+/// A type object of the released draft.3 and none of #424, and the reverse:
+/// each set must reject the other's, or the swap of the type schemas did not
+/// take effect.
+fn assert_type_sets_differ() {
+    const TYPE: &str = "schema:ethdebug/format/type";
+    let (Some(released), Some(draft)) = (
+        PinnedSchemas::load(SchemaSet::Released),
+        PinnedSchemas::load(SchemaSet::DraftTypes),
+    ) else {
+        return;
+    };
+    let uint = serde_json::json!({"kind": "uint", "bits": 256});
+    let number = serde_json::json!({"kind": "number"});
+    assert!(
+        released.validate(TYPE, &uint).is_ok(),
+        "released draft.3 uint"
+    );
+    assert!(draft.validate(TYPE, &uint).is_err(), "#424 accepted a uint");
+    assert!(draft.validate(TYPE, &number).is_ok(), "#424 number");
+    assert!(
+        released.validate(TYPE, &number).is_err(),
+        "released draft.3 accepted a number"
+    );
 }
 
 #[test]
@@ -1198,13 +1406,8 @@ fn cli_attributes_cross_file_add_in_creation_and_runtime() {
         "source": {"id": ops_id},
         "range": {"offset": start, "length": anchor.len()}
     });
-    for (file, environment, bin) in debug
-        .programs("CrossFile")
-        .into_iter()
-        .zip(["create", "call"])
-        .map(|((program, bin), environment)| (program, environment, bin))
-    {
-        let program = file;
+    let programs = debug.programs("CrossFile");
+    for ((program, bin), environment) in programs.into_iter().zip(["create", "call"]) {
         assert_eq!(program["environment"], environment);
         assert_eq!(program["compilation"]["id"], compilation["id"]);
         let def_start = main.find("contract CrossFile").unwrap();

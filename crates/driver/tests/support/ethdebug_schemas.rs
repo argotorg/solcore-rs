@@ -15,16 +15,32 @@ use std::{
     fs,
     path::{Path, PathBuf},
     process::Command,
-    sync::OnceLock,
+    sync::{Once, OnceLock},
 };
 
-/// The released specification version 0.1.0-draft.3 of ethdebug/format. The
-/// documents the compiler writes carry this version and follow these schemas.
+/// ethdebug/format at the released specification version 0.1.0-draft.3. The
+/// documents the compiler writes carry this version.
 pub const RELEASED_COMMIT: &str = "952f1bd290759cad74b1b9ed9258a944ad04b769";
+/// ethdebug/format at the head of pull request #424, the draft rewrite of the
+/// type schemas that the type objects in the documents follow. The compiler
+/// writes this revision into `compilation.settings`.
+pub const TYPES_DRAFT_COMMIT: &str = "e326f17117fbde383d33293d717236a65c394e97";
 
 const REPOSITORY: &str = "https://github.com/ethdebug/format";
 const REPOSITORY_VARIABLE: &str = "SOLCORE_ETHDEBUG_FORMAT_REPO";
 const REQUIRE_VARIABLE: &str = "SOLCORE_REQUIRE_ETHDEBUG_SCHEMAS";
+
+/// Which schemas validate the type objects.
+#[derive(Clone, Copy)]
+pub enum SchemaSet {
+    /// The 75 schema files of [`RELEASED_COMMIT`].
+    Released,
+    /// The released schemas with the 24 files of `type.schema.yaml` and
+    /// `type/` replaced by the 21 of [`TYPES_DRAFT_COMMIT`]: 72 files. The pull
+    /// request changes no other schema, so a document that validates here
+    /// follows draft.3 everywhere except its type objects, which follow #424.
+    DraftTypes,
+}
 
 /// A compiled set of schemas, preloaded under their `$id`s so that validation
 /// needs no further network access.
@@ -34,36 +50,60 @@ pub struct PinnedSchemas {
 }
 
 impl PinnedSchemas {
-    const ROOTS: [&'static str; 3] = [
+    const ROOTS: [&'static str; 4] = [
         "schema:ethdebug/format/program",
         "schema:ethdebug/format/info/resources",
         "schema:ethdebug/format/materials/compilation",
+        "schema:ethdebug/format/type",
     ];
 
-    /// Loads the released schemas, or returns `None` after printing why they
-    /// are unavailable. Panics instead when `SOLCORE_REQUIRE_ETHDEBUG_SCHEMAS`
-    /// is `1`.
-    pub fn load() -> Option<Self> {
-        static FETCHED: OnceLock<Result<PathBuf, String>> = OnceLock::new();
-        match FETCHED.get_or_init(|| fetch(RELEASED_COMMIT)) {
-            Ok(checkout) => Some(Self::from_directory(&checkout.join("schemas"))),
+    /// Loads the schemas, or returns `None` after printing why they are
+    /// unavailable. Panics instead when `SOLCORE_REQUIRE_ETHDEBUG_SCHEMAS` is
+    /// `1`.
+    pub fn load(set: SchemaSet) -> Option<Self> {
+        static FETCHED: OnceLock<Result<[PathBuf; 2], String>> = OnceLock::new();
+        let fetched =
+            FETCHED.get_or_init(|| Ok([fetch(RELEASED_COMMIT)?, fetch(TYPES_DRAFT_COMMIT)?]));
+        match fetched {
+            Ok([released, draft]) => Some(Self::from_directories(set, released, draft)),
             Err(reason) => {
                 if std::env::var(REQUIRE_VARIABLE).is_ok_and(|value| value == "1") {
                     panic!("ethdebug schemas are required ({REQUIRE_VARIABLE}=1): {reason}");
                 }
-                eprintln!(
-                    "SKIPPED: ethdebug schema validation, the schemas could not be fetched: {reason}"
-                );
+                // Once per process, though every test of the file loads schemas.
+                static REPORTED: Once = Once::new();
+                REPORTED.call_once(|| {
+                    eprintln!(
+                        "SKIPPED: ethdebug schema validation, the schemas could not be fetched: {reason}"
+                    );
+                });
                 None
             }
         }
     }
 
-    fn from_directory(root: &Path) -> Self {
+    fn from_directories(set: SchemaSet, released: &Path, draft: &Path) -> Self {
+        let released = released.join("schemas");
         let mut files = Vec::new();
-        collect(root, &mut files);
-        files.sort();
+        collect(&released, &mut files);
         assert_eq!(files.len(), 75, "released schema file count");
+        if matches!(set, SchemaSet::DraftTypes) {
+            files.retain(|file| {
+                let relative = file.strip_prefix(&released).unwrap();
+                relative != Path::new("type.schema.yaml") && !relative.starts_with("type")
+            });
+            assert_eq!(files.len(), 51, "released schemas without the type schemas");
+            let draft = draft.join("schemas");
+            let mut types = Vec::new();
+            collect(&draft, &mut types);
+            types.retain(|file| {
+                let relative = file.strip_prefix(&draft).unwrap();
+                relative == Path::new("type.schema.yaml") || relative.starts_with("type")
+            });
+            assert_eq!(types.len(), 21, "draft type schema file count");
+            files.extend(types);
+        }
+        files.sort();
 
         let mut compiler = boon::Compiler::new();
         for file in &files {

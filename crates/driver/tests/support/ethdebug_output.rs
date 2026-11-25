@@ -273,6 +273,24 @@ impl Output {
     }
 }
 
+/// The identifiers of the types that `value` names. A type is named by
+/// `{"type": {"id": ...}}`; the compilation reference `{"id": ...}` of a program
+/// is not one.
+pub fn type_ids(value: &Value, found: &mut Vec<String>) {
+    match value {
+        Value::Object(object) => {
+            if let Some(Value::Object(ty)) = object.get("type")
+                && let (1, Some(id)) = (ty.len(), ty.get("id").and_then(Value::as_str))
+            {
+                found.push(id.to_owned());
+            }
+            object.values().for_each(|value| type_ids(value, found));
+        }
+        Value::Array(items) => items.iter().for_each(|value| type_ids(value, found)),
+        _ => {}
+    }
+}
+
 /// A source range of a document: `{"source": {"id": n}, "range": {"offset": o,
 /// "length": l}}`, which a code context, a declaration and the definition of a
 /// contract all use.
@@ -347,4 +365,161 @@ pub fn opcode_name(opcode: u8) -> String {
     revm::bytecode::opcode::OpCode::new(opcode)
         .map_or("INVALID", |op| op.as_str())
         .to_owned()
+}
+
+// Execution in revm.
+
+use std::collections::BTreeMap;
+
+use revm::{
+    Context, ExecuteCommitEvm, InspectCommitEvm, Inspector, MainBuilder, MainContext,
+    context::TxEnv,
+    context_interface::result::{ExecutionResult, Output as TxOutput},
+    database::InMemoryDB,
+    interpreter::{Interpreter, interpreter_types::Jumps},
+    primitives::{Address, Bytes, TxKind, U256, address, hardfork::SpecId, keccak256},
+    state::AccountInfo,
+};
+
+pub const CALLER: Address = address!("0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
+
+/// The program counter and the stack before an executed opcode.
+pub struct Step {
+    pub pc: usize,
+    /// Bottom first.
+    pub stack: Vec<U256>,
+}
+
+/// Records the steps of the frame that runs the runtime code, once armed.
+struct Recorder {
+    runtime: Vec<u8>,
+    armed: bool,
+    bound: bool,
+    steps: Vec<Step>,
+}
+
+impl<CTX> Inspector<CTX> for Recorder {
+    fn initialize_interp(&mut self, interp: &mut Interpreter, _: &mut CTX) {
+        if self.armed {
+            self.armed = false;
+            self.bound = interp.bytecode.original_byte_slice() == self.runtime;
+        }
+    }
+
+    fn step(&mut self, interp: &mut Interpreter, _: &mut CTX) {
+        if self.bound {
+            self.steps.push(Step {
+                pc: interp.bytecode.pc(),
+                stack: interp.stack.data().clone(),
+            });
+        }
+    }
+}
+
+/// What deploying a contract and calling it saw.
+pub struct Execution {
+    /// The steps of the runtime code of each call, in the order of the calls.
+    pub calls: Vec<Vec<Step>>,
+    /// The words in the storage of the contract after the last call.
+    pub storage: BTreeMap<U256, U256>,
+}
+
+/// The calldata of a call of `signature` with `words` as arguments.
+pub fn call_data(signature: &str, words: &[U256]) -> Vec<u8> {
+    let mut data = keccak256(signature.as_bytes())[..4].to_vec();
+    for word in words {
+        data.extend_from_slice(&word.to_be_bytes::<32>());
+    }
+    data
+}
+
+/// Deploys `init`, then sends each of `calls` to the contract in a transaction of
+/// its own, recording every step of the frame that runs `runtime`. Every
+/// transaction must succeed.
+pub fn execute(init: &[u8], runtime: &[u8], calls: &[Vec<u8>]) -> Execution {
+    let mut db = InMemoryDB::default();
+    db.insert_account_info(
+        CALLER,
+        AccountInfo::default().with_balance(U256::from(10u128.pow(20))),
+    );
+    let mut evm = Context::mainnet()
+        .with_db(db)
+        .modify_cfg_chained(|cfg| {
+            cfg.set_spec_and_mainnet_gas_params(SpecId::OSAKA);
+            cfg.memory_limit = 16 * 1024 * 1024;
+        })
+        .modify_block_chained(|block| {
+            block.basefee = 0;
+            block.gas_limit = 10_000_000;
+            block.number = U256::from(1);
+            block.timestamp = U256::from(1);
+        })
+        .build_mainnet();
+    let tx = |kind, data: Bytes, nonce, gas| {
+        TxEnv::builder()
+            .caller(CALLER)
+            .kind(kind)
+            .data(data)
+            .nonce(nonce)
+            .gas_limit(gas)
+            .gas_price(0)
+            .build_fill()
+    };
+    let deployed = evm
+        .transact_commit(tx(TxKind::Create, init.to_vec().into(), 0, 10_000_000))
+        .expect("deployment runs");
+    let ExecutionResult::Success {
+        output: TxOutput::Create(_, Some(contract_address)),
+        ..
+    } = deployed
+    else {
+        panic!("deployment failed: {deployed:?}");
+    };
+    let recorder = Recorder {
+        runtime: runtime.to_vec(),
+        armed: false,
+        bound: false,
+        steps: Vec::new(),
+    };
+    let mut inspected = evm.with_inspector(recorder);
+    let mut recorded = Vec::new();
+    for (at, data) in calls.iter().enumerate() {
+        inspected.inspector.armed = true;
+        inspected.inspector.bound = false;
+        let called = inspected
+            .inspect_tx_commit(tx(
+                TxKind::Call(contract_address),
+                data.clone().into(),
+                at as u64 + 1,
+                1_000_000,
+            ))
+            .expect("the call runs");
+        let ExecutionResult::Success { .. } = called else {
+            panic!("call {at} failed: {called:?}");
+        };
+        assert!(
+            inspected.inspector.bound,
+            "the recorded frame runs the runtime code"
+        );
+        recorded.push(std::mem::take(&mut inspected.inspector.steps));
+    }
+    let storage = inspected
+        .ctx
+        .journaled_state
+        .database
+        .cache
+        .accounts
+        .get(&contract_address)
+        .map(|account| {
+            account
+                .storage
+                .iter()
+                .map(|(&slot, &word)| (slot, word))
+                .collect()
+        })
+        .unwrap_or_default();
+    Execution {
+        calls: recorded,
+        storage,
+    }
 }

@@ -2,15 +2,21 @@
 //! ethdebug tests use: each directory of `tests/ethdebug` and the inline programs
 //! of the CLI tests.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+
+use serde_json::Value;
 
 #[path = "support/ethdebug_output.rs"]
 mod ethdebug_output;
+// The Released schema set is for the tests that compare it with the draft types.
+#[allow(dead_code)]
 #[path = "support/ethdebug_schemas.rs"]
 mod ethdebug_schemas;
 
-use ethdebug_output::{Output, cases, compile, decode, immediate_len, opcode_name, source_ranges};
-use ethdebug_schemas::PinnedSchemas;
+use ethdebug_output::{
+    Output, cases, compile, decode, immediate_len, opcode_name, source_ranges, type_ids,
+};
+use ethdebug_schemas::{PinnedSchemas, SchemaSet};
 
 /// What the check of one program counted.
 #[derive(Default)]
@@ -35,18 +41,21 @@ struct Counts {
 ///    neither, and never both, and nothing but code, remark and variables.
 /// 5. Every source range of every document names a source of the compilation and
 ///    lies inside its text on character boundaries.
-/// 6. The bytecode is the same as the one `--bin` writes without debug
+/// 6. Every type identifier resolves in the type table, and every entry of the
+///    table can be reached from a program.
+/// 7. The bytecode is the same as the one `--bin` writes without debug
 ///    information.
 #[test]
 fn every_emitted_document_conforms_to_the_format() {
-    let schemas = PinnedSchemas::load();
+    let schemas = PinnedSchemas::load(SchemaSet::DraftTypes);
     let mut counts = Counts::default();
     let cases = cases();
     let expected = 2 * cases.len();
     for case in cases {
         let output = compile(&case.dir, &["--ethdebug"]);
         check_documents(&case.name, &output, schemas.as_ref());
-        check_programs(&case.name, &output, &mut counts);
+        let programs = check_programs(&case.name, &output, &mut counts);
+        check_types(&case.name, &output, &programs);
         check_bytecode_is_unchanged(&case.name, &case.dir, &output);
     }
     println!(
@@ -97,7 +106,8 @@ fn check_documents(name: &str, output: &Output, schemas: Option<&PinnedSchemas>)
 }
 
 /// Properties 2 to 5, for the creation and runtime program of each contract.
-fn check_programs(name: &str, output: &Output, counts: &mut Counts) {
+/// Returns the programs for the checks that follow.
+fn check_programs(name: &str, output: &Output, counts: &mut Counts) -> Vec<Value> {
     let compilation = output.compilation();
     let sources: BTreeMap<u64, &str> = compilation["sources"]
         .as_array()
@@ -110,6 +120,7 @@ fn check_programs(name: &str, output: &Output, counts: &mut Counts) {
             )
         })
         .collect();
+    let mut all = Vec::new();
     for contract in output.contracts() {
         for (program, code) in output.programs(&contract) {
             let what = format!("{name}: {contract} {}", program["environment"]);
@@ -203,11 +214,41 @@ fn check_programs(name: &str, output: &Output, counts: &mut Counts) {
                 counts.ranges += 1;
             }
             counts.programs += 1;
+            all.push(program);
         }
     }
+    all
 }
 
-/// Property 6: `--ethdebug` writes the same `.bin` and `.bin-runtime` files as
+/// Property 6.
+fn check_types(name: &str, output: &Output, programs: &[Value]) {
+    let resources = output.resources();
+    let table = resources["types"].as_object().unwrap();
+
+    let mut roots = Vec::new();
+    for program in programs {
+        type_ids(program, &mut roots);
+    }
+    // The table names other entries of itself (a recursive type, the parts of a
+    // mapping). An entry is used when a program reaches it through such names.
+    let mut reached = BTreeSet::new();
+    let mut pending = roots;
+    while let Some(id) = pending.pop() {
+        let entry = table
+            .get(&id)
+            .unwrap_or_else(|| panic!("{name}: `{id}` names no type of the table"));
+        if reached.insert(id) {
+            type_ids(entry, &mut pending);
+        }
+    }
+    let unused: Vec<&String> = table.keys().filter(|id| !reached.contains(*id)).collect();
+    assert!(
+        unused.is_empty(),
+        "{name}: entries that no program reaches: {unused:?}"
+    );
+}
+
+/// Property 7: `--ethdebug` writes the same `.bin` and `.bin-runtime` files as
 /// `--bin`.
 fn check_bytecode_is_unchanged(name: &str, dir: &std::path::Path, with_debug: &Output) {
     let plain = compile(dir, &["--bin"]);

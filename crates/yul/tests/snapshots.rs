@@ -209,6 +209,7 @@ fn ink_binary_sum_preserves_nested_layout_snapshot() {
         HullTy::sum(sp, unit.clone(), unit.clone()),
     );
     let program = HullProgram {
+        debug: Default::default(),
         span: sp,
         entry_points: Vec::new(),
         functions: Vec::new(),
@@ -256,6 +257,7 @@ fn if_expression_branches_are_lowered_inside_switch_snapshot() {
     let word = HullTy::word(sp);
     let bool_ty = HullTy::bool(sp);
     let program = HullProgram {
+        debug: Default::default(),
         span: sp,
         entry_points: Vec::new(),
         functions: Vec::new(),
@@ -350,6 +352,7 @@ fn word_literals_wrap_to_256_bits_in_yul_expressions_and_patterns() {
     let sp = test_span(&db);
     let word = HullTy::word(sp);
     let program = HullProgram {
+        debug: Default::default(),
         span: sp,
         entry_points: Vec::new(),
         functions: Vec::new(),
@@ -467,6 +470,7 @@ fn copy_locs_rejects_arity_mismatch() {
         HullTy::sum(sp, unit.clone(), unit.clone()),
     );
     let program = HullProgram {
+        debug: Default::default(),
         span: sp,
         entry_points: Vec::new(),
         functions: Vec::new(),
@@ -519,6 +523,7 @@ fn zero_sized_structured_return_needs_no_result_binding() {
     let unit = HullTy::unit(sp);
     let zero_sized = HullTy::product(sp, unit.clone(), unit.clone());
     let program = HullProgram {
+        debug: Default::default(),
         span: sp,
         entry_points: Vec::new(),
         functions: Vec::new(),
@@ -594,6 +599,7 @@ fn assembly_calls_use_checked_hull_function_resolution() {
         body,
     };
     let program = HullProgram {
+        debug: Default::default(),
         span: sp,
         entry_points: vec!["main".into()],
         objects: vec![],
@@ -840,6 +846,7 @@ fn top_level_no_object_hull_wraps_like_assemble_hs_snapshot() {
     let sp = test_span(&db);
     let word = HullTy::word(sp);
     let program = HullProgram {
+        debug: Default::default(),
         span: sp,
         entry_points: vec!["main".into()],
         functions: vec![HullFunction {

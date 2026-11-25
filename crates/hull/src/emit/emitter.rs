@@ -91,6 +91,7 @@ impl<'db> Emitter<'db> {
                     .collect(),
                 functions: functions.into_values().collect(),
                 objects: Vec::new(),
+                debug: DebugTables::default(),
             }
         } else {
             let all_functions = functions.values().cloned().collect::<Vec<_>>();
@@ -98,11 +99,17 @@ impl<'db> Emitter<'db> {
                 .iter()
                 .map(|contract| self.emit_contract(contract, &all_functions))
                 .collect();
+            let mut debug = DebugTables::default();
+            for contract in &contracts {
+                let facts = self.contract_field_facts(contract.def);
+                debug.contracts.insert(contract.name.clone(), facts);
+            }
             Program {
                 span,
                 entry_points: Vec::new(),
                 functions: Vec::new(),
                 objects,
+                debug,
             }
         };
 
