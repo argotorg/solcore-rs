@@ -2,6 +2,7 @@
 //! native and browser callers.
 
 mod locals;
+mod stack;
 mod storage;
 #[cfg(test)]
 mod test_support;

@@ -73,6 +73,11 @@ pub enum Pointer {
     /// The whole word at a constant storage slot. `name` is written only when
     /// it is a valid pointer identifier.
     Storage { name: String, slot: u64 },
+    /// The whole word at a stack slot, counted from the top of the stack at the
+    /// time the context holds: slot 0 is the top. The schema says "Describes
+    /// stack slots as number of positions from the top (at time of
+    /// observation)", and without a `length` the region is the whole slot.
+    Stack { slot: u64 },
 }
 
 /// A pointer defined in terms of variables that the reader supplies, stored in
@@ -228,6 +233,7 @@ fn pointer_json(pointer: &Pointer) -> Value {
             out.insert("slot".to_owned(), json!(slot));
             Value::Object(out)
         }
+        Pointer::Stack { slot } => json!({"location": "stack", "slot": slot}),
     }
 }
 
@@ -932,6 +938,18 @@ mod tests {
         assert_eq!(
             pointer_json(&pointer),
             json!({"location": "storage", "slot": 2})
+        );
+    }
+
+    #[test]
+    fn a_stack_pointer_names_a_slot_counted_from_the_top() {
+        assert_eq!(
+            pointer_json(&Pointer::Stack { slot: 0 }),
+            json!({"location": "stack", "slot": 0})
+        );
+        assert_eq!(
+            pointer_json(&Pointer::Stack { slot: 7 }),
+            json!({"location": "stack", "slot": 7})
         );
     }
 

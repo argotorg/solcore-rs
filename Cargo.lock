@@ -3929,7 +3929,7 @@ dependencies = [
 [[package]]
 name = "sonatina-codegen"
 version = "0.1.0"
-source = "git+https://github.com/fe-lang/sonatina?rev=4fa21d3ff7e1e7fdf53034a4661f0bb16b5f86cf#4fa21d3ff7e1e7fdf53034a4661f0bb16b5f86cf"
+source = "git+https://github.com/micahscopes/sonatina.git?rev=bb176d4c948dab5eefeb2eae417f76b0976dd76c#bb176d4c948dab5eefeb2eae417f76b0976dd76c"
 dependencies = [
  "bit-set",
  "cranelift-entity",
@@ -3949,7 +3949,7 @@ dependencies = [
 [[package]]
 name = "sonatina-ir"
 version = "0.1.0"
-source = "git+https://github.com/fe-lang/sonatina?rev=4fa21d3ff7e1e7fdf53034a4661f0bb16b5f86cf#4fa21d3ff7e1e7fdf53034a4661f0bb16b5f86cf"
+source = "git+https://github.com/micahscopes/sonatina.git?rev=bb176d4c948dab5eefeb2eae417f76b0976dd76c#bb176d4c948dab5eefeb2eae417f76b0976dd76c"
 dependencies = [
  "bit-set",
  "bitflags 2.13.0",
@@ -3974,7 +3974,7 @@ dependencies = [
 [[package]]
 name = "sonatina-macros"
 version = "0.1.0"
-source = "git+https://github.com/fe-lang/sonatina?rev=4fa21d3ff7e1e7fdf53034a4661f0bb16b5f86cf#4fa21d3ff7e1e7fdf53034a4661f0bb16b5f86cf"
+source = "git+https://github.com/micahscopes/sonatina.git?rev=bb176d4c948dab5eefeb2eae417f76b0976dd76c#bb176d4c948dab5eefeb2eae417f76b0976dd76c"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -3984,7 +3984,7 @@ dependencies = [
 [[package]]
 name = "sonatina-parser"
 version = "0.1.0"
-source = "git+https://github.com/fe-lang/sonatina?rev=4fa21d3ff7e1e7fdf53034a4661f0bb16b5f86cf#4fa21d3ff7e1e7fdf53034a4661f0bb16b5f86cf"
+source = "git+https://github.com/micahscopes/sonatina.git?rev=bb176d4c948dab5eefeb2eae417f76b0976dd76c#bb176d4c948dab5eefeb2eae417f76b0976dd76c"
 dependencies = [
  "annotate-snippets",
  "bimap",
@@ -4005,7 +4005,7 @@ dependencies = [
 [[package]]
 name = "sonatina-triple"
 version = "0.1.0"
-source = "git+https://github.com/fe-lang/sonatina?rev=4fa21d3ff7e1e7fdf53034a4661f0bb16b5f86cf#4fa21d3ff7e1e7fdf53034a4661f0bb16b5f86cf"
+source = "git+https://github.com/micahscopes/sonatina.git?rev=bb176d4c948dab5eefeb2eae417f76b0976dd76c#bb176d4c948dab5eefeb2eae417f76b0976dd76c"
 dependencies = [
  "thiserror",
 ]
@@ -4013,7 +4013,7 @@ dependencies = [
 [[package]]
 name = "sonatina-verifier"
 version = "0.1.0"
-source = "git+https://github.com/fe-lang/sonatina?rev=4fa21d3ff7e1e7fdf53034a4661f0bb16b5f86cf#4fa21d3ff7e1e7fdf53034a4661f0bb16b5f86cf"
+source = "git+https://github.com/micahscopes/sonatina.git?rev=bb176d4c948dab5eefeb2eae417f76b0976dd76c#bb176d4c948dab5eefeb2eae417f76b0976dd76c"
 dependencies = [
  "cranelift-entity",
  "rpds",

@@ -349,6 +349,35 @@ fn std_leaf<'db>(
     }
 }
 
+/// Whether a value of `ty` is exactly one word on the stack, read as one
+/// number, boolean, address or 32 bytes: a `word`, a `bool`, or one of the std
+/// types that std defines as one word and [`std_leaf`] describes as such
+/// (`uint256`, `uint8` to `uint128`, `address`, `bytes32`). The `string` and
+/// `bytes` of `std_leaf` are the types that a reference points to, so a value
+/// of them is not described by its own word.
+pub(super) fn holds_one_word<'db>(env: &Env<'_, 'db>, ty: Ty<'db>) -> bool {
+    let db = env.db;
+    let TyKind::Named { ctor, args } = ty.kind(db) else {
+        return false;
+    };
+    if !args.is_empty() {
+        return false;
+    }
+    match ctor {
+        TyCtor::Builtin(BuiltinTyCtor::Word | BuiltinTyCtor::Bool) => true,
+        TyCtor::User(user) if user.kind == UserTyCtorKind::Adt => {
+            let def = user.def;
+            is_canonical_std_def_named(db, def, "uint256")
+                || is_canonical_std_def_named(db, def, "address")
+                || is_canonical_std_def_named(db, def, "bytes32")
+                || UNSIGNED
+                    .iter()
+                    .any(|name| is_canonical_std_module_def_named(db, def, "unsigned", name))
+        }
+        _ => false,
+    }
+}
+
 fn is_unit<'db>(db: &'db dyn hir_ty::Db, ty: Ty<'db>) -> bool {
     match ty.kind(db) {
         TyKind::Tuple(elems) => elems.is_empty(),

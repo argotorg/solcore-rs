@@ -14,15 +14,23 @@
 //!
 //! A list is left out rather than guessed: an opcode whose bindings are not
 //! known gets the fields of the contract and no locals.
+//!
+//! A parameter or local of one word also gets a stack pointer where `stack`
+//! can say which word of the stack holds it after the opcode. Lowering names, in
+//! the tag of each instruction, the label of the value that holds each binding
+//! before the instruction and after it, and the opcode uses the one that goes
+//! with the list it takes. A binding without a label, or whose labelled value is
+//! not found on the stack exactly once and alive, is listed with its type and no
+//! pointer, as before.
 
 use std::collections::{HashMap, HashSet};
 
-use ethdebug::Variable;
+use ethdebug::{Pointer, Variable};
 use hull::{SourceBinder, origin::ResolvedOrigin};
 
 use super::{
-    Resources,
-    types::{Env, locate},
+    Resources, stack,
+    types::{Env, holds_one_word, locate},
 };
 use crate::{CompiledSection, LocalsTag, PcRange};
 
@@ -84,19 +92,9 @@ impl Op<'_> {
     }
 }
 
-/// The bindings, as binder ids in the order they were bound, that hold after
-/// each opcode of `code`, or `None` where they are not known. `keep` says whether
-/// a binding may be listed at the code of a range: the tags of lowering are
-/// about what is visible in the machine's frame, and `keep` narrows them to what
-/// is visible in the source at that range.
-fn bindings_after(
-    code: &[u8],
-    section: &CompiledSection,
-    keep: &dyn Fn(&PcRange, u32) -> bool,
-) -> Vec<(u32, Option<Vec<u32>>)> {
-    let kept = |range: &PcRange, set: &[u32]| -> Vec<u32> {
-        set.iter().copied().filter(|&id| keep(range, id)).collect()
-    };
+/// The opcodes of the code region, each with the range of the byte map that
+/// holds it.
+fn opcodes<'a>(code: &[u8], section: &'a CompiledSection) -> Vec<Op<'a>> {
     let mut ops = Vec::new();
     let mut range = 0;
     for pc in ethdebug::instruction_offsets(code) {
@@ -109,6 +107,30 @@ fn bindings_after(
             range: &section.map[range],
         });
     }
+    ops
+}
+
+/// A binding of a list, as its binder id and the label of the value that holds
+/// it, when lowering knows one.
+type Bound = (u32, Option<u32>);
+
+/// The bindings, as binder ids in the order they were bound, that hold after
+/// each opcode of `code`, or `None` where they are not known. `keep` says whether
+/// a binding may be listed at the code of a range: the tags of lowering are
+/// about what is visible in the machine's frame, and `keep` narrows them to what
+/// is visible in the source at that range.
+fn bindings_after(
+    ops: &[Op<'_>],
+    keep: &dyn Fn(&PcRange, u32) -> bool,
+) -> Vec<(u32, Option<Vec<Bound>>)> {
+    // The bindings of `set` that `keep` allows, each with its label.
+    let kept = |range: &PcRange, set: &[u32], labels: &[Option<u32>]| -> Vec<Bound> {
+        set.iter()
+            .enumerate()
+            .filter(|&(_, &id)| keep(range, id))
+            .map(|(at, &id)| (id, labels.get(at).copied().flatten()))
+            .collect()
+    };
 
     // Opcodes of one IR instruction are consecutive and share its tag.
     let same_instruction = |a: &Op<'_>, b: &Op<'_>| match (a.tag(), b.tag()) {
@@ -116,7 +138,7 @@ fn bindings_after(
         _ => false,
     };
 
-    let mut after: Vec<Option<Vec<u32>>> = vec![None; ops.len()];
+    let mut after: Vec<Option<Vec<Bound>>> = vec![None; ops.len()];
     for (i, op) in ops.iter().enumerate() {
         let Some(tag) = op.tag() else { continue };
         // After a call or a return the next opcode to run is in another
@@ -130,17 +152,24 @@ fn bindings_after(
         let last = ops
             .get(i + 1)
             .is_none_or(|next| !same_instruction(op, next));
-        after[i] = Some(kept(op.range, if last { &tag.after } else { &tag.before }));
+        after[i] = Some(if last {
+            kept(op.range, &tag.after, &tag.after_labels)
+        } else {
+            kept(op.range, &tag.before, &tag.before_labels)
+        });
     }
 
     // The next tagged opcode of the same function and block, for glue code that
-    // comes first in its block (a label, say).
-    let mut next_before: Vec<Option<Vec<u32>>> = vec![None; ops.len()];
+    // comes first in its block (a label, say). Glue is not an instruction that
+    // lowering labelled, so what it lists has no labels.
+    let unlabelled =
+        |bound: Vec<Bound>| -> Vec<Bound> { bound.into_iter().map(|(id, _)| (id, None)).collect() };
+    let mut next_before: Vec<Option<Vec<Bound>>> = vec![None; ops.len()];
     let mut upcoming: Option<(&Op<'_>, &LocalsTag)> = None;
     for (i, op) in ops.iter().enumerate().rev() {
         next_before[i] = upcoming
             .filter(|(next, _)| next.place() == op.place())
-            .map(|(next, tag)| kept(next.range, &tag.before));
+            .map(|(next, tag)| unlabelled(kept(next.range, &tag.before, &[])));
         if let Some(tag) = op.tag() {
             upcoming = Some((op, tag));
         }
@@ -159,7 +188,7 @@ fn bindings_after(
                 .filter(|&prev| {
                     ops[prev].place() == ops[i].place() && !ops[prev].transfers_control()
                 })
-                .and_then(|prev| after[prev].clone())
+                .and_then(|prev| after[prev].clone().map(unlabelled))
                 .or_else(|| next_before[i].clone())
         };
     }
@@ -203,8 +232,13 @@ pub(super) fn per_opcode<'db>(
         .iter()
         .map(|binder| FunctionText::of(env, binder.function))
         .collect();
-    let mut variables: HashMap<u32, Variable> = HashMap::new();
-    let mut by_set: HashMap<Vec<u32>, u32> = HashMap::new();
+    // Whether a binding is of a type that one word of the stack holds.
+    let one_word: Vec<bool> = binders
+        .iter()
+        .map(|binder| holds_one_word(env, binder.ty))
+        .collect();
+    let mut variables: HashMap<(u32, Option<u64>), Variable> = HashMap::new();
+    let mut by_set: HashMap<Vec<(u32, Option<u64>)>, u32> = HashMap::new();
     // A binding is listed only where the statement was written inside the
     // function that declares it: the code of a function that specialization
     // inlined into another has the other function's bindings in the machine and
@@ -218,14 +252,38 @@ pub(super) fn per_opcode<'db>(
         };
         origin.generated.is_none() && functions[id as usize].contains(&origin)
     };
-    bindings_after(code, section, &contained)
+    let ops = opcodes(code, section);
+    let stacks = stack::stacks_after(
+        &ops.iter()
+            .map(|op| stack::Opcode {
+                byte: op.byte,
+                range: op.range,
+            })
+            .collect::<Vec<_>>(),
+        section,
+    );
+    bindings_after(&ops, &contained)
         .into_iter()
-        .map(|(pc, set)| {
+        .zip(&stacks.after)
+        .map(|((pc, set), cells)| {
             let Some(set) = set.filter(|set| !set.is_empty()) else {
                 return (pc, fields_list);
             };
-            let index = *by_set.entry(set.clone()).or_insert_with(|| {
-                let in_scope = visible(&set, |id| binders[id as usize].name.as_str());
+            // The slot of each binding of one word whose labelled value is on
+            // the stack after the opcode exactly once and alive.
+            let slots: Vec<(u32, Option<u64>)> = set
+                .iter()
+                .map(|&(id, label)| {
+                    let slot = label
+                        .zip(cells.as_deref())
+                        .filter(|_| one_word[id as usize])
+                        .and_then(|(label, cells)| stack::slot_of(cells, label));
+                    (id, slot)
+                })
+                .collect();
+            let index = *by_set.entry(slots.clone()).or_insert_with(|| {
+                let ids: Vec<u32> = slots.iter().map(|&(id, _)| id).collect();
+                let in_scope = visible(&ids, |id| binders[id as usize].name.as_str());
                 let mut list: Vec<Variable> = fields
                     .iter()
                     .filter(|field| {
@@ -236,13 +294,17 @@ pub(super) fn per_opcode<'db>(
                     .cloned()
                     .collect();
                 for &id in &in_scope {
-                    let variable = variables.entry(id).or_insert_with(|| {
+                    let slot = slots
+                        .iter()
+                        .find(|&&(candidate, _)| candidate == id)
+                        .and_then(|&(_, slot)| slot);
+                    let variable = variables.entry((id, slot)).or_insert_with(|| {
                         let binder = &binders[id as usize];
                         Variable {
                             identifier: binder.name.clone(),
                             declaration: locate(env, binder.declaration),
                             ty: resources.types.describe(env, binder.ty),
-                            pointer: None,
+                            pointer: slot.map(|slot| Pointer::Stack { slot }),
                         }
                     });
                     list.push(variable.clone());
@@ -278,10 +340,14 @@ mod tests {
             debug: PcDebug {
                 func: "f".to_owned(),
                 block,
+                unit: None,
+                machine_inst: None,
                 tag: Some(LocalsTag {
                     inst,
                     before: before.to_vec(),
                     after: after.to_vec(),
+                    before_labels: vec![None; before.len()],
+                    after_labels: vec![None; after.len()],
                     frame,
                 }),
             },
@@ -297,6 +363,8 @@ mod tests {
             debug: PcDebug {
                 func: "f".to_owned(),
                 block,
+                unit: None,
+                machine_inst: None,
                 tag: None,
             },
         }
@@ -307,12 +375,23 @@ mod tests {
             bytes: code.to_vec(),
             code_len: Some(code.len() as u32),
             map,
+            stack_plans: Vec::new(),
         }
     }
 
     /// The bindings after each opcode, by the opcode's offset.
     fn after(code: &[u8], map: Vec<PcRange>) -> Vec<(u32, Option<Vec<u32>>)> {
-        bindings_after(code, &section(code, map), &|_, _| true)
+        let section = section(code, map);
+        let ops = opcodes(code, &section);
+        bindings_after(&ops, &|_, _| true)
+            .into_iter()
+            .map(|(pc, set)| {
+                (
+                    pc,
+                    set.map(|set| set.into_iter().map(|(id, _)| id).collect()),
+                )
+            })
+            .collect()
     }
 
     #[test]
@@ -322,18 +401,24 @@ mod tests {
                 inst: 12,
                 before: vec![],
                 after: vec![3],
+                before_labels: vec![],
+                after_labels: vec![Some(41)],
                 frame: Frame::Plain,
             },
             LocalsTag {
                 inst: 0,
                 before: vec![0, 4, 9],
                 after: vec![0, 4, 9, 10],
+                before_labels: vec![None, Some(7), None],
+                after_labels: vec![None, Some(7), None, Some(8)],
                 frame: Frame::Call,
             },
             LocalsTag {
                 inst: 7,
                 before: vec![1],
                 after: vec![],
+                before_labels: vec![None],
+                after_labels: vec![],
                 frame: Frame::Jump,
             },
         ] {
@@ -543,6 +628,55 @@ mod tests {
             .map(|field| field.identifier.clone())
             .collect();
         (text, fields, ops)
+    }
+
+    #[test]
+    fn the_stack_plan_is_usable_for_instructions_of_a_compiled_fixture_and_not_for_all() {
+        use super::super::test_support::lower_case;
+        use crate::{CompileOptions, OptLevel, compile_hull_program};
+
+        run_in_large_stack(|| {
+            let (db, _, program) = lower_case("scopes");
+            let options = CompileOptions {
+                opt_level: OptLevel::O0,
+                debug_info: true,
+            };
+            let objects =
+                compile_hull_program(db, &program, options).expect("compilation succeeds");
+            let object = objects
+                .iter()
+                .find(|object| object.contract == "Scopes")
+                .expect("the contract");
+            let section = object.runtime.as_ref().expect("a runtime");
+            assert!(
+                !section.stack_plans.is_empty(),
+                "O0 with debug info exports plans"
+            );
+            let code = &section.bytes[..section.code_len.expect("a code length") as usize];
+            let ops = opcodes(code, section);
+            let stacks = stack::stacks_after(
+                &ops.iter()
+                    .map(|op| stack::Opcode {
+                        byte: op.byte,
+                        range: op.range,
+                    })
+                    .collect::<Vec<_>>(),
+                section,
+            );
+            println!(
+                "scopes: {} of {} instructions have a usable stack plan",
+                stacks.usable, stacks.instructions
+            );
+            for (reason, count) in &stacks.refused {
+                println!("scopes: {count} instructions have none: {reason}");
+            }
+            assert_eq!(
+                stacks.usable + stacks.refused.values().sum::<usize>(),
+                stacks.instructions
+            );
+            // Branches and returns end a block and have none, so not all do.
+            assert!(0 < stacks.usable && stacks.usable < stacks.instructions);
+        });
     }
 
     /// The byte range of `text` from the start of `from` to the start of `to`.

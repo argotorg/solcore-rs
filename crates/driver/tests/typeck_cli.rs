@@ -1416,6 +1416,36 @@ fn cli_ethdebug_lists_the_parameters_and_locals_in_scope() {
     }
 }
 
+/// Parameters and locals of one word have a stack pointer, a local of several
+/// words has none.
+#[test]
+fn cli_ethdebug_locates_one_word_locals_on_the_stack() {
+    let (output, _) = storage_fields();
+    let runtime = output.json("StorageFields_ethdebug-runtime.json");
+    let instructions = runtime["instructions"].as_array().unwrap();
+    // A parameter or local of one word has a stack pointer where the value is
+    // known to be on the stack: a slot counted from the top and nothing else,
+    // which the schema validation of the conformance test accepts. A local of
+    // several words (`s` is a three-constructor type, `p` a pair) has none.
+    let mut located = BTreeSet::new();
+    for instruction in instructions {
+        for variable in instruction["context"]["variables"].as_array().unwrap() {
+            let pointer = &variable["pointer"];
+            if pointer["location"] == "stack" {
+                assert_eq!(pointer.as_object().unwrap().len(), 2, "{variable}");
+                assert!(pointer["slot"].is_u64(), "{variable}");
+                assert!(variable.get("declaration").is_some(), "{variable}");
+                located.insert(variable["identifier"].as_str().unwrap().to_owned());
+            }
+        }
+    }
+    assert!(located.contains("total"), "{located:?}");
+    assert!(
+        !located.contains("s") && !located.contains("p"),
+        "{located:?}"
+    );
+}
+
 /// Variables grow every instruction, so the size is shown and bounded.
 #[test]
 fn cli_ethdebug_output_for_storage_fields_stays_small() {

@@ -17,7 +17,7 @@ use hir::Db as HirDb;
 use hull::Program as HullProgram;
 use sonatina_codegen::{
     EvmCompile,
-    object::{ObjectArtifact, PcAttribution, SectionArtifact},
+    object::{FunctionStackPlan, ObjectArtifact, PcAttribution, PcMapUnit, SectionArtifact},
 };
 use sonatina_ir::{InstId, Module, module::FuncRef};
 
@@ -65,6 +65,11 @@ pub struct CompiledSection {
     /// Covers `0..code_len` exactly, in order, without gaps or overlaps. Empty
     /// without `debug_info`.
     pub map: Vec<PcRange>,
+    /// The operand stack that Sonatina planned for each machine instruction of
+    /// each function, where it was asked to: with `debug_info` at
+    /// `OptLevel::O0`. Empty otherwise. [`PcDebug::unit`] and
+    /// [`PcDebug::machine_inst`] join a range to its record.
+    pub stack_plans: Vec<FunctionStackPlan>,
 }
 
 /// A range of code bytes and what it is attributed to.
@@ -89,6 +94,12 @@ pub struct PcDebug {
     pub func: String,
     /// The IR block, by its index in the function.
     pub block: u32,
+    /// The function (`FuncRef` number) whose code the range is, which is the
+    /// key of its stack plan. `None` for code that belongs to no function.
+    pub unit: Option<u32>,
+    /// The machine instruction of that function that made the range. Its number
+    /// is meaningful only together with `unit`.
+    pub machine_inst: Option<u32>,
     /// Present only at `OptLevel::O0`, where instructions keep the identity they
     /// had at lowering, and only for an instruction that lowering tagged.
     pub tag: Option<LocalsTag>,
@@ -115,7 +126,11 @@ fn compile_module(
 ) -> Result<Vec<CompiledObject>, TranslationError> {
     let mut compile = EvmCompile::new(module)
         .with_opt_level(options.opt_level)
-        .with_observability(options.debug_info);
+        .with_observability(options.debug_info)
+        // The plans say where values sit at each opcode. They are only wanted
+        // where the tag says which values are the source bindings, and they are
+        // taken without changing the code.
+        .with_stack_plans(options.debug_info && options.opt_level == OptLevel::O0);
     if options.debug_info {
         let mut origins = optimized_origins(compile.optimize());
         // At O0 no pass runs, so an instruction keeps the identity it had at
@@ -221,6 +236,7 @@ fn compiled_section(
             bytes: section.bytes,
             code_len: None,
             map: Vec::new(),
+            stack_plans: Vec::new(),
         });
     }
     let observability = section.observability.as_ref().ok_or_else(|| {
@@ -264,6 +280,16 @@ fn compiled_section(
                 debug: PcDebug {
                     func: entry.func_name.clone(),
                     block: entry.block.0,
+                    unit: match &entry.unit {
+                        PcMapUnit::Function(func) => Some(func.as_u32()),
+                        PcMapUnit::Synthetic { .. } => None,
+                    },
+                    machine_inst: match &entry.unit {
+                        PcMapUnit::Function(_) => {
+                            entry.attribution.machine_inst().map(|inst| inst.raw().0)
+                        }
+                        PcMapUnit::Synthetic { .. } => None,
+                    },
                     tag,
                 },
             })
@@ -280,6 +306,7 @@ fn compiled_section(
         bytes: section.bytes,
         code_len: Some(observability.code_bytes),
         map,
+        stack_plans: observability.stack_plans.clone(),
     })
 }
 
@@ -332,6 +359,8 @@ mod tests {
             debug: PcDebug {
                 func: String::new(),
                 block: 0,
+                unit: None,
+                machine_inst: None,
                 tag: None,
             },
         }

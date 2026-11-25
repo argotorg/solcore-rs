@@ -53,9 +53,13 @@ use crate::TranslationError;
 
 mod reachability;
 mod tags;
+mod values;
 
 use reachability::Reachability;
 use tags::{InstTag, SetId};
+use values::ValueTrace;
+
+type FunctionBuilderOf = FunctionBuilder<InstInserter>;
 
 pub(crate) use tags::DebugTags;
 
@@ -165,6 +169,8 @@ struct Translator<'db> {
     stamp_origins: bool,
     /// The visible source bindings around each stamped instruction.
     tags: DebugTags,
+    /// The next number for a value label, which is unique in the module.
+    next_label: u32,
 }
 
 impl<'db> Translator<'db> {
@@ -174,6 +180,7 @@ impl<'db> Translator<'db> {
         Self {
             stamp_origins,
             tags: DebugTags::default(),
+            next_label: 0,
             db,
             builder,
             isa,
@@ -518,7 +525,7 @@ impl<'db> Translator<'db> {
         for (index, arg) in function.args.iter().enumerate() {
             let value = lowerer.fb.func.arg_values[index];
             lowerer.bind_parameter(arg.name.as_str(), &arg.ty, value)?;
-            lowerer.add_binder(arg.binder);
+            lowerer.add_binder(arg.binder, arg.name.as_str());
         }
         let terminated = lowerer.lower_stmts(&function.body)?;
         lowerer.finish(terminated)
@@ -628,6 +635,8 @@ struct FunctionLowerer<'a, 'db> {
     binder_frames: Vec<Vec<u32>>,
     /// The set of all bindings in `binder_frames`.
     visible: SetId,
+    /// Which value held each binding, as lowering saw it (see `values`).
+    trace: ValueTrace,
 }
 
 impl<'a, 'db> FunctionLowerer<'a, 'db> {
@@ -658,6 +667,7 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
             func_ref,
             binder_frames: vec![Vec::new()],
             visible,
+            trace: ValueTrace::default(),
         }
     }
 
@@ -687,6 +697,7 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
                     .insert_inst_no_result(Return::new_single(self.module.inst_set(), value));
             }
         }
+        self.label_values();
         self.fb.seal_all();
         self.fb.finish();
         Ok(())
@@ -696,19 +707,63 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
         if !terminated {
             self.emit_yul_return()?;
         }
+        self.label_values();
         self.fb.seal_all();
         self.fb.finish();
         Ok(())
     }
 
+    /// Labels the values that hold source bindings, and records the labels in the
+    /// tags of the function's instructions. Runs before the SSA builder seals its
+    /// blocks, so that a phi it then removes as trivial hands its labels on. It
+    /// adds no instruction and changes no operand.
+    fn label_values(&mut self) {
+        if !self.module.stamp_origins {
+            return;
+        }
+        let module = &mut *self.module;
+        self.trace.label(
+            &mut self.fb,
+            &mut module.tags,
+            self.func_ref,
+            &mut module.next_label,
+        );
+    }
+
+    /// `FunctionBuilder::def_var`, which also notes the value for the debug
+    /// labels.
+    fn def_var(&mut self, var: Variable, value: ValueId) {
+        self.fb.def_var(var, value);
+        self.note_variable(var, value);
+    }
+
+    /// `FunctionBuilder::use_var`, which also notes the value for the debug
+    /// labels. The value is what the builder returned: nothing is read that the
+    /// program did not read.
+    fn use_var(&mut self, var: Variable) -> ValueId {
+        let value = self.fb.use_var(var);
+        self.note_variable(var, value);
+        value
+    }
+
+    fn note_variable(&mut self, var: Variable, value: ValueId) {
+        if !self.module.stamp_origins {
+            return;
+        }
+        if let Some(block) = self.fb.current_block() {
+            self.trace
+                .note(block, var, self.fb.func.dfg.num_insts(), value);
+        }
+    }
+
     fn emit_yul_return(&mut self) -> Result<(), TranslationError> {
         let returns = self
             .yul_returns
-            .as_ref()
+            .clone()
             .ok_or_else(|| TranslationError::new("inline Yul `leave` outside a Yul function"))?;
         let values = returns
             .iter()
-            .map(|var| self.fb.use_var(*var))
+            .map(|var| self.use_var(*var))
             .collect::<SmallVec<[ValueId; 2]>>();
         self.fb.insert_return_values(&values);
         Ok(())
@@ -722,7 +777,7 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
     ) -> Result<(), TranslationError> {
         let ty = self.module.lower_ty(hull_ty)?;
         let var = self.fb.declare_var(ty);
-        self.fb.def_var(var, value);
+        self.def_var(var, value);
         self.insert_binding(
             name,
             Binding {
@@ -742,7 +797,7 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
         let ty = self.module.lower_ty(hull_ty)?;
         let var = self.fb.declare_var(ty);
         let initial = zero_for_type(&mut self.fb, self.module.inst_set(), ty);
-        self.fb.def_var(var, initial);
+        self.def_var(var, initial);
         let binding = Binding {
             var,
             ty,
@@ -760,7 +815,7 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
     ) -> Result<(), TranslationError> {
         let binding = self.declare_binding(name, hull_ty)?;
         let value = self.coerce(value, binding.ty)?;
-        self.fb.def_var(binding.var, value);
+        self.def_var(binding.var, value);
         Ok(())
     }
 
@@ -814,12 +869,18 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
     /// Makes the source binding visible, in the innermost scope, from here on.
     /// Returns whether there is one. Nothing is tracked unless instructions carry
     /// origins.
-    fn add_binder(&mut self, binder: DebugBinder) -> bool {
+    fn add_binder(&mut self, binder: DebugBinder, name: &str) -> bool {
         let Some(BinderId(id)) = binder.0 else {
             return false;
         };
         if !self.module.stamp_origins {
             return false;
+        }
+        // A binding of one word can have a value label; others have none.
+        if let Ok(binding) = self.lookup(name)
+            && binding.ty.is_integral()
+        {
+            self.trace.bind(id, binding.var);
         }
         self.binder_frames
             .last_mut()
@@ -870,11 +931,14 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
         let leaves_scopes = matches!(stmt.kind, StmtKind::Break | StmtKind::Continue);
         self.stamp_insts_since(watermark, stmt.span, start, leaves_scopes);
         if matches!(result, Ok(false)) {
-            let binds = match &stmt.kind {
-                StmtKind::Let { binds, .. } | StmtKind::Assign { binds, .. } => *binds,
-                _ => DebugBinder::default(),
+            let (binds, name) = match &stmt.kind {
+                StmtKind::Let { binds, name, .. } => (*binds, name.as_str()),
+                StmtKind::Assign { binds, lhs, .. } => {
+                    (*binds, assignment_path(lhs).map_or("", |(name, _)| name))
+                }
+                _ => (DebugBinder::default(), ""),
             };
-            if self.add_binder(binds) {
+            if self.add_binder(binds, name) {
                 self.retag_last();
             }
         }
@@ -926,6 +990,8 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
                         before: visible,
                         after: visible,
                         frame,
+                        before_labels: Vec::new(),
+                        after_labels: Vec::new(),
                     },
                 );
             }
@@ -1045,7 +1111,7 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
             ExprKind::Unit => Ok(self.fb.func.dfg.make_zero_const(Type::Unit)),
             ExprKind::Var(name) => {
                 let binding = self.lookup(name.as_str())?;
-                Ok(self.fb.use_var(binding.var))
+                Ok(self.use_var(binding.var))
             }
             ExprKind::Pair(lhs, rhs) => {
                 let ty = self.module.lower_ty(&expr.ty)?;
@@ -1140,10 +1206,10 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
         let value = if path.is_empty() {
             self.coerce(value, binding.ty)?
         } else {
-            let root = self.fb.use_var(binding.var);
+            let root = self.use_var(binding.var);
             self.insert_at_path(root, &binding.hull_ty, &path, value)?
         };
-        self.fb.def_var(binding.var, value);
+        self.def_var(binding.var, value);
         Ok(())
     }
 
@@ -1188,7 +1254,7 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
         let ty = self.module.lower_ty(result_ty)?;
         let result = self.fb.declare_var(ty);
         let initial = zero_for_type(&mut self.fb, self.module.inst_set(), ty);
-        self.fb.def_var(result, initial);
+        self.def_var(result, initial);
         let then_block = self.fb.append_block();
         let else_block = self.fb.append_block();
         let done = self.fb.append_block();
@@ -1197,15 +1263,15 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
         self.fb.switch_to_block(then_block);
         let then_value = self.lower_expr(then_expr)?;
         let then_value = self.coerce(then_value, ty)?;
-        self.fb.def_var(result, then_value);
+        self.def_var(result, then_value);
         self.emit_jump(done);
         self.fb.switch_to_block(else_block);
         let else_value = self.lower_expr(else_expr)?;
         let else_value = self.coerce(else_value, ty)?;
-        self.fb.def_var(result, else_value);
+        self.def_var(result, else_value);
         self.emit_jump(done);
         self.fb.switch_to_block(done);
-        Ok(self.fb.use_var(result))
+        Ok(self.use_var(result))
     }
 
     /// Record edges at their single emission point so continuation reachability
@@ -1485,7 +1551,7 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
 
         let result = self.fb.declare_var(Type::I1);
         let initial = self.fb.make_imm_value(false);
-        self.fb.def_var(result, initial);
+        self.def_var(result, initial);
         let right = self.fb.append_block();
         let not_right = self.fb.append_block();
         let done = self.fb.append_block();
@@ -1494,14 +1560,14 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
         self.fb.switch_to_block(right);
         let (rhs, nested) = self.extract_variant(value, target, 1)?;
         let nested_cond = self.in_k_condition(nested, &rhs, index - 1)?;
-        self.fb.def_var(result, nested_cond);
+        self.def_var(result, nested_cond);
         self.emit_jump(done);
         self.fb.switch_to_block(not_right);
         let false_value = self.fb.make_imm_value(false);
-        self.fb.def_var(result, false_value);
+        self.def_var(result, false_value);
         self.emit_jump(done);
         self.fb.switch_to_block(done);
-        Ok(self.fb.use_var(result))
+        Ok(self.use_var(result))
     }
 
     fn extract_in_k(
@@ -1855,7 +1921,7 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
                     let binding = self.declare_binding(&name, &ty)?;
                     if let Some(value) = values.get(index).copied() {
                         let value = self.coerce(value, Type::I256)?;
-                        self.fb.def_var(binding.var, value);
+                        self.def_var(binding.var, value);
                     }
                 }
                 Ok(false)
@@ -1880,7 +1946,7 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
                     let name = self.yul_name(name);
                     let binding = self.lookup(&name)?;
                     let value = self.coerce(value, binding.ty)?;
-                    self.fb.def_var(binding.var, value);
+                    self.def_var(binding.var, value);
                 }
                 Ok(false)
             }
@@ -2032,7 +2098,7 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
             }
             YulExprKind::Ident(name) => {
                 let binding = self.lookup(&self.yul_name(name))?;
-                let value = self.fb.use_var(binding.var);
+                let value = self.use_var(binding.var);
                 Ok(YulExprOutcome::Values(smallvec![
                     self.coerce(value, Type::I256)?
                 ]))

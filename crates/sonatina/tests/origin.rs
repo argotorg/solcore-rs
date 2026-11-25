@@ -27,7 +27,7 @@ use solcore_test_utils::{
     define_frontend_test_db, load_fixture_case_with_file_urls,
     load_reachable_modules_with_file_urls, repo_root_from_manifest, run_in_large_stack,
 };
-use sonatina_ir::Module;
+use sonatina_ir::{Module, ir_writer::ModuleWriter};
 use specialize::{SpecializeOptions, specialize_module};
 
 define_frontend_test_db!(TestDb, hir_ty);
@@ -155,6 +155,53 @@ fn origin_debug_info_does_not_change_the_bytes() {
                 }
             }
         }
+    });
+}
+
+/// The number of values of `module` that carry a value label.
+fn labelled_values(module: &Module) -> usize {
+    let mut labelled = 0;
+    for func in module.funcs() {
+        module.func_store.view(func, |function| {
+            let mut values = function.arg_values.to_vec();
+            for block in function.layout.iter_block() {
+                for inst in function.layout.iter_inst(block) {
+                    values.extend(function.dfg.inst_results(inst));
+                }
+            }
+            labelled += values
+                .into_iter()
+                .filter(|&value| !function.dfg.value_labels(value).is_empty())
+                .count();
+        });
+    }
+    labelled
+}
+
+/// Value labels are only observed from the values lowering already makes: the
+/// IR of a lowering that labels is the IR of one that does not, text and value
+/// numbers included. The labelling lowering is the one that stamps origins.
+#[test]
+fn value_labels_do_not_change_the_ir() {
+    run_in_large_stack(|| {
+        let cases = FIXTURES
+            .into_iter()
+            .map(|name| (name, lower_fixture(name)))
+            .chain([(STORAGE_FIELDS, lower_case(STORAGE_FIELDS))]);
+        let mut labelled = 0;
+        for (name, (db, program)) in cases {
+            let plain = translate_hull_program(db, &program).expect("lowering succeeds");
+            let stamped =
+                translate_hull_program_with_origins(db, &program).expect("lowering succeeds");
+            assert_eq!(
+                ModuleWriter::new(&plain).dump_string(),
+                ModuleWriter::new(&stamped).dump_string(),
+                "{name}"
+            );
+            assert_eq!(labelled_values(&plain), 0, "{name}");
+            labelled += labelled_values(&stamped);
+        }
+        assert!(labelled > 0, "no value of any fixture has a label");
     });
 }
 

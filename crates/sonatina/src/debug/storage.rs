@@ -186,10 +186,10 @@ mod tests {
             .per_instruction
             .iter()
             .map(|field| {
-                let slot = field
-                    .pointer
-                    .as_ref()
-                    .map(|Pointer::Storage { slot, .. }| *slot);
+                let slot = field.pointer.as_ref().map(|pointer| match pointer {
+                    Pointer::Storage { slot, .. } => *slot,
+                    Pointer::Stack { .. } => unreachable!("fields are in storage"),
+                });
                 (field.identifier.clone(), slot)
             })
             .collect();

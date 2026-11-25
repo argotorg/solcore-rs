@@ -10,11 +10,16 @@ use crate::locals::{Frame, LocalsTag};
 pub(super) type SetId = u32;
 
 /// What lowering recorded about one instruction.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub(super) struct InstTag {
     pub(super) before: SetId,
     pub(super) after: SetId,
     pub(super) frame: Frame,
+    /// The value label of each binding of `before`, in the order of the set, or
+    /// empty before lowering of the function has finished. See `Labeller`.
+    pub(super) before_labels: Vec<Option<u32>>,
+    /// Likewise for `after`.
+    pub(super) after_labels: Vec<Option<u32>>,
 }
 
 /// The visible binding sets of a module and the tag of every instruction that
@@ -39,13 +44,29 @@ impl DebugTags {
         id
     }
 
+    /// The binder ids of an interned set.
+    pub(super) fn set(&self, id: SetId) -> &[u32] {
+        &self.sets[id as usize]
+    }
+
     /// The tag of `inst` of `func`, when lowering gave the instruction one.
     pub(crate) fn tag(&self, func: FuncRef, inst: InstId) -> Option<LocalsTag> {
         let tag = self.insts.get(&(func, inst))?;
+        let before = self.sets[tag.before as usize].clone();
+        let after = self.sets[tag.after as usize].clone();
+        let labels = |labels: &[Option<u32>], ids: &[u32]| {
+            if labels.len() == ids.len() {
+                labels.to_vec()
+            } else {
+                vec![None; ids.len()]
+            }
+        };
         Some(LocalsTag {
             inst: inst.0,
-            before: self.sets[tag.before as usize].clone(),
-            after: self.sets[tag.after as usize].clone(),
+            before_labels: labels(&tag.before_labels, &before),
+            after_labels: labels(&tag.after_labels, &after),
+            before,
+            after,
             frame: tag.frame,
         })
     }
