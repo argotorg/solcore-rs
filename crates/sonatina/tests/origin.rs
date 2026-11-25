@@ -5,6 +5,7 @@
 use std::{collections::BTreeMap, path::PathBuf};
 
 use hir::{
+    ast::function::{ExprKind as HirExprKind, FuncBody, StmtKind as HirStmtKind},
     diag::{DiagnosticLevel, Offset},
     input::SourceFile,
     span::{AnchorId, Span},
@@ -36,6 +37,28 @@ const FIXTURES: [&str; 5] = [
     "deposit",
 ];
 const LEVELS: [OptLevel; 2] = [OptLevel::O0, OptLevel::O2];
+
+/// The directories of `tests/ethdebug`, relative to the repository, each a program
+/// of its own.
+fn ethdebug_fixtures() -> Vec<String> {
+    let repo = repo_root_from_manifest(env!("CARGO_MANIFEST_DIR"));
+    let mut found: Vec<String> = std::fs::read_dir(repo.join("tests/ethdebug"))
+        .map(|entries| {
+            entries
+                .map(|entry| entry.unwrap().path())
+                .filter(|path| path.join("main.sol").is_file())
+                .map(|path| {
+                    format!(
+                        "tests/ethdebug/{}",
+                        path.file_name().unwrap().to_string_lossy()
+                    )
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    found.sort();
+    found
+}
 
 fn lower_fixture(name: &str) -> (&'static TestDb, Program<'static>) {
     lower_case(&format!("tests/e2e/{name}"))
@@ -346,5 +369,166 @@ fn origin_locates_the_condition_of_an_if_and_leaves_the_jumps_out_of_its_arms_un
                 "return r;"
             ]
         );
+    });
+}
+
+/// The text range of every `if` statement of every file of the program, by the
+/// file's url, including those in lambda bodies.
+fn if_spans(db: &'static TestDb, table: &SourceTable) -> BTreeMap<String, Vec<(u32, u32)>> {
+    fn walk<'db>(db: &'db TestDb, body: FuncBody<'db>, found: &mut Vec<(u32, u32)>) {
+        for (_, stmt) in body.stmts(db).iter() {
+            if matches!(stmt.kind, HirStmtKind::If { .. }) {
+                let range = stmt.span.resolve_to_absolute(db);
+                found.push((range.start.as_u32(), range.end.as_u32()));
+            }
+        }
+        for (_, expr) in body.exprs(db).iter() {
+            if let HirExprKind::Lambda { body, .. } = &expr.kind {
+                walk(db, *body, found);
+            }
+        }
+    }
+    let mut by_url = BTreeMap::<String, Vec<(u32, u32)>>::new();
+    for (_, url, file) in table.entries() {
+        let module = parse_file_to_hir(db, file).module(db);
+        let mut found = Vec::new();
+        for map in hir::nameres::resolve_module(db, module).bodies {
+            for expr in map.exprs {
+                walk(db, expr.body, &mut found);
+            }
+        }
+        found.sort();
+        found.dedup();
+        by_url.insert(url.to_owned(), found);
+    }
+    by_url
+}
+
+/// No instruction is attributed to the range of a whole `if` statement, which
+/// covers the arms: the debugger would show the `if` again after each arm. The
+/// condition is the range of the `if` itself, and the jumps out of the arms have
+/// none. Checked on every `if` of every program of the corpus, including those of
+/// library code, `else if` chains and lambdas.
+#[test]
+fn origin_never_attributes_code_to_a_whole_if_statement() {
+    run_in_large_stack(|| {
+        let cases = FIXTURES
+            .into_iter()
+            .map(|name| (name.to_owned(), lower_fixture(name)))
+            .chain(ethdebug_fixtures().into_iter().map(|name| {
+                let lowered = lower_case(&name);
+                (name, lowered)
+            }))
+            .chain([(
+                "branches".to_owned(),
+                lower_case("crates/sonatina/tests/fixtures/origin/branches"),
+            )]);
+        let (mut ifs, mut ranges) = (0, 0);
+        for (name, (db, program)) in cases {
+            let table = SourceTable::from_program(db, &program);
+            let spans = if_spans(db, &table);
+            ifs += spans.values().map(Vec::len).sum::<usize>();
+            for object in compile(db, &program, OptLevel::O0, true) {
+                for section in [Some(&object.init), object.runtime.as_ref()]
+                    .into_iter()
+                    .flatten()
+                {
+                    for range in &section.map {
+                        let Ok(stamp) = &range.origin else { continue };
+                        let origin = ResolvedOrigin::parse(stamp).expect("an origin");
+                        if origin.generated.is_some() {
+                            continue;
+                        }
+                        ranges += 1;
+                        let at = (origin.start, origin.end);
+                        assert!(
+                            !spans.get(&origin.url).is_some_and(|ifs| ifs.contains(&at)),
+                            "{name}: code is attributed to the whole `if` at {at:?} of {}",
+                            origin.url
+                        );
+                    }
+                }
+            }
+        }
+        println!("{ifs} `if` statements, {ranges} attributed ranges");
+        assert!(ifs >= 200 && ranges >= 8000, "{ifs} ifs, {ranges} ranges");
+    });
+}
+
+/// The function families that the compiler generates, as the infix of a function
+/// name and the reason the listing gives the whole family.
+const GENERATED_FAMILIES: [(&str, &str); 5] = [
+    ("__strlit_", "literal"),
+    ("__revertlit_", "literal"),
+    ("struct_get_", "derived"),
+    ("struct_set_", "derived"),
+    ("copy_arguments_for_constructor_", "entry"),
+];
+
+/// Fixtures of other suites that contain functions of the families that the
+/// corpus above does not: a struct in storage, revert messages and string
+/// literals.
+const EXTRA_FAMILY_FIXTURES: [&str; 3] = [
+    "tests/e2e/struct-storage",
+    "crates/hull/tests/fixtures/regressions/strings/nested_revert_literal",
+    "crates/hull/tests/fixtures/regressions/strings/objectless_string_materializer",
+];
+
+/// Every function of a generated family, in every program of the corpus, has the
+/// family's generated reason, and so has each of its statements: no use of a
+/// shared helper owns it. A family that no program of the corpus contains is not
+/// checked, so the corpus must contain each of them at least once.
+#[test]
+fn origin_marks_every_function_of_a_generated_family_in_every_fixture() {
+    run_in_large_stack(|| {
+        let cases = FIXTURES
+            .into_iter()
+            .map(|name| (name.to_owned(), lower_fixture(name)))
+            .chain(ethdebug_fixtures().into_iter().map(|name| {
+                let lowered = lower_case(&name);
+                (name, lowered)
+            }))
+            .chain(EXTRA_FAMILY_FIXTURES.map(|name| (name.to_owned(), lower_case(name))));
+        let mut seen = [0usize; GENERATED_FAMILIES.len()];
+        for (name, (db, program)) in cases {
+            let listing = hull::origin_listing(db, &program);
+            let lines: Vec<&str> = listing.lines().collect();
+            let indent = |line: &str| line.len() - line.trim_start().len();
+            for (at, line) in lines.iter().enumerate() {
+                let Some(header) = line.trim_start().strip_prefix("fn ") else {
+                    continue;
+                };
+                let function = header.split_whitespace().next().unwrap();
+                let Some(family) = GENERATED_FAMILIES
+                    .iter()
+                    .position(|(infix, _)| function.contains(infix))
+                else {
+                    continue;
+                };
+                seen[family] += 1;
+                let marker = format!(" gen {} ", GENERATED_FAMILIES[family].1);
+                assert!(line.contains(&marker), "{name}: {line}");
+                let statements: Vec<&&str> = lines[at + 1..]
+                    .iter()
+                    .take_while(|next| indent(next) > indent(line))
+                    .filter(|next| next.trim_start().starts_with("S "))
+                    .collect();
+                assert!(
+                    !statements.is_empty(),
+                    "{name}: {function} has no statement"
+                );
+                for statement in statements {
+                    assert!(statement.contains(&marker), "{name}: {statement}");
+                }
+            }
+        }
+        println!("functions per family {seen:?}");
+        for (family, count) in GENERATED_FAMILIES.iter().zip(seen) {
+            assert!(
+                count > 0,
+                "no function of the family `{}` in the corpus",
+                family.0
+            );
+        }
     });
 }

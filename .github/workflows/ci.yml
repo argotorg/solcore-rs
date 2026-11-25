@@ -189,6 +189,10 @@ jobs:
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
 
       - name: Run tests
+        env:
+          # The ethdebug schema validation fetches ethdebug/format with git and
+          # must not be skipped silently.
+          SOLCORE_REQUIRE_ETHDEBUG_SCHEMAS: "1"
         run: cargo test --workspace --all-features --locked
 
   platform-test:

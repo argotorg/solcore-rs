@@ -5,6 +5,13 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+#[path = "support/ethdebug_output.rs"]
+mod ethdebug_output;
+#[path = "support/ethdebug_schemas.rs"]
+mod ethdebug_schemas;
+use ethdebug_output::decode;
+use ethdebug_schemas::PinnedSchemas;
+
 #[test]
 fn cli_prints_help_and_version() {
     let help = Command::new(env!("CARGO_BIN_EXE_solcore-driver"))
@@ -849,6 +856,410 @@ contract C {
     assert!(abi.contains("\"name\": \"main\""), "{abi}");
     assert!(abi.contains("\"type\": \"function\""), "{abi}");
     assert!(abi.contains("\"type\": \"uint256\""), "{abi}");
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn cli_emits_bytecode_and_ethdebug_files() {
+    let dir = temp_dir("emit-bin");
+    fs::create_dir_all(&dir).expect("create temp dir");
+    let input = dir.join("main.sol");
+    fs::write(&input, ethdebug_output::SINGLE).expect("write source");
+    let std_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std");
+    let driver = |args: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_solcore-driver"))
+            .args(args)
+            .arg("--std-root")
+            .arg(&std_root)
+            .arg(&input)
+            .output()
+            .expect("run driver")
+    };
+
+    // Bytecode.
+    let bin_dir = dir.join("bin");
+    let output = driver(&["--bin", "--opt-level", "2", "-o", bin_dir.to_str().unwrap()]);
+    assert!(
+        output.status.success(),
+        "driver failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    for file in ["C.bin", "C.bin-runtime"] {
+        let hex = fs::read_to_string(bin_dir.join(file)).expect("read bytecode");
+        assert!(
+            !hex.is_empty() && hex.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')),
+            "{file}: {hex}"
+        );
+    }
+
+    let rejected = driver(&["--opt-level", "2"]);
+    assert_eq!(rejected.status.code(), Some(2));
+    assert!(
+        String::from_utf8_lossy(&rejected.stderr)
+            .contains("--opt-level requires --bin or --ethdebug")
+    );
+
+    // Stock ethdebug files next to the bytecode.
+    let rejected = driver(&["--ethdebug"]);
+    assert_eq!(rejected.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&rejected.stderr).contains("--ethdebug requires --output-dir"));
+
+    let debug_dir = dir.join("debug");
+    for level in ["1", "2", "s"] {
+        let rejected = driver(&[
+            "--ethdebug",
+            "--opt-level",
+            level,
+            "-o",
+            debug_dir.to_str().unwrap(),
+        ]);
+        assert_eq!(rejected.status.code(), Some(2));
+        assert!(
+            String::from_utf8_lossy(&rejected.stderr).contains("--ethdebug requires --opt-level 0")
+        );
+    }
+    assert!(!debug_dir.exists());
+
+    let output = driver(&["--ethdebug", "-o", debug_dir.to_str().unwrap()]);
+    assert!(
+        output.status.success(),
+        "driver failed\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let debug = ethdebug_output::Output {
+        dir: debug_dir.clone(),
+    };
+    for file in ["C.bin", "C.bin-runtime"] {
+        assert!(debug_dir.join(file).is_file(), "{file}");
+    }
+    let resources = debug.resources();
+    assert_eq!(resources["compilation"], debug.compilation());
+    let main = debug.source_id("main.sol");
+
+    for (file, environment) in [
+        ("C_ethdebug.json", "create"),
+        ("C_ethdebug-runtime.json", "call"),
+    ] {
+        let program = debug.json(file);
+        assert_eq!(program["environment"], environment);
+        assert_eq!(program["compilation"]["id"], resources["compilation"]["id"]);
+    }
+    let runtime = debug.json("C_ethdebug-runtime.json");
+    let instructions = runtime["instructions"].as_array().unwrap();
+    assert!(
+        instructions
+            .iter()
+            .any(|instruction| instruction["context"]["code"]["source"]["id"] == main)
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// Validates the emitted ethdebug documents against the upstream schemas of
+/// ethdebug/format 0.1.0-draft.3, fetched at a pinned commit (see
+/// `support/ethdebug_schemas.rs`). Without the schemas the validation is
+/// skipped, and the version stamps are still checked.
+#[test]
+fn cli_ethdebug_files_validate_against_pinned_schemas() {
+    const VERSION: &str = "0.1.0-draft.3";
+    let std_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std");
+    let dir = temp_dir("ethdebug-schemas");
+    fs::create_dir_all(&dir).expect("create temp dir");
+
+    // The single-contract program of the first ethdebug test.
+    let single = dir.join("single");
+    fs::create_dir_all(&single).unwrap();
+    fs::write(single.join("main.sol"), ethdebug_output::SINGLE).unwrap();
+    // The cross-file program of the attribution test.
+    let cross = dir.join("cross");
+    fs::create_dir_all(&cross).unwrap();
+    fs::write(cross.join("main.sol"), ethdebug_output::CROSS_MAIN).unwrap();
+    fs::write(cross.join("ops.sol"), ethdebug_output::CROSS_OPS).unwrap();
+
+    let schemas = PinnedSchemas::load();
+    let mut documents = 0;
+    let mut sample = None;
+    for source_dir in [&single, &cross] {
+        let out = source_dir.join("out");
+        let result = Command::new(env!("CARGO_BIN_EXE_solcore-driver"))
+            .current_dir(source_dir)
+            .args(["--ethdebug", "--opt-level", "0", "-o"])
+            .arg(&out)
+            .arg("--std-root")
+            .arg(&std_root)
+            .arg("main.sol")
+            .output()
+            .expect("run driver");
+        assert!(
+            result.status.success(),
+            "driver failed\nstderr:\n{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+
+        let mut names: Vec<String> = fs::read_dir(&out)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+            .filter(|name| name.ends_with(".json"))
+            .collect();
+        names.sort();
+        for name in names {
+            let schema = if name == "ethdebug_resources.json" {
+                "schema:ethdebug/format/info/resources"
+            } else if name == "ethdebug_compilation.json" {
+                "schema:ethdebug/format/materials/compilation"
+            } else {
+                assert!(
+                    name.ends_with("_ethdebug.json") || name.ends_with("_ethdebug-runtime.json"),
+                    "unexpected output file {name}"
+                );
+                "schema:ethdebug/format/program"
+            };
+            let text = fs::read_to_string(out.join(&name)).expect(&name);
+            let document: serde_json::Value = serde_json::from_str(&text).expect(&name);
+            if let Some(schemas) = &schemas {
+                schemas
+                    .validate(schema, &document)
+                    .unwrap_or_else(|error| panic!("{name} does not match {schema}:\n{error}"));
+            }
+            // Programs and the resources document carry a stamp; the
+            // compilation is embedded in them and has none of its own.
+            if name != "ethdebug_compilation.json" {
+                let stamp = &document["ethdebug"];
+                assert_eq!(
+                    stamp["schema"],
+                    schema.trim_start_matches("schema:"),
+                    "{name}"
+                );
+                assert_eq!(stamp["version"], VERSION, "{name}");
+            }
+            if name.ends_with("_ethdebug-runtime.json") && sample.is_none() {
+                sample = Some((name.clone(), document));
+            }
+            documents += 1;
+        }
+    }
+    // Two programs per contract, plus resources and compilation per build.
+    assert_eq!(documents, 2 * (2 + 2), "validated document count");
+
+    // Negative controls: the schemas must be able to reject a program.
+    let (name, program) = sample.expect("a runtime program was found");
+    if let Some(schemas) = &schemas {
+        let mut extra = program.clone();
+        extra["unexpectedField"] = serde_json::json!(true);
+        assert!(
+            schemas
+                .validate("schema:ethdebug/format/program", &extra)
+                .is_err(),
+            "{name} with an unknown top-level field was accepted"
+        );
+        let mut missing = program.clone();
+        missing.as_object_mut().unwrap().remove("instructions");
+        assert!(
+            schemas
+                .validate("schema:ethdebug/format/program", &missing)
+                .is_err(),
+            "{name} without `instructions` was accepted"
+        );
+    }
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn cli_ethdebug_describes_the_standalone_entry() {
+    let dir = temp_dir("ethdebug-standalone");
+    fs::create_dir_all(&dir).unwrap();
+    let input = dir.join("main.sol");
+    let entry = ethdebug_output::STANDALONE_ENTRY;
+    let text = ethdebug_output::STANDALONE;
+    fs::write(&input, text).unwrap();
+    let std_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std");
+    for (flag, output) in [("--bin", "bin"), ("--ethdebug", "debug")] {
+        let result = Command::new(env!("CARGO_BIN_EXE_solcore-driver"))
+            .arg(flag)
+            .arg("--std-root")
+            .arg(&std_root)
+            .arg("-o")
+            .arg(dir.join(output))
+            .arg(&input)
+            .output()
+            .unwrap();
+        assert!(
+            result.status.success(),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+    }
+    let debug = ethdebug_output::Output {
+        dir: dir.join("debug"),
+    };
+    let compilation = debug.compilation();
+    for (extension, suffix, environment) in
+        [("bin", "", "create"), ("bin-runtime", "-runtime", "call")]
+    {
+        let filename = format!("OutputDeploy.{extension}");
+        assert_eq!(
+            fs::read(dir.join("debug").join(&filename)).unwrap(),
+            fs::read(dir.join("bin").join(&filename)).unwrap(),
+        );
+        let program = debug.json(&format!("OutputDeploy_ethdebug{suffix}.json"));
+        assert_eq!(program["environment"], environment);
+        let definition = &program["contract"]["definition"];
+        let source = compilation["sources"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|source| source["id"] == definition["source"]["id"])
+            .unwrap();
+        assert_eq!(source["path"], "main.sol");
+        let offset = definition["range"]["offset"].as_u64().unwrap() as usize;
+        let length = definition["range"]["length"].as_u64().unwrap() as usize;
+        assert_eq!(&text[offset..offset + length], entry);
+    }
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn cli_rejects_two_outputs_for_one_file_before_writing() {
+    let dir = temp_dir("duplicate-output");
+    fs::create_dir_all(&dir).unwrap();
+    let input = dir.join("main.sol");
+    fs::write(
+        &input,
+        "pragma solcore; contract C { function main() public returns (word) { return 7; } }",
+    )
+    .unwrap();
+    let out = dir.join("out");
+
+    let result = Command::new(env!("CARGO_BIN_EXE_solcore-driver"))
+        .args(["--emit-yul=C.bin", "--bin", "--std-root"])
+        .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std"))
+        .arg("-o")
+        .arg(&out)
+        .arg(&input)
+        .output()
+        .unwrap();
+    assert!(!result.status.success());
+    let stderr = String::from_utf8_lossy(&result.stderr);
+    assert!(stderr.contains("multiple outputs would write"), "{stderr}");
+    assert!(!out.exists(), "nothing is written when one output collides");
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn cli_attributes_cross_file_add_in_creation_and_runtime() {
+    let dir = temp_dir("cross-file-debug");
+    fs::create_dir_all(&dir).expect("create temp dir");
+    let (main, ops) = (ethdebug_output::CROSS_MAIN, ethdebug_output::CROSS_OPS);
+    fs::write(dir.join("main.sol"), main).expect("write main.sol");
+    fs::write(dir.join("ops.sol"), ops).expect("write ops.sol");
+    let anchor = "y := add(x, 13)";
+    let start = ops.find(anchor).expect("offset in the written file");
+    let end = start + anchor.len();
+    // A contract-file ID substitution would still pass a bounds check.
+    assert!(end <= main.len());
+    let std_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std");
+
+    let out = dir.join("out");
+    let result = Command::new(env!("CARGO_BIN_EXE_solcore-driver"))
+        .current_dir(&dir)
+        .args(["--ethdebug", "--opt-level", "0", "-o"])
+        .arg(&out)
+        .arg("--std-root")
+        .arg(&std_root)
+        .arg("main.sol")
+        .output()
+        .expect("run driver");
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let debug = ethdebug_output::Output { dir: out.clone() };
+    let compilation = debug.compilation();
+    assert_eq!(debug.resources()["compilation"], compilation);
+    let source = |name: &str, contents: &str| {
+        let entry = compilation["sources"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|source| source["path"] == name)
+            .expect(name);
+        assert_eq!(entry["contents"], contents);
+        entry["id"].as_u64().expect("numeric source ID")
+    };
+    let main_id = source("main.sol", main);
+    let ops_id = source("ops.sol", ops);
+    assert_ne!(main_id, ops_id);
+
+    let expected = serde_json::json!({
+        "source": {"id": ops_id},
+        "range": {"offset": start, "length": anchor.len()}
+    });
+    for (file, environment, bin) in debug
+        .programs("CrossFile")
+        .into_iter()
+        .zip(["create", "call"])
+        .map(|((program, bin), environment)| (program, environment, bin))
+    {
+        let program = file;
+        assert_eq!(program["environment"], environment);
+        assert_eq!(program["compilation"]["id"], compilation["id"]);
+        let def_start = main.find("contract CrossFile").unwrap();
+        assert_eq!(
+            program["contract"]["definition"],
+            serde_json::json!({
+                "source": {"id": main_id},
+                "range": {"offset": def_start, "length": main.trim_end().len() - def_start}
+            })
+        );
+
+        // The helper's ADD is the only ADD that follows a push of 13 in the
+        // bytecode, whatever the program says.
+        let mut add_pcs = Vec::new();
+        let mut pushes_13 = false;
+        for instruction in decode(&bin) {
+            if instruction.opcode == 0x01 && pushes_13 {
+                add_pcs.push(instruction.pc as u64);
+            }
+            pushes_13 = instruction
+                .immediate
+                .iter()
+                .skip_while(|&&byte| byte == 0)
+                .eq([13].iter());
+        }
+        let [pc] = add_pcs.as_slice() else {
+            panic!("{environment}: expected exactly one ADD after a push of 13, found {add_pcs:?}");
+        };
+        let instructions = program["instructions"].as_array().unwrap();
+        let rows: Vec<_> = instructions
+            .iter()
+            .filter(|row| row["offset"] == *pc)
+            .collect();
+        let [add] = rows.as_slice() else {
+            panic!(
+                "{environment}: expected one row at offset {pc}, found {}",
+                rows.len()
+            );
+        };
+        assert_eq!(add["operation"]["mnemonic"], "ADD", "{environment}");
+        assert_eq!(add["context"]["code"], expected, "{environment}");
+        assert!(
+            instructions.iter().all(|row| row["offset"] == *pc
+                || row["operation"]["mnemonic"] != "ADD"
+                || row["context"]["code"] != expected),
+            "{environment}: another ADD claims the helper's source range"
+        );
+        // The range is in bytes of the file as written (it contains a
+        // multi-byte character before the target) and covers the statement.
+        let range = &add["context"]["code"]["range"];
+        let start = range["offset"].as_u64().unwrap() as usize;
+        let end = start + range["length"].as_u64().unwrap() as usize;
+        assert_eq!((start, end), (153, 168), "{environment}");
+        assert_eq!(&ops[start..end], "y := add(x, 13)", "{environment}");
+    }
 
     let _ = fs::remove_dir_all(&dir);
 }

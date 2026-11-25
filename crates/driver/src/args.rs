@@ -6,6 +6,14 @@ use std::{
 
 const DEFAULT_DIAGNOSTIC_WIDTH: usize = 100;
 
+/// The spellings of `--opt-level` and the levels they name.
+pub(crate) const OPT_LEVELS: [(&str, sonatina::OptLevel); 4] = [
+    ("0", sonatina::OptLevel::O0),
+    ("1", sonatina::OptLevel::O1),
+    ("2", sonatina::OptLevel::O2),
+    ("s", sonatina::OptLevel::Os),
+];
+
 pub(crate) enum ParsedArgs {
     Run(Box<Args>),
     StandardJson,
@@ -45,6 +53,12 @@ pub(crate) struct Args {
     pub(crate) emit_yul: Option<EmitTarget>,
     /// Optional Sonatina IR output target.
     pub(crate) emit_sonatina: Option<EmitTarget>,
+    /// Writes `<contract>.bin` and `<contract>.bin-runtime` for each contract.
+    pub(crate) emit_bin: bool,
+    /// Optimization level of the bytecode compiled for `--bin` and `--ethdebug`.
+    pub(crate) opt_level: sonatina::OptLevel,
+    /// Writes ethdebug debug info for each contract into the output directory.
+    pub(crate) ethdebug: bool,
     /// Optional top-level Yul object selection for strict-assembly output.
     pub(crate) emit_yul_object: Option<String>,
     /// Resource limits used by monomorphization and partial evaluation.
@@ -113,6 +127,9 @@ pub(crate) fn parse_args(args: Vec<OsString>) -> Result<ParsedArgs, String> {
     let mut emit_hull = None;
     let mut emit_yul = None;
     let mut emit_sonatina = None;
+    let mut emit_bin = false;
+    let mut opt_level = None;
+    let mut ethdebug = false;
     let mut emit_yul_object = None;
     let mut specialize_options = specialize::SpecializeOptions::default();
     let mut iter = args.into_iter();
@@ -246,6 +263,16 @@ pub(crate) fn parse_args(args: Vec<OsString>) -> Result<ParsedArgs, String> {
             Some("--emit-sonatina") => {
                 emit_sonatina = Some(EmitTarget::Stdout);
             }
+            Some("--bin") => {
+                emit_bin = true;
+            }
+            Some("--opt-level") => {
+                let value = next_string_option_value(&mut iter, "--opt-level", "0|1|2|s")?;
+                opt_level = Some(parse_opt_level(&value)?);
+            }
+            Some("--ethdebug") => {
+                ethdebug = true;
+            }
             Some("--emit-yul-object") => {
                 let value = next_string_option_value(&mut iter, "--emit-yul-object", "NAME")?;
                 emit_yul_object = Some(value);
@@ -271,6 +298,9 @@ pub(crate) fn parse_args(args: Vec<OsString>) -> Result<ParsedArgs, String> {
             Some(option @ ("--external-lib" | "--lib")) => {
                 let value = next_os_option_value(&mut iter, option, "NAME=PATH")?;
                 external_roots.push(parse_external_root(value)?);
+            }
+            Some(arg) if arg.starts_with("--opt-level=") => {
+                opt_level = Some(parse_opt_level(&arg["--opt-level=".len()..])?);
             }
             Some(arg) if arg.starts_with("--emit-yul-object=") => {
                 let value = &arg["--emit-yul-object=".len()..];
@@ -400,6 +430,20 @@ pub(crate) fn parse_args(args: Vec<OsString>) -> Result<ParsedArgs, String> {
     if emit_yul_object.is_some() && emit_yul.is_none() {
         return Err("--emit-yul-object requires --emit-yul".to_owned());
     }
+    if ethdebug && output_dir.is_none() {
+        return Err("--ethdebug requires --output-dir".to_owned());
+    }
+    // A debugger needs the bytecode the debug info describes.
+    let emit_bin = emit_bin || ethdebug;
+    if opt_level.is_some() && !emit_bin {
+        return Err("--opt-level requires --bin or --ethdebug".to_owned());
+    }
+    // Sonatina's late optimized block merging can keep one branch's origin
+    // for instructions shared by several branches with different origins.
+    let opt_level = opt_level.unwrap_or_default();
+    if ethdebug && opt_level != sonatina::OptLevel::O0 {
+        return Err("--ethdebug requires --opt-level 0 for accurate source locations".to_owned());
+    }
     Ok(ParsedArgs::Run(Box::new(Args {
         input,
         main_root,
@@ -416,6 +460,9 @@ pub(crate) fn parse_args(args: Vec<OsString>) -> Result<ParsedArgs, String> {
         emit_hull,
         emit_yul,
         emit_sonatina,
+        emit_bin,
+        opt_level,
+        ethdebug,
         emit_yul_object,
         specialize_options,
     })))
@@ -575,6 +622,13 @@ fn parse_positive_limit(option: &str, value: &str) -> Result<usize, String> {
     Ok(limit)
 }
 
+fn parse_opt_level(value: &str) -> Result<sonatina::OptLevel, String> {
+    OPT_LEVELS
+        .iter()
+        .find_map(|&(name, level)| (name == value).then_some(level))
+        .ok_or_else(|| format!("--opt-level must be one of 0, 1, 2, or s, got `{value}`"))
+}
+
 fn parse_diagnostic_format(value: &str) -> Result<DiagnosticFormat, String> {
     match value {
         "human" => Ok(DiagnosticFormat::Human),
@@ -632,6 +686,15 @@ Options:
   --emit-hull[=FILE]                 Emit Hull to stdout or FILE
   --emit-yul[=FILE]                  Emit Yul strict assembly to stdout or FILE
   --emit-sonatina[=FILE]             Emit Sonatina IR to stdout or FILE
+  --bin                              Compile through Sonatina and write <contract>.bin and
+                                      <contract>.bin-runtime (hex) for each contract
+  --opt-level 0|1|2|s                Optimization level for --bin and --ethdebug (default: 0)
+  --ethdebug                         Write ethdebug debug info and the .bin files for each contract
+                                      into --output-dir: <contract>_ethdebug.json (creation),
+                                      <contract>_ethdebug-runtime.json, ethdebug_resources.json and
+                                      ethdebug_compilation.json.
+                                      Requires --opt-level 0 because
+                                      optimizations can merge code with different source locations
   --emit-yul-object NAME             Select one top-level Yul object for --emit-yul
   --pe-fuel N                        Set partial-evaluation total work fuel (default: 8192)
   --pe-depth N                       Set specialization/evaluator depth (default: 128)
