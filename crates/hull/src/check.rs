@@ -369,8 +369,8 @@ impl<'db> Env<'db> {
 
     fn check_stmt(&mut self, stmt: &Stmt<'db>) {
         match &stmt.kind {
-            StmtKind::Let { name, ty } => self.insert_var(name.as_str().to_owned(), ty.clone()),
-            StmtKind::Assign { lhs, rhs } => {
+            StmtKind::Let { name, ty, .. } => self.insert_var(name.as_str().to_owned(), ty.clone()),
+            StmtKind::Assign { lhs, rhs, .. } => {
                 let lhs_ty = self.check_expr(lhs);
                 let rhs_ty = self.check_expr(rhs);
                 self.expect_type(lhs.span, &lhs_ty, &rhs_ty);
@@ -410,6 +410,7 @@ impl<'db> Env<'db> {
                 target,
                 scrutinee,
                 alts,
+                ..
             } => {
                 let scrutinee_ty = self.check_expr(scrutinee);
                 self.expect_type(scrutinee.span, target, &scrutinee_ty);

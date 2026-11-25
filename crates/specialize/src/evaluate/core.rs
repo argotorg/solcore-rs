@@ -1555,6 +1555,28 @@ impl<'db> Evaluator<'db> {
         expr: MonoExpr<'db>,
     ) -> MonoExpr<'db> {
         let span = expr.span;
+        let mut out = self.eval_expr_inner(env, comptime_env, expr);
+        // A value computed at compile time executes nothing at run time. It is
+        // located at the expression that asked for it, not at the text that
+        // produced it. Lambdas and closure values keep their own location,
+        // since the lifted function is the lambda's run-time code.
+        if out.span != span && self.is_plain_data_value(&out) {
+            locate_plain_value(&mut out, span);
+        }
+        out
+    }
+
+    fn is_plain_data_value(&self, expr: &MonoExpr<'db>) -> bool {
+        self.expr_is_known_value(expr) && !self.value_contains_callable(expr)
+    }
+
+    fn eval_expr_inner(
+        &mut self,
+        env: &VEnv<'db>,
+        comptime_env: &CEnv,
+        expr: MonoExpr<'db>,
+    ) -> MonoExpr<'db> {
+        let span = expr.span;
         let ty = expr.ty;
         match expr.kind {
             MonoExprKind::Var(id) => env
@@ -2874,7 +2896,7 @@ impl<'db> Evaluator<'db> {
     fn has_recursive_inline_frame(&self, name: &str, args: &[MonoExpr<'db>]) -> bool {
         self.inline_stack
             .iter()
-            .any(|frame| frame.name == name && frame.args == args)
+            .any(|frame| frame.name == name && same_values(&frame.args, args))
     }
 
     fn inline_chain_is_comptime(&self, current_frame_comptime: bool) -> bool {
@@ -3529,6 +3551,43 @@ fn yul_stmts_have_leave(stmts: &[YulStmt<'_>]) -> bool {
         | YulStmtKind::Continue
         | YulStmtKind::Error => false,
     })
+}
+
+/// Locates every node of a plain data value at `span`. The parts of a
+/// constructor or tuple value are computed at compile time together with it.
+fn locate_plain_value<'db>(expr: &mut MonoExpr<'db>, span: Span<'db>) {
+    expr.span = span;
+    match &mut expr.kind {
+        MonoExprKind::Tuple(parts) | MonoExprKind::Con { args: parts, .. } => {
+            for part in parts {
+                locate_plain_value(part, span);
+            }
+        }
+        MonoExprKind::TypeAnnot { expr, .. } => locate_plain_value(expr, span),
+        _ => {}
+    }
+}
+
+/// Whether two expression lists denote the same values, wherever the values are
+/// located. A plain data value is compared by shape and type; any other
+/// expression must be equal.
+fn same_values<'db>(a: &[MonoExpr<'db>], b: &[MonoExpr<'db>]) -> bool {
+    a.len() == b.len() && a.iter().zip(b).all(|(a, b)| same_value(a, b))
+}
+
+fn same_value<'db>(a: &MonoExpr<'db>, b: &MonoExpr<'db>) -> bool {
+    use MonoExprKind::{Con, Tuple, TypeAnnot};
+    a.ty == b.ty
+        && match (&a.kind, &b.kind) {
+            (Tuple(a), Tuple(b)) => same_values(a, b),
+            (Con { ctor: c, args: a }, Con { ctor: d, args: b }) => {
+                (&c.name, c.ty) == (&d.name, d.ty) && same_values(a, b)
+            }
+            (TypeAnnot { expr: a, ty: s }, TypeAnnot { expr: b, ty: t }) => {
+                s == t && same_value(a, b)
+            }
+            (a, b) => a == b,
+        }
 }
 
 fn materialize_comptime_value<'db>(db: &'db dyn Db, expr: MonoExpr<'db>) -> MonoExpr<'db> {

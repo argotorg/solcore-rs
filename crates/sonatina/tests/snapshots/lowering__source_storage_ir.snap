@@ -35,10 +35,10 @@ func private %solcore_fn_12_object0_2einit_37_main_5fStorageContract_5f_5fstart_
         evm_revert 28.i256 4.i256;
 
     block4:
-        v24.i256 = sym_size &StorageContract;
-        v25.i256 = sym_addr &StorageContract;
-        evm_code_copy 0.i256 v25 v24;
-        evm_return 0.i256 v24;
+        v23.i256 = sym_size &StorageContract;
+        v24.i256 = sym_addr &StorageContract;
+        evm_code_copy 0.i256 v24 v23;
+        evm_return 0.i256 v23;
 }
 
 func public %solcore_entry_12_object0_2einit() {

@@ -1,9 +1,17 @@
 use std::{
+    collections::BTreeSet,
     fs,
     path::{Path, PathBuf},
     process::Command,
     time::{SystemTime, UNIX_EPOCH},
 };
+
+#[path = "support/ethdebug_output.rs"]
+mod ethdebug_output;
+#[path = "support/ethdebug_schemas.rs"]
+mod ethdebug_schemas;
+use ethdebug_output::{decode, type_ids};
+use ethdebug_schemas::{PinnedSchemas, SchemaSet};
 
 #[test]
 fn cli_prints_help_and_version() {
@@ -635,11 +643,25 @@ fn copied_binary_resolves_std_next_to_current_exe() {
     let input = input_dir.join("main.sol");
     write_fake_std_importer(&input);
 
-    let output = Command::new(&copied_driver)
-        .arg(&input)
-        .env_remove("SOLCORE_STD")
-        .output()
-        .expect("run copied driver");
+    // Another test thread can fork while `fs::copy` holds the destination open for writing. The
+    // forked child keeps that descriptor until it execs, and running the copy in that window
+    // fails with ETXTBSY, so the run is retried for up to a second.
+    let mut attempts = 0;
+    let output = loop {
+        let result = Command::new(&copied_driver)
+            .arg(&input)
+            .env_remove("SOLCORE_STD")
+            .output();
+        match result {
+            Err(error)
+                if error.kind() == std::io::ErrorKind::ExecutableFileBusy && attempts < 50 =>
+            {
+                attempts += 1;
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            result => break result.expect("run copied driver"),
+        }
+    };
 
     let _ = fs::remove_dir_all(&dir);
 
@@ -835,6 +857,825 @@ contract C {
     assert!(abi.contains("\"name\": \"main\""), "{abi}");
     assert!(abi.contains("\"type\": \"function\""), "{abi}");
     assert!(abi.contains("\"type\": \"uint256\""), "{abi}");
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn cli_emits_bytecode_and_ethdebug_files() {
+    let dir = temp_dir("emit-bin");
+    fs::create_dir_all(&dir).expect("create temp dir");
+    let input = dir.join("main.sol");
+    fs::write(&input, ethdebug_output::SINGLE).expect("write source");
+    let std_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std");
+    let driver = |args: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_solcore-driver"))
+            .args(args)
+            .arg("--std-root")
+            .arg(&std_root)
+            .arg(&input)
+            .output()
+            .expect("run driver")
+    };
+
+    // Bytecode.
+    let bin_dir = dir.join("bin");
+    let output = driver(&["--bin", "--opt-level", "2", "-o", bin_dir.to_str().unwrap()]);
+    assert!(
+        output.status.success(),
+        "driver failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    for file in ["C.bin", "C.bin-runtime"] {
+        let hex = fs::read_to_string(bin_dir.join(file)).expect("read bytecode");
+        assert!(
+            !hex.is_empty() && hex.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')),
+            "{file}: {hex}"
+        );
+    }
+
+    let rejected = driver(&["--opt-level", "2"]);
+    assert_eq!(rejected.status.code(), Some(2));
+    assert!(
+        String::from_utf8_lossy(&rejected.stderr)
+            .contains("--opt-level requires --bin or --ethdebug")
+    );
+
+    // Stock ethdebug files next to the bytecode.
+    let rejected = driver(&["--ethdebug"]);
+    assert_eq!(rejected.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&rejected.stderr).contains("--ethdebug requires --output-dir"));
+
+    let debug_dir = dir.join("debug");
+    for level in ["1", "2", "s"] {
+        let rejected = driver(&[
+            "--ethdebug",
+            "--opt-level",
+            level,
+            "-o",
+            debug_dir.to_str().unwrap(),
+        ]);
+        assert_eq!(rejected.status.code(), Some(2));
+        assert!(
+            String::from_utf8_lossy(&rejected.stderr).contains("--ethdebug requires --opt-level 0")
+        );
+    }
+    assert!(!debug_dir.exists());
+
+    let output = driver(&["--ethdebug", "-o", debug_dir.to_str().unwrap()]);
+    assert!(
+        output.status.success(),
+        "driver failed\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let debug = ethdebug_output::Output {
+        dir: debug_dir.clone(),
+    };
+    for file in ["C.bin", "C.bin-runtime"] {
+        assert!(debug_dir.join(file).is_file(), "{file}");
+    }
+    let resources = debug.resources();
+    assert_eq!(resources["compilation"], debug.compilation());
+    let main = debug.source_id("main.sol");
+
+    for (file, environment) in [
+        ("C_ethdebug.json", "create"),
+        ("C_ethdebug-runtime.json", "call"),
+    ] {
+        let program = debug.json(file);
+        assert_eq!(program["environment"], environment);
+        assert_eq!(program["compilation"]["id"], resources["compilation"]["id"]);
+    }
+    let runtime = debug.json("C_ethdebug-runtime.json");
+    let instructions = runtime["instructions"].as_array().unwrap();
+    assert!(
+        instructions
+            .iter()
+            .any(|instruction| instruction["context"]["code"]["source"]["id"] == main)
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// Validates the emitted ethdebug documents against the upstream schemas
+/// (see `support/ethdebug_schemas.rs`): the released 0.1.0-draft.3 set with its
+/// type schemas replaced by those of ethdebug/format pull request #424. Without
+/// the schemas the validation is skipped, and the version stamps are still
+/// checked.
+#[test]
+fn cli_ethdebug_files_validate_against_pinned_schemas() {
+    const VERSION: &str = "0.1.0-draft.3";
+    let std_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std");
+    let dir = temp_dir("ethdebug-schemas");
+    fs::create_dir_all(&dir).expect("create temp dir");
+
+    // The single-contract program of the first ethdebug test.
+    let single = dir.join("single");
+    fs::create_dir_all(&single).unwrap();
+    fs::write(single.join("main.sol"), ethdebug_output::SINGLE).unwrap();
+    // The cross-file program of the attribution test.
+    let cross = dir.join("cross");
+    fs::create_dir_all(&cross).unwrap();
+    fs::write(cross.join("main.sol"), ethdebug_output::CROSS_MAIN).unwrap();
+    fs::write(cross.join("ops.sol"), ethdebug_output::CROSS_OPS).unwrap();
+
+    let schemas = PinnedSchemas::load(SchemaSet::DraftTypes);
+    let mut documents = 0;
+    let mut sample = None;
+    for source_dir in [&single, &cross] {
+        let out = source_dir.join("out");
+        let result = Command::new(env!("CARGO_BIN_EXE_solcore-driver"))
+            .current_dir(source_dir)
+            .args(["--ethdebug", "--opt-level", "0", "-o"])
+            .arg(&out)
+            .arg("--std-root")
+            .arg(&std_root)
+            .arg("main.sol")
+            .output()
+            .expect("run driver");
+        assert!(
+            result.status.success(),
+            "driver failed\nstderr:\n{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+
+        let mut names: Vec<String> = fs::read_dir(&out)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+            .filter(|name| name.ends_with(".json"))
+            .collect();
+        names.sort();
+        for name in names {
+            let schema = if name == "ethdebug_resources.json" {
+                "schema:ethdebug/format/info/resources"
+            } else if name == "ethdebug_compilation.json" {
+                "schema:ethdebug/format/materials/compilation"
+            } else {
+                assert!(
+                    name.ends_with("_ethdebug.json") || name.ends_with("_ethdebug-runtime.json"),
+                    "unexpected output file {name}"
+                );
+                "schema:ethdebug/format/program"
+            };
+            let text = fs::read_to_string(out.join(&name)).expect(&name);
+            let document: serde_json::Value = serde_json::from_str(&text).expect(&name);
+            if let Some(schemas) = &schemas {
+                schemas
+                    .validate(schema, &document)
+                    .unwrap_or_else(|error| panic!("{name} does not match {schema}:\n{error}"));
+            }
+            // Programs and the resources document carry a stamp; the
+            // compilation is embedded in them and has none of its own.
+            if name != "ethdebug_compilation.json" {
+                let stamp = &document["ethdebug"];
+                assert_eq!(
+                    stamp["schema"],
+                    schema.trim_start_matches("schema:"),
+                    "{name}"
+                );
+                assert_eq!(stamp["version"], VERSION, "{name}");
+            }
+            if name.ends_with("_ethdebug-runtime.json") && sample.is_none() {
+                sample = Some((name.clone(), document));
+            }
+            documents += 1;
+        }
+    }
+    // Two programs per contract, plus resources and compilation per build.
+    assert_eq!(documents, 2 * (2 + 2), "validated document count");
+
+    // Negative controls: the schemas must be able to reject a program.
+    let (name, program) = sample.expect("a runtime program was found");
+    if let Some(schemas) = &schemas {
+        let mut extra = program.clone();
+        extra["unexpectedField"] = serde_json::json!(true);
+        assert!(
+            schemas
+                .validate("schema:ethdebug/format/program", &extra)
+                .is_err(),
+            "{name} with an unknown top-level field was accepted"
+        );
+        let mut missing = program.clone();
+        missing.as_object_mut().unwrap().remove("instructions");
+        assert!(
+            schemas
+                .validate("schema:ethdebug/format/program", &missing)
+                .is_err(),
+            "{name} without `instructions` was accepted"
+        );
+    }
+    assert_type_sets_differ();
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// `tests/ethdebug/storage-fields` compiled with `--ethdebug`, and its text.
+fn storage_fields() -> (ethdebug_output::Output, String) {
+    let dir = ethdebug_output::repo_root().join("tests/ethdebug/storage-fields");
+    let text = fs::read_to_string(dir.join("main.sol")).unwrap();
+    (ethdebug_output::compile(&dir, &["--ethdebug"]), text)
+}
+
+/// The identifier of the type table entry of the field `balances`.
+fn mapping_id(resources: &serde_json::Value) -> String {
+    resources["types"]
+        .as_object()
+        .unwrap()
+        .iter()
+        .find(|(_, ty)| ty["label"] == "mapping(address => uint256)")
+        .map(|(id, _)| id.clone())
+        .unwrap()
+}
+
+/// Both files that carry the compilation name the draft of the type objects.
+#[test]
+fn cli_ethdebug_names_the_draft_of_the_type_objects() {
+    let note = format!(
+        "ethdebug/format#424 at {}",
+        ethdebug_schemas::TYPES_DRAFT_COMMIT
+    );
+    let (output, _) = storage_fields();
+    let resources = output.resources();
+    let expected_settings = serde_json::json!({ "ethdebugTypes": note });
+    assert_eq!(output.compilation()["settings"], expected_settings);
+    assert_eq!(resources["compilation"]["settings"], expected_settings);
+    assert_eq!(resources["compilation"], output.compilation());
+}
+
+/// The type table of `storage-fields`: the mapping field's entry, and the ids
+/// that the programs name.
+#[test]
+fn cli_ethdebug_writes_a_mapping_as_a_table_entry_that_the_fields_name() {
+    let (output, _) = storage_fields();
+    let resources = output.resources();
+    // Elementary types are written in place; a mapping is a table entry that the
+    // fields name by id, and every id resolves.
+    let types = resources["types"].as_object().unwrap();
+    let entry = |label: &str| -> &serde_json::Value {
+        let mut found = types.values().filter(|ty| ty["label"] == label);
+        let ty = found.next().unwrap_or_else(|| panic!("no type `{label}`"));
+        assert!(found.next().is_none(), "two types `{label}`");
+        ty
+    };
+    assert_eq!(
+        *entry("mapping(address => uint256)"),
+        serde_json::json!({
+            "kind": "mapping",
+            "label": "mapping(address => uint256)",
+            "contains": {
+                "key": { "type": { "kind": "address", "label": "address" } },
+                "value": { "type": { "kind": "number", "label": "uint256" } },
+            },
+        })
+    );
+    let mapping_id = mapping_id(&resources);
+    let create = output.json("StorageFields_ethdebug.json");
+    let runtime = output.json("StorageFields_ethdebug-runtime.json");
+    let mut referenced = Vec::new();
+    for document in [&resources, &create, &runtime] {
+        type_ids(document, &mut referenced);
+    }
+    assert!(referenced.contains(&mapping_id));
+    for id in &referenced {
+        assert!(types.contains_key(id), "`{id}` names no type");
+    }
+}
+
+/// The fields of `storage-fields` in the runtime program: the context lists them
+/// with their declarations, every instruction lists them without, the mapping's
+/// entries are reached through a template, and deployment lists nothing.
+#[test]
+fn cli_ethdebug_lists_the_storage_fields_at_every_instruction() {
+    let (output, text) = storage_fields();
+    let resources = output.resources();
+    let create = output.json("StorageFields_ethdebug.json");
+    let runtime = output.json("StorageFields_ethdebug-runtime.json");
+    let mapping_id = mapping_id(&resources);
+    // The runtime program's context lists the four fields with their
+    // declarations, and every instruction lists them first, without. The slots
+    // are the sum of the sizes std gives the fields before: 1, 1 and 1.
+    let main = output.source_id("main.sol");
+    let declaration = |identifier: &str| {
+        let offset = text.find(&format!("    {identifier}:")).unwrap() + 4;
+        serde_json::json!({
+            "source": { "id": main },
+            "range": { "offset": offset, "length": identifier.len() },
+        })
+    };
+    let count = serde_json::json!({
+        "identifier": "count",
+        "type": { "kind": "number", "label": "uint256" },
+        "pointer": { "name": "count", "location": "storage", "slot": 0 },
+    });
+    let untouched = serde_json::json!({
+        "identifier": "untouched",
+        "type": { "kind": "number", "label": "uint256" },
+        "pointer": { "name": "untouched", "location": "storage", "slot": 1 },
+    });
+    let label = serde_json::json!({
+        "identifier": "label",
+        "type": { "kind": "string", "label": "string" },
+    });
+    let balances = serde_json::json!({
+        "identifier": "balances",
+        "type": { "id": mapping_id },
+    });
+    let per_instruction = serde_json::json!([count, untouched, label, balances]);
+    let with_declaration = |variable: &serde_json::Value| {
+        let mut variable = variable.clone();
+        variable["declaration"] = declaration(variable["identifier"].as_str().unwrap());
+        variable
+    };
+    let with_declarations = [&count, &untouched, &label, &balances].map(with_declaration);
+    let program_level = serde_json::json!({ "variables": with_declarations });
+    assert_eq!(runtime["context"], program_level);
+    for field in ["count", "untouched", "label", "balances"] {
+        let range = &declaration(field)["range"];
+        let offset = range["offset"].as_u64().unwrap() as usize;
+        assert_eq!(&text[offset..offset + field.len()], field);
+    }
+    let instructions = runtime["instructions"].as_array().unwrap();
+    assert!(!instructions.is_empty());
+    for instruction in instructions {
+        let variables = instruction["context"]["variables"]
+            .as_array()
+            .expect("variables");
+        assert_eq!(
+            serde_json::json!(&variables[..4]),
+            per_instruction,
+            "{instruction}"
+        );
+    }
+    // The mapping's entries are reached through a template named for the
+    // contract and the field; the key is the word the mapping hashes with the
+    // slot of the field, here the fourth.
+    assert_eq!(
+        resources["pointers"],
+        serde_json::json!({
+            "solcore$StorageFields$balances$entry": {
+                "expect": ["key"],
+                "for": {
+                    "name": "entry",
+                    "location": "storage",
+                    "slot": { "~keccak256": [{ "~wordsized": 3 }, { "~wordsized": "key" }] },
+                },
+            },
+        })
+    );
+    // Deployment is not recorded, so the creation program lists nothing.
+    assert!(create.get("context").is_none());
+    assert!(
+        create["instructions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|instruction| instruction["context"].get("variables").is_none())
+    );
+}
+
+/// The parameters and locals in scope at the statements of `storage-fields`.
+#[test]
+fn cli_ethdebug_lists_the_parameters_and_locals_in_scope() {
+    let (output, text) = storage_fields();
+    let resources = output.resources();
+    let types = resources["types"].as_object().unwrap();
+    let main = output.source_id("main.sol");
+    let runtime = output.json("StorageFields_ethdebug-runtime.json");
+    let instructions = runtime["instructions"].as_array().unwrap();
+    // The parameters and locals in scope after the opcodes of named statements,
+    // as (identifier, declaration offset, type label). An opcode lists what holds
+    // after it ran, so the opcode that completes a `let` already lists the new
+    // binding and the opcodes before it do not.
+    type Local = (String, Option<u64>, Option<String>);
+    let label_of = |variable: &serde_json::Value| -> Option<String> {
+        let ty = variable.get("type")?;
+        let ty = match ty.get("id").and_then(|id| id.as_str()) {
+            Some(id) => &types[id],
+            None => ty,
+        };
+        ty["label"].as_str().map(str::to_owned)
+    };
+    let locals = |instruction: &serde_json::Value| -> BTreeSet<Local> {
+        instruction["context"]["variables"]
+            .as_array()
+            .expect("variables")
+            .iter()
+            .filter(|variable| variable["declaration"]["source"]["id"] == main)
+            .map(|variable| {
+                (
+                    variable["identifier"].as_str().unwrap().to_owned(),
+                    variable["declaration"]["range"]["offset"].as_u64(),
+                    label_of(variable),
+                )
+            })
+            .collect()
+    };
+    let statement = |needle: &str| -> Vec<&serde_json::Value> {
+        let start = text.find(needle).unwrap_or_else(|| panic!("`{needle}`")) as u64;
+        let end = start + needle.len() as u64;
+        let found: Vec<_> = instructions
+            .iter()
+            .filter(|instruction| {
+                let code = &instruction["context"]["code"];
+                let range = &code["range"];
+                code["source"]["id"] == main
+                    && range["offset"].as_u64().is_some_and(|offset| {
+                        offset >= start && offset + range["length"].as_u64().unwrap() <= end
+                    })
+            })
+            .collect();
+        assert!(!found.is_empty(), "no opcode of `{needle}`");
+        found
+    };
+    let local = |name: &str, near: &str, shift: usize, label: &str| -> Local {
+        let at = text.find(near).unwrap_or_else(|| panic!("`{near}`")) + shift;
+        assert_eq!(&text[at..at + name.len()], name, "{near}");
+        (name.to_owned(), Some(at as u64), Some(label.to_owned()))
+    };
+    let total_first = local("total", "let total: uint256 = count", 4, "uint256");
+    let total_second = local(
+        "total",
+        "let total: uint256 = total + uint256(1);",
+        4,
+        "uint256",
+    );
+    let bonus = local("bonus", "let bonus", 4, "uint256");
+    // Every opcode of a statement that only reads and assigns lists the same
+    // bindings, whichever of the opcodes it is, except a `JUMP` or `JUMPI` (the
+    // opcode after it may run in another frame or past the end of a scope, so it
+    // lists no local) and,
+    // when `exit` is given, the last opcode, which is followed by code outside
+    // the statement's block.
+    let every_opcode = |needle: &str, expected: &[&Local], exit: Option<&[&Local]>| {
+        let set = |locals: &[&Local]| -> BTreeSet<Local> {
+            locals.iter().map(|local| (*local).clone()).collect()
+        };
+        let expected = set(expected);
+        let opcodes = statement(needle);
+        let mut with_locals = 0;
+        for (at, instruction) in opcodes.iter().enumerate() {
+            let listed = locals(instruction);
+            if let (Some(exit), true) = (exit, at + 1 == opcodes.len()) {
+                assert_eq!(listed, set(exit), "`{needle}`: {instruction}");
+                continue;
+            }
+            if listed.is_empty() {
+                assert!(
+                    ["JUMP", "JUMPI"]
+                        .contains(&instruction["operation"]["mnemonic"].as_str().unwrap()),
+                    "{instruction}"
+                );
+            } else {
+                assert_eq!(listed, expected, "`{needle}`: {instruction}");
+                with_locals += 1;
+            }
+        }
+        assert!(with_locals > 0, "`{needle}`");
+    };
+    every_opcode(
+        "total = total + bonus;",
+        &[&total_first, &bonus],
+        Some(&[&total_first]),
+    );
+    // The assignment ends the block of the `if`: the opcode that completes it
+    // already lists what holds outside the block, without `bonus`.
+    // The shadowing initializer: the old `total` while it runs, the new one once
+    // it completes, and never both. `bonus` is out of scope after the `if`.
+    let shadowing = statement("let total: uint256 = total + uint256(1);");
+    assert_eq!(locals(shadowing[0]), BTreeSet::from([total_first.clone()]));
+    let last = locals(shadowing[shadowing.len() - 1]);
+    assert_eq!(last, BTreeSet::from([total_second.clone()]), "{last:?}");
+    for instruction in &shadowing {
+        let listed = locals(instruction);
+        assert!(!listed.contains(&bonus), "{instruction}");
+        assert!(
+            !(listed.contains(&total_first) && listed.contains(&total_second)),
+            "{instruction}"
+        );
+    }
+    // Pattern binders and parameters, once per specialized copy of `first`.
+    let p = |label: &str| local("p", "(p: Pair<a, b>)", 1, label);
+    let x = |label: &str| local("x", "Pair(x, y)", 5, label);
+    let y = |label: &str| local("y", "Pair(x, y)", 8, label);
+    let copies: BTreeSet<BTreeSet<Local>> = statement("return x;")
+        .into_iter()
+        .map(&locals)
+        .filter(|listed| !listed.is_empty())
+        .collect();
+    let copy = |p_label: &str, element: &str| {
+        BTreeSet::from([p(p_label), x(element), y(&element_of(p_label))])
+    };
+    fn element_of(label: &str) -> String {
+        // `Pair<a, b>`: `y` has the type of `b`.
+        label
+            .trim_start_matches("Pair<")
+            .trim_end_matches('>')
+            .split(", ")
+            .nth(1)
+            .unwrap()
+            .to_owned()
+    }
+    assert_eq!(
+        copies,
+        BTreeSet::from([
+            copy("Pair<word, word>", "word"),
+            copy("Pair<bool, uint256>", "bool"),
+        ])
+    );
+    // A type with three constructors has no description, so `s` has no type.
+    let shape: Local = (
+        "s".to_owned(),
+        Some(text.find("(s: Shape)").unwrap() as u64 + 1),
+        None,
+    );
+    let lo = local("lo", "Seg(lo, hi)", 4, "uint256");
+    let hi = local("hi", "Seg(lo, hi)", 8, "uint256");
+    every_opcode("return hi - lo;", &[&shape, &lo, &hi], None);
+    // A lambda lists its own parameter and not the `total` it captures.
+    let v = local("v", "lam (v: uint256)", 5, "uint256");
+    for instruction in statement("return v + total;") {
+        let listed = locals(instruction);
+        assert!(
+            listed.is_empty() || listed == BTreeSet::from([v.clone()]),
+            "{instruction}"
+        );
+    }
+    // Locals that were bound by the time of `return count;`.
+    let after_all = statement("return count;");
+    let at_return = locals(after_all[0]);
+    let names: BTreeSet<&str> = at_return.iter().map(|local| local.0.as_str()).collect();
+    assert_eq!(names, BTreeSet::from(["total", "w", "flag", "width"]));
+    assert!(at_return.contains(&total_second), "{at_return:?}");
+    // Compile-time and callable bindings are erased before the program is made.
+    for instruction in instructions {
+        for variable in instruction["context"]["variables"].as_array().unwrap() {
+            let name = variable["identifier"].as_str().unwrap();
+            assert!(name != "seed" && name != "f", "{instruction}");
+        }
+    }
+}
+
+/// Parameters and locals of one word have a stack pointer, a local of several
+/// words has none.
+#[test]
+fn cli_ethdebug_locates_one_word_locals_on_the_stack() {
+    let (output, _) = storage_fields();
+    let runtime = output.json("StorageFields_ethdebug-runtime.json");
+    let instructions = runtime["instructions"].as_array().unwrap();
+    // A parameter or local of one word has a stack pointer where the value is
+    // known to be on the stack: a slot counted from the top and nothing else,
+    // which the schema validation of the conformance test accepts. A local of
+    // several words (`s` is a three-constructor type, `p` a pair) has none.
+    let mut located = BTreeSet::new();
+    for instruction in instructions {
+        for variable in instruction["context"]["variables"].as_array().unwrap() {
+            let pointer = &variable["pointer"];
+            if pointer["location"] == "stack" {
+                assert_eq!(pointer.as_object().unwrap().len(), 2, "{variable}");
+                assert!(pointer["slot"].is_u64(), "{variable}");
+                assert!(variable.get("declaration").is_some(), "{variable}");
+                located.insert(variable["identifier"].as_str().unwrap().to_owned());
+            }
+        }
+    }
+    assert!(located.contains("total"), "{located:?}");
+    assert!(
+        !located.contains("s") && !located.contains("p"),
+        "{located:?}"
+    );
+}
+
+/// Variables grow every instruction, so the size is shown and bounded.
+#[test]
+fn cli_ethdebug_output_for_storage_fields_stays_small() {
+    let (output, _) = storage_fields();
+    let runtime = output.json("StorageFields_ethdebug-runtime.json");
+    let instructions = runtime["instructions"].as_array().unwrap();
+    // Variables grow every instruction, so the size is shown and bounded
+    // well below the playground's 2 MiB recording limit.
+    let compact = runtime.to_string().len();
+    println!(
+        "StorageFields_ethdebug-runtime.json: {compact} compact bytes, {} instructions, {} bytes per instruction",
+        instructions.len(),
+        compact / instructions.len()
+    );
+    assert!(compact < 1536 * 1024, "{compact} bytes");
+}
+
+/// A type object of the released draft.3 and none of #424, and the reverse:
+/// each set must reject the other's, or the swap of the type schemas did not
+/// take effect.
+fn assert_type_sets_differ() {
+    const TYPE: &str = "schema:ethdebug/format/type";
+    let (Some(released), Some(draft)) = (
+        PinnedSchemas::load(SchemaSet::Released),
+        PinnedSchemas::load(SchemaSet::DraftTypes),
+    ) else {
+        return;
+    };
+    let uint = serde_json::json!({"kind": "uint", "bits": 256});
+    let number = serde_json::json!({"kind": "number"});
+    assert!(
+        released.validate(TYPE, &uint).is_ok(),
+        "released draft.3 uint"
+    );
+    assert!(draft.validate(TYPE, &uint).is_err(), "#424 accepted a uint");
+    assert!(draft.validate(TYPE, &number).is_ok(), "#424 number");
+    assert!(
+        released.validate(TYPE, &number).is_err(),
+        "released draft.3 accepted a number"
+    );
+}
+
+#[test]
+fn cli_ethdebug_describes_the_standalone_entry() {
+    let dir = temp_dir("ethdebug-standalone");
+    fs::create_dir_all(&dir).unwrap();
+    let input = dir.join("main.sol");
+    let entry = ethdebug_output::STANDALONE_ENTRY;
+    let text = ethdebug_output::STANDALONE;
+    fs::write(&input, text).unwrap();
+    let std_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std");
+    for (flag, output) in [("--bin", "bin"), ("--ethdebug", "debug")] {
+        let result = Command::new(env!("CARGO_BIN_EXE_solcore-driver"))
+            .arg(flag)
+            .arg("--std-root")
+            .arg(&std_root)
+            .arg("-o")
+            .arg(dir.join(output))
+            .arg(&input)
+            .output()
+            .unwrap();
+        assert!(
+            result.status.success(),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+    }
+    let debug = ethdebug_output::Output {
+        dir: dir.join("debug"),
+    };
+    let compilation = debug.compilation();
+    for (extension, suffix, environment) in
+        [("bin", "", "create"), ("bin-runtime", "-runtime", "call")]
+    {
+        let filename = format!("OutputDeploy.{extension}");
+        assert_eq!(
+            fs::read(dir.join("debug").join(&filename)).unwrap(),
+            fs::read(dir.join("bin").join(&filename)).unwrap(),
+        );
+        let program = debug.json(&format!("OutputDeploy_ethdebug{suffix}.json"));
+        assert_eq!(program["environment"], environment);
+        let definition = &program["contract"]["definition"];
+        let source = compilation["sources"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|source| source["id"] == definition["source"]["id"])
+            .unwrap();
+        assert_eq!(source["path"], "main.sol");
+        let offset = definition["range"]["offset"].as_u64().unwrap() as usize;
+        let length = definition["range"]["length"].as_u64().unwrap() as usize;
+        assert_eq!(&text[offset..offset + length], entry);
+    }
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn cli_rejects_two_outputs_for_one_file_before_writing() {
+    let dir = temp_dir("duplicate-output");
+    fs::create_dir_all(&dir).unwrap();
+    let input = dir.join("main.sol");
+    fs::write(
+        &input,
+        "pragma solcore; contract C { function main() public returns (word) { return 7; } }",
+    )
+    .unwrap();
+    let out = dir.join("out");
+
+    let result = Command::new(env!("CARGO_BIN_EXE_solcore-driver"))
+        .args(["--emit-yul=C.bin", "--bin", "--std-root"])
+        .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std"))
+        .arg("-o")
+        .arg(&out)
+        .arg(&input)
+        .output()
+        .unwrap();
+    assert!(!result.status.success());
+    let stderr = String::from_utf8_lossy(&result.stderr);
+    assert!(stderr.contains("multiple outputs would write"), "{stderr}");
+    assert!(!out.exists(), "nothing is written when one output collides");
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn cli_attributes_cross_file_add_in_creation_and_runtime() {
+    let dir = temp_dir("cross-file-debug");
+    fs::create_dir_all(&dir).expect("create temp dir");
+    let (main, ops) = (ethdebug_output::CROSS_MAIN, ethdebug_output::CROSS_OPS);
+    fs::write(dir.join("main.sol"), main).expect("write main.sol");
+    fs::write(dir.join("ops.sol"), ops).expect("write ops.sol");
+    let anchor = "y := add(x, 13)";
+    let start = ops.find(anchor).expect("offset in the written file");
+    let end = start + anchor.len();
+    // A contract-file ID substitution would still pass a bounds check.
+    assert!(end <= main.len());
+    let std_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std");
+
+    let out = dir.join("out");
+    let result = Command::new(env!("CARGO_BIN_EXE_solcore-driver"))
+        .current_dir(&dir)
+        .args(["--ethdebug", "--opt-level", "0", "-o"])
+        .arg(&out)
+        .arg("--std-root")
+        .arg(&std_root)
+        .arg("main.sol")
+        .output()
+        .expect("run driver");
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let debug = ethdebug_output::Output { dir: out.clone() };
+    let compilation = debug.compilation();
+    assert_eq!(debug.resources()["compilation"], compilation);
+    let source = |name: &str, contents: &str| {
+        let entry = compilation["sources"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|source| source["path"] == name)
+            .expect(name);
+        assert_eq!(entry["contents"], contents);
+        entry["id"].as_u64().expect("numeric source ID")
+    };
+    let main_id = source("main.sol", main);
+    let ops_id = source("ops.sol", ops);
+    assert_ne!(main_id, ops_id);
+
+    let expected = serde_json::json!({
+        "source": {"id": ops_id},
+        "range": {"offset": start, "length": anchor.len()}
+    });
+    let programs = debug.programs("CrossFile");
+    for ((program, bin), environment) in programs.into_iter().zip(["create", "call"]) {
+        assert_eq!(program["environment"], environment);
+        assert_eq!(program["compilation"]["id"], compilation["id"]);
+        let def_start = main.find("contract CrossFile").unwrap();
+        assert_eq!(
+            program["contract"]["definition"],
+            serde_json::json!({
+                "source": {"id": main_id},
+                "range": {"offset": def_start, "length": main.trim_end().len() - def_start}
+            })
+        );
+
+        // The helper's ADD is the only ADD that follows a push of 13 in the
+        // bytecode, whatever the program says.
+        let mut add_pcs = Vec::new();
+        let mut pushes_13 = false;
+        for instruction in decode(&bin) {
+            if instruction.opcode == 0x01 && pushes_13 {
+                add_pcs.push(instruction.pc as u64);
+            }
+            pushes_13 = instruction
+                .immediate
+                .iter()
+                .skip_while(|&&byte| byte == 0)
+                .eq([13].iter());
+        }
+        let [pc] = add_pcs.as_slice() else {
+            panic!("{environment}: expected exactly one ADD after a push of 13, found {add_pcs:?}");
+        };
+        let instructions = program["instructions"].as_array().unwrap();
+        let rows: Vec<_> = instructions
+            .iter()
+            .filter(|row| row["offset"] == *pc)
+            .collect();
+        let [add] = rows.as_slice() else {
+            panic!(
+                "{environment}: expected one row at offset {pc}, found {}",
+                rows.len()
+            );
+        };
+        assert_eq!(add["operation"]["mnemonic"], "ADD", "{environment}");
+        assert_eq!(add["context"]["code"], expected, "{environment}");
+        assert!(
+            instructions.iter().all(|row| row["offset"] == *pc
+                || row["operation"]["mnemonic"] != "ADD"
+                || row["context"]["code"] != expected),
+            "{environment}: another ADD claims the helper's source range"
+        );
+        // The range is in bytes of the file as written (it contains a
+        // multi-byte character before the target) and covers the statement.
+        let range = &add["context"]["code"]["range"];
+        let start = range["offset"].as_u64().unwrap() as usize;
+        let end = start + range["length"].as_u64().unwrap() as usize;
+        assert_eq!((start, end), (153, 168), "{environment}");
+        assert_eq!(&ops[start..end], "y := add(x, 13)", "{environment}");
+    }
 
     let _ = fs::remove_dir_all(&dir);
 }

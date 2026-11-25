@@ -32,6 +32,7 @@ pub use desugar::{
     PreTypeckTransform, ProductShape, SourceOrigin, SourceOriginKind, TypeProductDesugar,
     pre_typeck_desugar_body_tree, pre_typeck_desugar_plan,
 };
+pub use display::display_ty;
 pub use hir::sema::ty::{
     BoundTyVar, BuiltinClassId, BuiltinTyCtor, ClassId, Pred, PredKind, QualTy, Ty, TyCtor, TyKind,
     TyScheme, UserTyCtor, UserTyCtorKind,

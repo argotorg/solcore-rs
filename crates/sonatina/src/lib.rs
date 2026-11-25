@@ -1,5 +1,9 @@
-//! Checked Hull-to-Sonatina lowering for the EVM Osaka target.
+//! Checked Hull-to-Sonatina lowering for the EVM Osaka target, and EVM bytecode with a map from
+//! code bytes to source origins.
 
+mod compile;
+pub mod debug;
+mod locals;
 mod lower;
 
 use std::{error::Error, fmt};
@@ -7,6 +11,12 @@ use std::{error::Error, fmt};
 use hir::Db as HirDb;
 use hull::Program as HullProgram;
 use sonatina_ir::{Module, ir_writer::ModuleWriter};
+
+pub use compile::{
+    CompileOptions, CompiledObject, CompiledSection, OptLevel, PcDebug, PcRange,
+    compile_hull_program,
+};
+pub use locals::{Frame, LocalsTag};
 
 /// A failure while translating typed Hull into Sonatina IR.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -34,12 +44,23 @@ impl fmt::Display for TranslationError {
 
 impl Error for TranslationError {}
 
-/// Lowers a checked Hull program to verified Sonatina IR.
+/// Lowers a checked Hull program to verified Sonatina IR. No instruction has an
+/// origin; see [`translate_hull_program_with_origins`].
 pub fn translate_hull_program<'db>(
     db: &'db dyn HirDb,
     program: &HullProgram<'db>,
 ) -> Result<Module, TranslationError> {
-    lower::translate_hull_program(db, program)
+    lower::translate_hull_program(db, program, false)
+}
+
+/// Like [`translate_hull_program`], and the instructions a Hull statement makes
+/// carry its origin (`hull::origin::stmt_origin`). A statement without a source
+/// range, and code that no statement made, have none.
+pub fn translate_hull_program_with_origins<'db>(
+    db: &'db dyn HirDb,
+    program: &HullProgram<'db>,
+) -> Result<Module, TranslationError> {
+    lower::translate_hull_program(db, program, true)
 }
 
 /// Lowers a single-contract program with a wrapper that calls the named runtime

@@ -1,16 +1,20 @@
-use std::collections::HashMap;
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 
 use hir::{
     Db as HirDb,
     ast::function::{YulExpr, YulExprKind, YulLitKind, YulStmt, YulStmtKind},
 };
 use hull::{
-    Con, Expr as HullExpr, ExprKind, Function as HullFunction, Object as HullObject, PatKind,
-    Program as HullProgram, Stmt as HullStmt, StmtKind, Ty as HullTy, TyKind,
+    BinderId, Con, DebugBinder, Expr as HullExpr, ExprKind, Function as HullFunction,
+    Object as HullObject, PatKind, Program as HullProgram, Stmt as HullStmt, StmtKind,
+    Ty as HullTy, TyKind, origin::stmt_origin,
 };
 use smallvec::{SmallVec, smallvec};
 use sonatina_ir::{
-    BlockId, EmbedSymbol, I256, Immediate, Linkage, Module, Signature, Type, ValueId,
+    BlockId, EmbedSymbol, I256, Immediate, InstId, Linkage, Module, Signature, Type, ValueId,
     builder::{FunctionBuilder, ModuleBuilder, ObjectBuilder, Variable},
     func_cursor::InstInserter,
     inst::{
@@ -48,14 +52,38 @@ use sonatina_verifier::{VerificationLevel, VerifierConfig, verify_module};
 use crate::TranslationError;
 
 mod reachability;
+mod tags;
+mod values;
 
 use reachability::Reachability;
+use tags::{InstTag, SetId};
+use values::ValueTrace;
 
+type FunctionBuilderOf = FunctionBuilder<InstInserter>;
+
+pub(crate) use tags::DebugTags;
+
+use crate::locals::Frame;
+
+/// With `stamp_origins`, instructions carry the origin of the Hull statement
+/// that made them (`hull::origin::stmt_origin`); without it, no instruction has
+/// an origin.
 pub(super) fn translate_hull_program<'db>(
     db: &'db dyn HirDb,
     program: &HullProgram<'db>,
+    stamp_origins: bool,
 ) -> Result<Module, TranslationError> {
-    Translator::new(db).translate(program)
+    translate_hull_program_tagged(db, program, stamp_origins).map(|(module, _)| module)
+}
+
+/// Like [`translate_hull_program`], with the visible source bindings around each
+/// instruction that has an origin.
+pub(super) fn translate_hull_program_tagged<'db>(
+    db: &'db dyn HirDb,
+    program: &HullProgram<'db>,
+    stamp_origins: bool,
+) -> Result<(Module, DebugTags), TranslationError> {
+    Translator::new(db, stamp_origins).translate(program)
 }
 
 pub(super) fn translate_hull_program_returning_runtime_entry<'db>(
@@ -75,11 +103,11 @@ pub(super) fn translate_hull_program_returning_runtime_entry<'db>(
             object.name
         )));
     }
-    let mut translator = Translator::new(db);
+    let mut translator = Translator::new(db, false);
     translator
         .returning_entries
         .insert("object0.inner0.init".to_owned(), entry.to_owned());
-    translator.translate(program)
+    translator.translate(program).map(|(module, _)| module)
 }
 
 fn evm_isa() -> Evm {
@@ -137,13 +165,22 @@ struct Translator<'db> {
     section_objects: HashMap<String, String>,
     next_type: usize,
     next_yul_function: usize,
+    /// Whether statements stamp the instructions they make with their origin.
+    stamp_origins: bool,
+    /// The visible source bindings around each stamped instruction.
+    tags: DebugTags,
+    /// The next number for a value label, which is unique in the module.
+    next_label: u32,
 }
 
 impl<'db> Translator<'db> {
-    fn new(db: &'db dyn HirDb) -> Self {
+    fn new(db: &'db dyn HirDb, stamp_origins: bool) -> Self {
         let isa = evm_isa();
         let builder = ModuleBuilder::new(ModuleCtx::new(&isa));
         Self {
+            stamp_origins,
+            tags: DebugTags::default(),
+            next_label: 0,
             db,
             builder,
             isa,
@@ -163,7 +200,10 @@ impl<'db> Translator<'db> {
         self.isa.inst_set()
     }
 
-    fn translate(mut self, program: &HullProgram<'db>) -> Result<Module, TranslationError> {
+    fn translate(
+        mut self,
+        program: &HullProgram<'db>,
+    ) -> Result<(Module, DebugTags), TranslationError> {
         if program.objects.is_empty() {
             let entry_function = match program.entry_points.as_slice() {
                 [] => None,
@@ -227,7 +267,7 @@ impl<'db> Translator<'db> {
                 "Sonatina verification failed:\n{report}"
             )));
         }
-        Ok(module)
+        Ok((module, self.tags))
     }
 
     fn declare_object_code(
@@ -480,10 +520,12 @@ impl<'db> Translator<'db> {
                     function.name.as_str()
                 ))
             })?;
-        let mut lowerer = FunctionLowerer::new(self, scope, func_ref, function.ret.clone());
+        let mut lowerer =
+            FunctionLowerer::new(self, scope, func_ref, function.ret.clone(), Some(function));
         for (index, arg) in function.args.iter().enumerate() {
             let value = lowerer.fb.func.arg_values[index];
             lowerer.bind_parameter(arg.name.as_str(), &arg.ty, value)?;
+            lowerer.add_binder(arg.binder, arg.name.as_str());
         }
         let terminated = lowerer.lower_stmts(&function.body)?;
         lowerer.finish(terminated)
@@ -498,7 +540,7 @@ impl<'db> Translator<'db> {
     ) -> Result<(), TranslationError> {
         let func_ref = self.entry(scope)?;
         let unit = HullTy::unit(span);
-        let mut lowerer = FunctionLowerer::new(self, scope, func_ref, unit);
+        let mut lowerer = FunctionLowerer::new(self, scope, func_ref, unit, None);
         let mut terminated = lowerer.lower_stmts(stmts)?;
         if !terminated && let Some(main) = entry_function {
             let callee = lowerer
@@ -578,6 +620,23 @@ struct FunctionLowerer<'a, 'db> {
     continue_targets: Vec<BlockId>,
     yul_functions: Vec<HashMap<String, YulFunctionDecl>>,
     yul_returns: Option<Vec<Variable>>,
+    /// The Hull function being lowered, or `None` for object-level code. Inline
+    /// Yul functions keep the Hull function that contains their `assembly`
+    /// block. Statements are stamped by `hull::origin::stmt_origin`, which
+    /// needs it to apply the generated-code rule.
+    function: Option<&'a HullFunction<'db>>,
+    /// Instructions a finished statement has taken, whether it stamped them or
+    /// left them unmapped.
+    claimed: HashSet<InstId>,
+    func_ref: FuncRef,
+    /// The source bindings declared in each open scope, as binder ids in the
+    /// order they became visible. Frames follow [`Self::scopes`], and the body
+    /// and the step of a loop have frames of their own.
+    binder_frames: Vec<Vec<u32>>,
+    /// The set of all bindings in `binder_frames`.
+    visible: SetId,
+    /// Which value held each binding, as lowering saw it (see `values`).
+    trace: ValueTrace,
 }
 
 impl<'a, 'db> FunctionLowerer<'a, 'db> {
@@ -586,10 +645,12 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
         scope: &str,
         func_ref: FuncRef,
         ret: HullTy<'db>,
+        function: Option<&'a HullFunction<'db>>,
     ) -> Self {
         let mut fb = module.builder.func_builder::<InstInserter>(func_ref);
         let entry = fb.append_block();
         fb.switch_to_block(entry);
+        let visible = module.tags.intern(&[]);
         Self {
             module,
             scope: scope.to_owned(),
@@ -601,6 +662,12 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
             continue_targets: Vec::new(),
             yul_functions: Vec::new(),
             yul_returns: None,
+            function,
+            claimed: HashSet::new(),
+            func_ref,
+            binder_frames: vec![Vec::new()],
+            visible,
+            trace: ValueTrace::default(),
         }
     }
 
@@ -610,8 +677,9 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
         func_ref: FuncRef,
         span: hir::span::Span<'db>,
         yul_functions: Vec<HashMap<String, YulFunctionDecl>>,
+        function: Option<&'a HullFunction<'db>>,
     ) -> Self {
-        let mut lowerer = Self::new(module, scope, func_ref, HullTy::unit(span));
+        let mut lowerer = Self::new(module, scope, func_ref, HullTy::unit(span), function);
         lowerer.yul_functions = yul_functions;
         lowerer.yul_returns = Some(Vec::new());
         lowerer
@@ -629,6 +697,7 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
                     .insert_inst_no_result(Return::new_single(self.module.inst_set(), value));
             }
         }
+        self.label_values();
         self.fb.seal_all();
         self.fb.finish();
         Ok(())
@@ -638,19 +707,63 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
         if !terminated {
             self.emit_yul_return()?;
         }
+        self.label_values();
         self.fb.seal_all();
         self.fb.finish();
         Ok(())
     }
 
+    /// Labels the values that hold source bindings, and records the labels in the
+    /// tags of the function's instructions. Runs before the SSA builder seals its
+    /// blocks, so that a phi it then removes as trivial hands its labels on. It
+    /// adds no instruction and changes no operand.
+    fn label_values(&mut self) {
+        if !self.module.stamp_origins {
+            return;
+        }
+        let module = &mut *self.module;
+        self.trace.label(
+            &mut self.fb,
+            &mut module.tags,
+            self.func_ref,
+            &mut module.next_label,
+        );
+    }
+
+    /// `FunctionBuilder::def_var`, which also notes the value for the debug
+    /// labels.
+    fn def_var(&mut self, var: Variable, value: ValueId) {
+        self.fb.def_var(var, value);
+        self.note_variable(var, value);
+    }
+
+    /// `FunctionBuilder::use_var`, which also notes the value for the debug
+    /// labels. The value is what the builder returned: nothing is read that the
+    /// program did not read.
+    fn use_var(&mut self, var: Variable) -> ValueId {
+        let value = self.fb.use_var(var);
+        self.note_variable(var, value);
+        value
+    }
+
+    fn note_variable(&mut self, var: Variable, value: ValueId) {
+        if !self.module.stamp_origins {
+            return;
+        }
+        if let Some(block) = self.fb.current_block() {
+            self.trace
+                .note(block, var, self.fb.func.dfg.num_insts(), value);
+        }
+    }
+
     fn emit_yul_return(&mut self) -> Result<(), TranslationError> {
         let returns = self
             .yul_returns
-            .as_ref()
+            .clone()
             .ok_or_else(|| TranslationError::new("inline Yul `leave` outside a Yul function"))?;
         let values = returns
             .iter()
-            .map(|var| self.fb.use_var(*var))
+            .map(|var| self.use_var(*var))
             .collect::<SmallVec<[ValueId; 2]>>();
         self.fb.insert_return_values(&values);
         Ok(())
@@ -664,7 +777,7 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
     ) -> Result<(), TranslationError> {
         let ty = self.module.lower_ty(hull_ty)?;
         let var = self.fb.declare_var(ty);
-        self.fb.def_var(var, value);
+        self.def_var(var, value);
         self.insert_binding(
             name,
             Binding {
@@ -684,7 +797,7 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
         let ty = self.module.lower_ty(hull_ty)?;
         let var = self.fb.declare_var(ty);
         let initial = zero_for_type(&mut self.fb, self.module.inst_set(), ty);
-        self.fb.def_var(var, initial);
+        self.def_var(var, initial);
         let binding = Binding {
             var,
             ty,
@@ -702,7 +815,7 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
     ) -> Result<(), TranslationError> {
         let binding = self.declare_binding(name, hull_ty)?;
         let value = self.coerce(value, binding.ty)?;
-        self.fb.def_var(binding.var, value);
+        self.def_var(binding.var, value);
         Ok(())
     }
 
@@ -723,10 +836,79 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
 
     fn push_scope(&mut self) {
         self.scopes.push(HashMap::new());
+        self.push_frame();
     }
 
     fn pop_scope(&mut self) {
         self.scopes.pop();
+        self.pop_frame();
+    }
+
+    fn push_frame(&mut self) {
+        self.binder_frames.push(Vec::new());
+    }
+
+    /// Leaves a scope of source bindings. The bindings that were declared in it
+    /// are no longer visible after the last instruction made so far.
+    fn pop_frame(&mut self) {
+        let declared = self
+            .binder_frames
+            .pop()
+            .is_some_and(|frame| !frame.is_empty());
+        if declared {
+            self.refresh_visible();
+            self.retag_last();
+        }
+    }
+
+    fn refresh_visible(&mut self) {
+        let set: Vec<u32> = self.binder_frames.iter().flatten().copied().collect();
+        self.visible = self.module.tags.intern(&set);
+    }
+
+    /// Makes the source binding visible, in the innermost scope, from here on.
+    /// Returns whether there is one. Nothing is tracked unless instructions carry
+    /// origins.
+    fn add_binder(&mut self, binder: DebugBinder, name: &str) -> bool {
+        let Some(BinderId(id)) = binder.0 else {
+            return false;
+        };
+        if !self.module.stamp_origins {
+            return false;
+        }
+        // A binding of one word can have a value label; others have none.
+        if let Ok(binding) = self.lookup(name)
+            && binding.ty.is_integral()
+        {
+            self.trace.bind(id, binding.var);
+        }
+        self.binder_frames
+            .last_mut()
+            .expect("binder frames are never empty")
+            .push(id);
+        self.refresh_visible();
+        true
+    }
+
+    /// States that the instruction made last in the current block completes with
+    /// the bindings that are visible now. The change in what is visible executes
+    /// nothing, so the state after that instruction is the state at this point.
+    /// A block with no instruction yet, or one that ends in a terminator or in
+    /// an instruction without an origin, is left alone: the change then shows from
+    /// the next instruction on.
+    fn retag_last(&mut self) {
+        if !self.module.stamp_origins {
+            return;
+        }
+        let Some(inst) = self.fb.last_inst() else {
+            return;
+        };
+        if self.fb.is_terminator(inst) {
+            return;
+        }
+        if let Some(tag) = self.module.tags.insts.get_mut(&(self.func_ref, inst)) {
+            tag.after = self.visible;
+        }
     }
 
     fn lower_stmts(&mut self, stmts: &[HullStmt<'db>]) -> Result<bool, TranslationError> {
@@ -738,13 +920,91 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
         Ok(false)
     }
 
+    /// Lowers one statement, then stamps the instructions it created with the
+    /// statement's origin. Nested statements are lowered and stamped first, so
+    /// an enclosing statement only claims what its children did not (loop
+    /// headers, branches, join code).
     fn lower_stmt(&mut self, stmt: &HullStmt<'db>) -> Result<bool, TranslationError> {
+        let start = self.visible;
+        let watermark = self.fb.func.dfg.num_insts();
+        let result = self.lower_stmt_inner(stmt);
+        let leaves_scopes = matches!(stmt.kind, StmtKind::Break | StmtKind::Continue);
+        self.stamp_insts_since(watermark, stmt.span, start, leaves_scopes);
+        if matches!(result, Ok(false)) {
+            let (binds, name) = match &stmt.kind {
+                StmtKind::Let { binds, name, .. } => (*binds, name.as_str()),
+                StmtKind::Assign { binds, lhs, .. } => {
+                    (*binds, assignment_path(lhs).map_or("", |(name, _)| name))
+                }
+                _ => (DebugBinder::default(), ""),
+            };
+            if self.add_binder(binds, name) {
+                self.retag_last();
+            }
+        }
+        result
+    }
+
+    /// Gives every instruction created since `watermark` that no nested
+    /// statement has taken the origin of a statement at `span`. A zero-width
+    /// span has no origin: it takes the instructions and leaves them unmapped,
+    /// so an enclosing statement does not claim them. Code that no statement
+    /// made (the implicit return, the fall-through stop, phis made when blocks
+    /// are sealed) is never stamped and stays unmapped.
+    fn stamp_insts_since(
+        &mut self,
+        watermark: usize,
+        span: hir::span::Span<'db>,
+        visible: SetId,
+        leaves_scopes: bool,
+    ) {
+        let end = self.fb.func.dfg.num_insts();
+        if !self.module.stamp_origins || end == watermark {
+            return;
+        }
+        let origin = stmt_origin(self.function, span)
+            .resolve(self.module.db)
+            .map(|origin| Arc::<str>::from(origin.encode()));
+        for index in watermark..end {
+            let inst = InstId(index as u32);
+            if !self.claimed.insert(inst) {
+                continue;
+            }
+            if let Some(origin) = &origin {
+                self.fb
+                    .func
+                    .set_inst_frontend_origin(inst, Arc::clone(origin));
+                let dfg = &self.fb.func.dfg;
+                let frame = if dfg.is_call(inst) {
+                    Frame::Call
+                } else if dfg.is_return(inst) {
+                    Frame::Return
+                } else if leaves_scopes {
+                    Frame::Jump
+                } else {
+                    Frame::Plain
+                };
+                self.module.tags.insts.insert(
+                    (self.func_ref, inst),
+                    InstTag {
+                        before: visible,
+                        after: visible,
+                        frame,
+                        before_labels: Vec::new(),
+                        after_labels: Vec::new(),
+                    },
+                );
+            }
+        }
+    }
+
+    fn lower_stmt_inner(&mut self, stmt: &HullStmt<'db>) -> Result<bool, TranslationError> {
         match &stmt.kind {
-            StmtKind::Let { name, ty } => {
+            StmtKind::Let { name, ty, .. } => {
                 self.declare_binding(name.as_str(), ty)?;
                 Ok(false)
             }
-            StmtKind::Assign { lhs, rhs } => {
+            StmtKind::Assign { lhs, rhs, .. } => {
                 let value = self.lower_expr(rhs)?;
                 self.assign(lhs, value)?;
                 Ok(false)
@@ -816,7 +1076,8 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
                 target,
                 scrutinee,
                 alts,
-            } => self.lower_match(target, scrutinee, alts),
+                condition,
+            } => self.lower_match(target, scrutinee, alts, condition.0),
             StmtKind::Assembly(stmts) => self.lower_yul_stmts(stmts),
             StmtKind::Revert(message) => {
                 let bytes = message.as_bytes();
@@ -847,10 +1108,10 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
         match &expr.kind {
             ExprKind::Word(value) => self.word_value(value),
             ExprKind::Bool(value) => Ok(self.fb.make_imm_value(*value)),
-            ExprKind::Unit => Ok(self.fb.make_undef_value(Type::Unit)),
+            ExprKind::Unit => Ok(self.fb.func.dfg.make_zero_const(Type::Unit)),
             ExprKind::Var(name) => {
                 let binding = self.lookup(name.as_str())?;
-                Ok(self.fb.use_var(binding.var))
+                Ok(self.use_var(binding.var))
             }
             ExprKind::Pair(lhs, rhs) => {
                 let ty = self.module.lower_ty(&expr.ty)?;
@@ -861,7 +1122,7 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
                 let rhs = self.lower_expr(rhs)?;
                 let rhs_target = self.module.lower_ty(rhs_ty)?;
                 let rhs = self.coerce(rhs, rhs_target)?;
-                let mut value = self.fb.make_undef_value(ty);
+                let mut value = self.fb.func.dfg.make_zero_const(ty);
                 let zero = self.index_value(0);
                 value = self.fb.insert_inst(
                     InsertValue::new(self.module.inst_set(), value, zero, lhs),
@@ -922,7 +1183,7 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
                     let call = Call::new(self.module.inst_set(), func, values);
                     if ret == Type::Unit {
                         self.fb.insert_inst_no_result(call);
-                        Ok(self.fb.make_undef_value(Type::Unit))
+                        Ok(self.fb.func.dfg.make_zero_const(Type::Unit))
                     } else {
                         Ok(self.fb.insert_inst(call, ret))
                     }
@@ -945,10 +1206,10 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
         let value = if path.is_empty() {
             self.coerce(value, binding.ty)?
         } else {
-            let root = self.fb.use_var(binding.var);
+            let root = self.use_var(binding.var);
             self.insert_at_path(root, &binding.hull_ty, &path, value)?
         };
-        self.fb.def_var(binding.var, value);
+        self.def_var(binding.var, value);
         Ok(())
     }
 
@@ -993,7 +1254,7 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
         let ty = self.module.lower_ty(result_ty)?;
         let result = self.fb.declare_var(ty);
         let initial = zero_for_type(&mut self.fb, self.module.inst_set(), ty);
-        self.fb.def_var(result, initial);
+        self.def_var(result, initial);
         let then_block = self.fb.append_block();
         let else_block = self.fb.append_block();
         let done = self.fb.append_block();
@@ -1002,15 +1263,15 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
         self.fb.switch_to_block(then_block);
         let then_value = self.lower_expr(then_expr)?;
         let then_value = self.coerce(then_value, ty)?;
-        self.fb.def_var(result, then_value);
+        self.def_var(result, then_value);
         self.emit_jump(done);
         self.fb.switch_to_block(else_block);
         let else_value = self.lower_expr(else_expr)?;
         let else_value = self.coerce(else_value, ty)?;
-        self.fb.def_var(result, else_value);
+        self.def_var(result, else_value);
         self.emit_jump(done);
         self.fb.switch_to_block(done);
-        Ok(self.fb.use_var(result))
+        Ok(self.use_var(result))
     }
 
     /// Record edges at their single emission point so continuation reachability
@@ -1079,27 +1340,47 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
         self.fb.switch_to_block(body_block);
         self.break_targets.push(done);
         self.continue_targets.push(post_block);
+        // The body and the step are scopes of the source, though they share the
+        // loop's scope here.
+        self.push_frame();
         let body_terminated = self.lower_stmts(body)?;
+        self.pop_frame();
         self.continue_targets.pop();
         self.break_targets.pop();
         if !body_terminated {
             self.emit_jump(post_block);
         }
-        if self.switch_to_reachable_block(post_block) && !self.lower_stmts(post)? {
-            self.emit_jump(header);
+        if self.switch_to_reachable_block(post_block) {
+            self.push_frame();
+            let post_terminated = self.lower_stmts(post)?;
+            self.pop_frame();
+            if !post_terminated {
+                self.emit_jump(header);
+            }
         }
         self.fb.switch_to_block(done);
         self.pop_scope();
         Ok(false)
     }
 
+    /// Lowers a `match`. For a statement that stands for a source `if`, the
+    /// span of its `condition` is given: the scrutinee and the pattern tests
+    /// belong to the condition's text, and the jumps that leave an arm to no
+    /// text, because the range of the whole `if` also covers the arms and a jump
+    /// after an arm must not show it again.
     fn lower_match(
         &mut self,
         target: &HullTy<'db>,
         scrutinee: &HullExpr<'db>,
         alts: &[hull::Alt<'db>],
+        condition: Option<hir::span::Span<'db>>,
     ) -> Result<bool, TranslationError> {
+        let start = self.visible;
+        let watermark = self.fb.func.dfg.num_insts();
         let value = self.lower_expr(scrutinee)?;
+        if let Some(condition) = condition {
+            self.stamp_insts_since(watermark, condition, start, false);
+        }
         let done = self.fb.append_block();
         let mut exhaustive = false;
         for alt in alts {
@@ -1113,8 +1394,12 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
                 match &alt.pat.kind {
                     PatKind::Wildcard | PatKind::Var(_) => unreachable!(),
                     pat => {
+                        let watermark = self.fb.func.dfg.num_insts();
                         let cond = self.pattern_condition(value, target, pat)?;
                         self.emit_branch(cond, arm, next.expect("non-catch-all has a next block"));
+                        if let Some(condition) = condition {
+                            self.stamp_insts_since(watermark, condition, start, false);
+                        }
                     }
                 }
             }
@@ -1128,7 +1413,7 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
             let terminated = self.lower_stmts(&alt.body)?;
             self.pop_scope();
             if !terminated {
-                self.emit_jump(done);
+                self.emit_jump_to_done(done, condition.is_some());
             }
             if let Some(next) = next {
                 self.fb.switch_to_block(next);
@@ -1137,9 +1422,21 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
             }
         }
         if !exhaustive {
-            self.emit_jump(done);
+            self.emit_jump_to_done(done, condition.is_some());
         }
         Ok(!self.switch_to_reachable_block(done))
+    }
+
+    /// Emits the jump that ends an arm of a `match`. With `unmapped`, no
+    /// enclosing statement may claim it, so it stays without an origin.
+    fn emit_jump_to_done(&mut self, done: BlockId, unmapped: bool) {
+        let watermark = self.fb.func.dfg.num_insts();
+        self.emit_jump(done);
+        if unmapped {
+            for index in watermark..self.fb.func.dfg.num_insts() {
+                self.claimed.insert(InstId(index as u32));
+            }
+        }
     }
 
     fn pattern_condition(
@@ -1204,7 +1501,10 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
         let (lhs, rhs) = sum_parts(target)?;
         let payload = if index == 0 { lhs } else { rhs };
         if is_bool_like(target) || is_unit_ty(payload) {
-            return Ok((payload.clone(), self.fb.make_undef_value(Type::Unit)));
+            return Ok((
+                payload.clone(),
+                self.fb.func.dfg.make_zero_const(Type::Unit),
+            ));
         }
         let variant = self.variant_ref(target, index)?;
         self.fb.insert_inst_no_result(EnumAssertVariant::new(
@@ -1251,7 +1551,7 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
 
         let result = self.fb.declare_var(Type::I1);
         let initial = self.fb.make_imm_value(false);
-        self.fb.def_var(result, initial);
+        self.def_var(result, initial);
         let right = self.fb.append_block();
         let not_right = self.fb.append_block();
         let done = self.fb.append_block();
@@ -1260,14 +1560,14 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
         self.fb.switch_to_block(right);
         let (rhs, nested) = self.extract_variant(value, target, 1)?;
         let nested_cond = self.in_k_condition(nested, &rhs, index - 1)?;
-        self.fb.def_var(result, nested_cond);
+        self.def_var(result, nested_cond);
         self.emit_jump(done);
         self.fb.switch_to_block(not_right);
         let false_value = self.fb.make_imm_value(false);
-        self.fb.def_var(result, false_value);
+        self.def_var(result, false_value);
         self.emit_jump(done);
         self.fb.switch_to_block(done);
-        Ok(self.fb.use_var(result))
+        Ok(self.use_var(result))
     }
 
     fn extract_in_k(
@@ -1449,8 +1749,8 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
         let result_ty = self.module.lower_ty(result)?;
         match self.lower_evm_builtin(name, args)? {
             BuiltinOutcome::Value(value) => self.coerce(value, result_ty),
-            BuiltinOutcome::Unit => Ok(self.fb.make_undef_value(Type::Unit)),
-            BuiltinOutcome::Terminated => Ok(self.fb.make_undef_value(Type::Unit)),
+            BuiltinOutcome::Unit => Ok(self.fb.func.dfg.make_zero_const(Type::Unit)),
+            BuiltinOutcome::Terminated => Ok(self.fb.func.dfg.make_zero_const(Type::Unit)),
         }
     }
 
@@ -1551,6 +1851,7 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
             declaration.func,
             span,
             visible_functions,
+            self.function,
         );
         let word = HullTy::word(span);
         for (index, param) in params.iter().enumerate() {
@@ -1585,6 +1886,14 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
     }
 
     fn lower_yul_stmt(&mut self, stmt: &YulStmt<'db>) -> Result<bool, TranslationError> {
+        let start = self.visible;
+        let watermark = self.fb.func.dfg.num_insts();
+        let result = self.lower_yul_stmt_inner(stmt);
+        self.stamp_insts_since(watermark, stmt.span, start, false);
+        result
+    }
+
+    fn lower_yul_stmt_inner(&mut self, stmt: &YulStmt<'db>) -> Result<bool, TranslationError> {
         match &stmt.kind {
             YulStmtKind::Block(stmts) => self.lower_yul_stmts(stmts),
             YulStmtKind::Let { names, init } => {
@@ -1612,7 +1921,7 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
                     let binding = self.declare_binding(&name, &ty)?;
                     if let Some(value) = values.get(index).copied() {
                         let value = self.coerce(value, Type::I256)?;
-                        self.fb.def_var(binding.var, value);
+                        self.def_var(binding.var, value);
                     }
                 }
                 Ok(false)
@@ -1637,7 +1946,7 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
                     let name = self.yul_name(name);
                     let binding = self.lookup(&name)?;
                     let value = self.coerce(value, binding.ty)?;
-                    self.fb.def_var(binding.var, value);
+                    self.def_var(binding.var, value);
                 }
                 Ok(false)
             }
@@ -1789,7 +2098,7 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
             }
             YulExprKind::Ident(name) => {
                 let binding = self.lookup(&self.yul_name(name))?;
-                let value = self.fb.use_var(binding.var);
+                let value = self.use_var(binding.var);
                 Ok(YulExprOutcome::Values(smallvec![
                     self.coerce(value, Type::I256)?
                 ]))
@@ -2573,17 +2882,17 @@ fn zero_for_type(
     ty: Type,
 ) -> ValueId {
     if ty == Type::Unit {
-        return fb.make_undef_value(ty);
+        return fb.func.dfg.make_zero_const(ty);
     }
     let Type::Compound(compound_ref) = ty else {
         return fb.make_imm_value(Immediate::zero(ty));
     };
     let Some(compound) = ty.resolve_compound(fb.ctx()) else {
-        return fb.make_undef_value(ty);
+        return fb.func.dfg.make_zero_const(ty);
     };
     match compound {
         CompoundType::Struct(data) => {
-            let mut value = fb.make_undef_value(ty);
+            let mut value = fb.func.dfg.make_zero_const(ty);
             for (index, field_ty) in data.fields.into_iter().enumerate() {
                 let field = zero_for_type(fb, inst_set, field_ty);
                 let index = fb.make_imm_value(I256::from(index));
@@ -2592,7 +2901,7 @@ fn zero_for_type(
             value
         }
         CompoundType::Array { elem, len } => {
-            let mut value = fb.make_undef_value(ty);
+            let mut value = fb.func.dfg.make_zero_const(ty);
             for index in 0..len {
                 let field = zero_for_type(fb, inst_set, elem);
                 let index = fb.make_imm_value(I256::from(index));
@@ -2602,7 +2911,7 @@ fn zero_for_type(
         }
         CompoundType::Enum(data) => {
             let Some(variant) = data.variants.first() else {
-                return fb.make_undef_value(ty);
+                return fb.func.dfg.make_zero_const(ty);
             };
             let fields = variant
                 .fields
@@ -2618,7 +2927,7 @@ fn zero_for_type(
         CompoundType::Ptr(_)
         | CompoundType::ObjRef(_)
         | CompoundType::ConstRef(_)
-        | CompoundType::Func { .. } => fb.make_undef_value(ty),
+        | CompoundType::Func { .. } => fb.func.dfg.make_zero_const(ty),
     }
 }
 

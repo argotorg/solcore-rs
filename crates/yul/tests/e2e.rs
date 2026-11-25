@@ -417,6 +417,7 @@ fn contract_program(
         }
     };
     Ok(Program {
+        debug: program.debug.clone(),
         span: program.span,
         entry_points: Vec::new(),
         functions: Vec::new(),

@@ -1,4 +1,8 @@
+use std::collections::BTreeMap;
+
 use hir::{ast::function::YulStmt, span::Span};
+
+use crate::origin::GeneratedReason;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct HullName(String);
@@ -40,6 +44,99 @@ pub struct Program<'db> {
     pub entry_points: Vec<Name>,
     pub functions: Vec<Function<'db>>,
     pub objects: Vec<Object<'db>>,
+    /// Facts for debug information only; see [`DebugTables`].
+    pub debug: DebugTables<'db>,
+}
+
+/// Facts about the source that no compiler decision may depend on. They feed the
+/// debug files and nothing else, so a table is always equal to another and is not
+/// printed as Hull text.
+#[derive(Debug, Clone, Default)]
+pub struct DebugTables<'db> {
+    /// The source bindings that statements and arguments mark with a [`DebugBinder`];
+    /// the binder `n` is `binders[n]`.
+    pub binders: Vec<SourceBinder<'db>>,
+    /// The fields of each contract in declaration order, by the name of the
+    /// contract's runtime object.
+    pub contracts: BTreeMap<String, Vec<FieldFacts<'db>>>,
+}
+
+impl PartialEq for DebugTables<'_> {
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
+}
+
+impl Eq for DebugTables<'_> {}
+
+/// A source binding of a function: a parameter, a `let` or a pattern variable.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourceBinder<'db> {
+    /// The name as the source spells it.
+    pub name: String,
+    /// The span of the declaring identifier.
+    pub declaration: Span<'db>,
+    /// The span of the function that the binding belongs to. The binding is
+    /// listed only at code of statements written inside this span: code of
+    /// another function that specialization inlined into this one is not in
+    /// the binding's scope.
+    pub function: Span<'db>,
+    /// The type of this occurrence of the binding, as specialization instantiated it.
+    pub ty: hir_ty::Ty<'db>,
+}
+
+/// The place of a [`SourceBinder`] in [`DebugTables::binders`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct BinderId(pub u32);
+
+/// Marks the statement or argument after which a source binding is visible. It is
+/// a debug annotation: all values are equal and hash alike, so no comparison,
+/// deduplication or optimization can depend on it, and it is not printed.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct DebugBinder(pub Option<BinderId>);
+
+impl PartialEq for DebugBinder {
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
+}
+
+impl Eq for DebugBinder {}
+
+impl std::hash::Hash for DebugBinder {
+    fn hash<H: std::hash::Hasher>(&self, _: &mut H) {}
+}
+
+/// Marks a `Match` that stands for a source `if` and holds the span of the
+/// `if`'s condition, which the scrutinee does not always keep: a variable
+/// condition carries the span of its declaration. It is a debug annotation like
+/// [`DebugBinder`]: all values are equal and hash alike, and it is not printed.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct DebugCondition<'db>(pub Option<Span<'db>>);
+
+impl PartialEq for DebugCondition<'_> {
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
+}
+
+impl Eq for DebugCondition<'_> {}
+
+impl std::hash::Hash for DebugCondition<'_> {
+    fn hash<H: std::hash::Hasher>(&self, _: &mut H) {}
+}
+
+/// A contract field as the source declares it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FieldFacts<'db> {
+    pub name: String,
+    /// The span of the field's name.
+    pub declaration: Span<'db>,
+    /// The declared type after alias normalization. A type that mentions a type
+    /// parameter of the contract still has bound variables in it.
+    pub ty: hir_ty::Ty<'db>,
+    /// The position among the contract's fields.
+    pub index: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -120,10 +217,15 @@ pub enum StmtKind<'db> {
     Let {
         name: Name,
         ty: Ty<'db>,
+        /// Set only on a `let` without an initializer: the binding is visible after it.
+        binds: DebugBinder,
     },
     Assign {
         lhs: Expr<'db>,
         rhs: Expr<'db>,
+        /// Set on the assignment that initializes a source `let` or a pattern
+        /// variable, which `lhs` names: the binding is visible after it.
+        binds: DebugBinder,
     },
     Expr(Expr<'db>),
     Return(Expr<'db>),
@@ -140,6 +242,8 @@ pub enum StmtKind<'db> {
         target: Ty<'db>,
         scrutinee: Expr<'db>,
         alts: Vec<Alt<'db>>,
+        /// Set when the statement stands for a source `if`.
+        condition: DebugCondition<'db>,
     },
     Assembly(Vec<YulStmt<'db>>),
     Revert(String),
@@ -180,11 +284,17 @@ pub struct Arg<'db> {
     pub span: Span<'db>,
     pub name: Name,
     pub ty: Ty<'db>,
+    /// The binding of a source parameter, visible from function entry.
+    pub binder: DebugBinder,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Function<'db> {
     pub span: Span<'db>,
+    /// Set when the compiler, not source text, produced this function. Inside
+    /// such a function, statements located at [`Function::span`] are generated
+    /// code; see [`crate::origin::stmt_origin`]. Not part of the printed Hull text.
+    pub generated: Option<GeneratedReason>,
     pub name: Name,
     pub args: Vec<Arg<'db>>,
     pub ret: Ty<'db>,

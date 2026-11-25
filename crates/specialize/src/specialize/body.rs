@@ -1965,7 +1965,7 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
                 }
             };
             let function = MonoFunction {
-                origin: MonoFunctionOrigin::Source,
+                origin: MonoFunctionOrigin::StructAccessor,
                 source: None,
                 shadowed_top_level: None,
                 name: name.clone(),

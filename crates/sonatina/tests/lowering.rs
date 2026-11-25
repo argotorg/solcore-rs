@@ -68,13 +68,16 @@ fn lowers_word_bool_and_structural_aggregates_to_verified_ir() {
     let pair = Ty::product(span, word.clone(), bool_ty.clone());
     let sum = Ty::sum(span, Ty::unit(span), pair.clone());
     let program = Program {
+        debug: Default::default(),
         span,
         entry_points: Vec::new(),
         functions: vec![
             Function {
                 span,
+                generated: None,
                 name: "id".into(),
                 args: vec![Arg {
+                    binder: Default::default(),
                     span,
                     name: "x".into(),
                     ty: word.clone(),
@@ -87,8 +90,10 @@ fn lowers_word_bool_and_structural_aggregates_to_verified_ir() {
             },
             Function {
                 span,
+                generated: None,
                 name: "choose".into(),
                 args: vec![Arg {
+                    binder: Default::default(),
                     span,
                     name: "flag".into(),
                     ty: bool_ty.clone(),
@@ -110,8 +115,10 @@ fn lowers_word_bool_and_structural_aggregates_to_verified_ir() {
             },
             Function {
                 span,
+                generated: None,
                 name: "aggregate_id".into(),
                 args: vec![Arg {
+                    binder: Default::default(),
                     span,
                     name: "x".into(),
                     ty: sum.clone(),
@@ -142,6 +149,7 @@ fn hull_function_symbols_are_injective_and_separate_from_section_entries() {
     let unit = Ty::unit(span);
     let function = |name: &'static str| Function {
         span,
+        generated: None,
         name: name.into(),
         args: Vec::new(),
         ret: unit.clone(),
@@ -151,6 +159,7 @@ fn hull_function_symbols_are_injective_and_separate_from_section_entries() {
         }],
     };
     let program = Program {
+        debug: Default::default(),
         span,
         entry_points: Vec::new(),
         functions: vec![function("foo$bar"), function("foo_bar"), function("entry")],
@@ -179,11 +188,13 @@ fn aggregate_locals_are_zero_initialized_recursively() {
     let sum = Ty::sum(span, word.clone(), word.clone());
     let pair_var = || Expr::var(span, "pair", pair.clone());
     let program = Program {
+        debug: Default::default(),
         span,
         entry_points: Vec::new(),
         functions: vec![
             Function {
                 span,
+                generated: None,
                 name: "main".into(),
                 args: Vec::new(),
                 ret: word.clone(),
@@ -191,6 +202,7 @@ fn aggregate_locals_are_zero_initialized_recursively() {
                     Stmt {
                         span,
                         kind: StmtKind::Let {
+                            binds: Default::default(),
                             name: "pair".into(),
                             ty: pair.clone(),
                         },
@@ -198,6 +210,7 @@ fn aggregate_locals_are_zero_initialized_recursively() {
                     Stmt {
                         span,
                         kind: StmtKind::Assign {
+                            binds: Default::default(),
                             lhs: Expr {
                                 span,
                                 ty: word.clone(),
@@ -218,6 +231,7 @@ fn aggregate_locals_are_zero_initialized_recursively() {
             },
             Function {
                 span,
+                generated: None,
                 name: "zero_sum".into(),
                 args: Vec::new(),
                 ret: sum.clone(),
@@ -225,6 +239,7 @@ fn aggregate_locals_are_zero_initialized_recursively() {
                     Stmt {
                         span,
                         kind: StmtKind::Let {
+                            binds: Default::default(),
                             name: "sum".into(),
                             ty: sum.clone(),
                         },
@@ -266,6 +281,7 @@ fn all_sibling_and_nested_hull_objects_become_embedded_sections() {
     let sibling = object("Sibling", vec![grandchild]);
     let runtime = object("Runtime", Vec::new());
     let program = Program {
+        debug: Default::default(),
         span,
         entry_points: Vec::new(),
         functions: Vec::new(),
@@ -311,13 +327,16 @@ fn lowers_direct_nary_injections_matches_and_terminal_builtins() {
         }],
     };
     let program = Program {
+        debug: Default::default(),
         span,
         entry_points: Vec::new(),
         functions: vec![
             Function {
                 span,
+                generated: None,
                 name: "pick".into(),
                 args: vec![Arg {
+                    binder: Default::default(),
                     span,
                     name: "choice".into(),
                     ty: three_way.clone(),
@@ -326,6 +345,7 @@ fn lowers_direct_nary_injections_matches_and_terminal_builtins() {
                 body: vec![Stmt {
                     span,
                     kind: StmtKind::Match {
+                        condition: Default::default(),
                         target: three_way.clone(),
                         scrutinee: Expr::var(span, "choice", three_way.clone()),
                         alts: vec![alt(0, "10"), alt(1, "20"), alt(2, "30")],
@@ -334,6 +354,7 @@ fn lowers_direct_nary_injections_matches_and_terminal_builtins() {
             },
             Function {
                 span,
+                generated: None,
                 name: "halt".into(),
                 args: Vec::new(),
                 ret: Ty::unit(span),
@@ -357,6 +378,7 @@ fn lowers_direct_nary_injections_matches_and_terminal_builtins() {
             },
             Function {
                 span,
+                generated: None,
                 name: "main".into(),
                 args: Vec::new(),
                 ret: word.clone(),
@@ -391,6 +413,7 @@ fn missing_or_ambiguous_declared_entry_is_rejected() {
         vec!["first".into(), "second".into()],
     ] {
         let program = Program {
+            debug: Default::default(),
             span,
             entry_points: entries,
             functions: Vec::new(),
@@ -406,6 +429,7 @@ fn runtime_return_wrapper_uses_an_explicit_checked_entry() {
     let span = test_span(&db);
     let function = |name: &str, value: &str| Function {
         span,
+        generated: None,
         name: name.into(),
         args: Vec::new(),
         ret: Ty::word(span),
@@ -415,6 +439,7 @@ fn runtime_return_wrapper_uses_an_explicit_checked_entry() {
         }],
     };
     let mut program = Program {
+        debug: Default::default(),
         span,
         entry_points: Vec::new(),
         functions: Vec::new(),
@@ -466,6 +491,7 @@ fn runtime_return_wrapper_uses_an_explicit_checked_entry() {
     program.objects[0].inners[0].code.functions[1]
         .args
         .push(Arg {
+            binder: Default::default(),
             span,
             name: "arg".into(),
             ty: Ty::word(span),
@@ -974,10 +1000,12 @@ fn zero_return_inline_yul_function_calls_are_valid_expression_statements() {
     let db = TestDb::default();
     let span = test_span(&db);
     let program = Program {
+        debug: Default::default(),
         span,
         entry_points: Vec::new(),
         functions: vec![Function {
             span,
+            generated: None,
             name: "main".into(),
             args: Vec::new(),
             ret: Ty::unit(span),
@@ -1031,10 +1059,12 @@ fn inline_yul_functions_do_not_capture_outer_values() {
     let span = test_span(&db);
     let word = Ty::word(span);
     let program = Program {
+        debug: Default::default(),
         span,
         entry_points: Vec::new(),
         functions: vec![Function {
             span,
+            generated: None,
             name: "main".into(),
             args: Vec::new(),
             ret: word.clone(),
@@ -1042,6 +1072,7 @@ fn inline_yul_functions_do_not_capture_outer_values() {
                 Stmt {
                     span,
                     kind: StmtKind::Let {
+                        binds: Default::default(),
                         name: "outer".into(),
                         ty: word.clone(),
                     },
@@ -1085,10 +1116,12 @@ fn inline_yul_functions_do_not_inherit_outer_loop_targets() {
     let db = TestDb::default();
     let span = test_span(&db);
     let program = Program {
+        debug: Default::default(),
         span,
         entry_points: Vec::new(),
         functions: vec![Function {
             span,
+            generated: None,
             name: "main".into(),
             args: Vec::new(),
             ret: Ty::unit(span),
@@ -1194,10 +1227,12 @@ fn literal_revert_enforces_one_word_message_boundary() {
     let db = TestDb::default();
     let span = test_span(&db);
     let program = |message: &str| Program {
+        debug: Default::default(),
         span,
         entry_points: Vec::new(),
         functions: vec![Function {
             span,
+            generated: None,
             name: "main".into(),
             args: Vec::new(),
             ret: Ty::unit(span),

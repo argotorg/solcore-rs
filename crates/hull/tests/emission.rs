@@ -1077,3 +1077,214 @@ fn regressions_strings_revert_literal(fixture: Fixture<&str>) {
         assert!(!hull.contains("0x6e128399"), "{hull}");
     });
 }
+
+/// Number of leading spaces of an origin listing line.
+fn listing_indent(line: &str) -> usize {
+    line.len() - line.trim_start().len()
+}
+
+/// The lines below the header of the listed function whose name starts with
+/// `name_prefix`, up to the next node at the header's depth or above.
+fn listing_function<'a>(listing: &'a str, name_prefix: &str) -> Vec<&'a str> {
+    let lines = listing.lines().collect::<Vec<_>>();
+    let header = lines
+        .iter()
+        .position(|line| {
+            line.trim_start()
+                .strip_prefix("fn ")
+                .is_some_and(|rest| rest.starts_with(name_prefix))
+        })
+        .unwrap_or_else(|| panic!("missing listed function {name_prefix:?}\n{listing}"));
+    let depth = listing_indent(lines[header]);
+    lines[header + 1..]
+        .iter()
+        .copied()
+        .take_while(|line| listing_indent(line) > depth)
+        .collect()
+}
+
+/// The `start-end` range of a listing line that ends in a range and a file.
+fn listing_range(line: &str) -> (usize, usize) {
+    let range = line
+        .split_whitespace()
+        .rev()
+        .nth(1)
+        .unwrap_or_else(|| panic!("listing line without a range: {line:?}"));
+    let (start, end) = range
+        .split_once('-')
+        .unwrap_or_else(|| panic!("listing line without a range: {line:?}"));
+    (
+        start.parse().expect("range start"),
+        end.parse().expect("range end"),
+    )
+}
+
+/// The range of the word literal `value` in `function`, and the range of the
+/// statement that holds it.
+fn literal_and_statement(function: &[&str], value: &str) -> ((usize, usize), (usize, usize)) {
+    let literal = function
+        .iter()
+        .position(|line| line.trim_start().starts_with(&format!("E word {value} ")))
+        .unwrap_or_else(|| panic!("missing literal {value}:\n{}", function.join("\n")));
+    let statement = function[..literal]
+        .iter()
+        .rposition(|line| {
+            listing_indent(line) < listing_indent(function[literal])
+                && line.trim_start().starts_with("S ")
+        })
+        .expect("a literal sits inside a statement");
+    (
+        listing_range(function[literal]),
+        listing_range(function[statement]),
+    )
+}
+
+#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/regressions/locations/folded_value", glob: "main.sol")]
+fn locations_folded_value_is_located_at_the_request(fixture: Fixture<&str>) {
+    let source = fixture.content().to_string();
+    with_emission(fixture, FixtureOptions::default(), move |db, emitted| {
+        assert_emission_diagnostics(&emitted, true);
+        let listing = solcore_hull::origin_listing(db, &emitted.program);
+
+        // Fires: `outer()` folds to the literal in `inner`. The literal is
+        // located at the call that asked for it, inside its statement.
+        let folded = listing_function(&listing, "main_C_folded_");
+        let (literal, statement) = literal_and_statement(&folded, "42");
+        assert_eq!(&source[literal.0..literal.1], "outer()", "{listing}");
+        assert!(
+            statement.0 <= literal.0 && literal.1 <= statement.1,
+            "{literal:?} is outside {statement:?}\n{listing}"
+        );
+
+        // Silent: a literal written in the statement keeps its own range.
+        let direct = listing_function(&listing, "main_C_direct_");
+        let (literal, statement) = literal_and_statement(&direct, "7");
+        assert_eq!(&source[literal.0..literal.1], "7", "{listing}");
+        assert!(
+            statement.0 <= literal.0 && literal.1 <= statement.1,
+            "{literal:?} is outside {statement:?}\n{listing}"
+        );
+    });
+}
+
+#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/regressions/locations/closure_capture", glob: "main.sol")]
+fn locations_capture_bindings_are_located_at_the_lambda(fixture: Fixture<&str>) {
+    let source = fixture.content().to_string();
+    with_emission(fixture, FixtureOptions::default(), move |db, emitted| {
+        assert_emission_diagnostics(&emitted, true);
+        let listing = solcore_hull::origin_listing(db, &emitted.program);
+
+        // Fires: each capture binding has the range of a lifted lambda, which
+        // is the text of a `lam` expression.
+        let lambdas = listing
+            .lines()
+            .filter(|line| line.trim_start().starts_with("fn __lambda"))
+            .map(listing_range)
+            .collect::<Vec<_>>();
+        assert_eq!(lambdas.len(), 2, "{listing}");
+        let capturing = listing_function(&listing, "main_C_capturing_");
+        let captures = capturing
+            .iter()
+            .filter(|line| line.trim_start().starts_with("S let $captured"))
+            .map(|line| listing_range(line))
+            .collect::<Vec<_>>();
+        assert_eq!(captures.len(), 2, "{}", capturing.join("\n"));
+        for range in captures {
+            assert!(lambdas.contains(&range), "{range:?} in {lambdas:?}");
+            assert!(source[range.0..range.1].starts_with("lam "), "{range:?}");
+        }
+
+        // Silent: a lambda without a capture needs no capture binding.
+        let plain = listing_function(&listing, "main_C_plain_");
+        assert!(
+            plain.iter().all(|line| !line.contains("$captured")),
+            "{}",
+            plain.join("\n")
+        );
+    });
+}
+
+/// Every listed function whose name starts with `prefix`, and each of its
+/// statements, has the generated reason `reason`.
+fn assert_helpers_are_generated(listing: &str, prefix: &str, reason: &str) {
+    let marker = format!(" gen {reason} ");
+    let names = listing
+        .lines()
+        .filter_map(|line| line.trim_start().strip_prefix("fn "))
+        .filter(|rest| rest.starts_with(prefix))
+        .filter_map(|rest| rest.split_whitespace().next())
+        .collect::<Vec<_>>();
+    assert!(!names.is_empty(), "no `{prefix}` helper\n{listing}");
+    for name in names {
+        let header = listing
+            .lines()
+            .find(|line| line.trim_start().starts_with(&format!("fn {name} ")))
+            .expect("listed function");
+        assert!(header.contains(&marker), "{header}\n{listing}");
+        let function = listing_function(listing, name);
+        let statements = function
+            .iter()
+            .filter(|line| line.trim_start().starts_with("S "))
+            .collect::<Vec<_>>();
+        assert!(!statements.is_empty(), "{name}\n{listing}");
+        for statement in statements {
+            assert!(statement.contains(&marker), "{statement}\n{listing}");
+        }
+    }
+}
+
+/// The statements of the listed function whose name starts with `prefix` are
+/// source: written code is not marked as generated.
+fn assert_statements_are_source(listing: &str, prefix: &str) {
+    let function = listing_function(listing, prefix);
+    let statements = function
+        .iter()
+        .filter(|line| line.trim_start().starts_with("S "))
+        .collect::<Vec<_>>();
+    assert!(!statements.is_empty(), "{prefix}\n{listing}");
+    for statement in statements {
+        assert!(statement.contains(" src "), "{statement}\n{listing}");
+    }
+}
+
+#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/regressions/strings/objectless_string_materializer", glob: "main.sol")]
+fn locations_string_literal_helpers_are_generated(fixture: Fixture<&str>) {
+    with_emission(fixture, FixtureOptions::default(), |db, emitted| {
+        let listing = solcore_hull::origin_listing(db, &emitted.program);
+        assert_helpers_are_generated(&listing, "__strlit_", "literal");
+    });
+}
+
+#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/regressions/strings/nested_revert_literal", glob: "main.sol")]
+fn locations_revert_literal_helpers_are_generated(fixture: Fixture<&str>) {
+    with_emission(fixture, FixtureOptions::default(), |db, emitted| {
+        let listing = solcore_hull::origin_listing(db, &emitted.program);
+        assert_helpers_are_generated(&listing, "__revertlit_", "literal");
+    });
+}
+
+/// Struct field getters and setters are shared per struct type and field, so
+/// they are generated code: no field access owns them.
+#[dir_test(dir: "$CARGO_MANIFEST_DIR/../../tests/e2e/struct-storage", glob: "main.sol")]
+fn locations_struct_accessors_are_generated(fixture: Fixture<&str>) {
+    with_emission(fixture, FixtureOptions::default(), |db, emitted| {
+        let listing = solcore_hull::origin_listing(db, &emitted.program);
+        assert_helpers_are_generated(&listing, "struct_get_", "derived");
+        assert_helpers_are_generated(&listing, "struct_set_", "derived");
+        // Silent: the functions that use the accessors are written code.
+        assert_statements_are_source(&listing, "main_C_getX_");
+        assert_statements_are_source(&listing, "main_C_setX_");
+    });
+}
+
+/// The function that decodes constructor arguments is made by the compiler for
+/// the whole constructor, so it is generated entry code. The constructor body
+/// is written code.
+#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/regressions/constructor_arguments", glob: "main.sol")]
+fn locations_constructor_argument_copy_is_generated(fixture: Fixture<&str>) {
+    with_emission(fixture, FixtureOptions::default(), |db, emitted| {
+        let listing = solcore_hull::origin_listing(db, &emitted.program);
+        assert_helpers_are_generated(&listing, "main_C_copy_arguments_for_constructor_", "entry");
+        assert_statements_are_source(&listing, "main_C_init__");
+    });
+}

@@ -260,8 +260,8 @@ impl<'db> Translator<'db> {
 
     fn gen_stmt(&mut self, stmt: &HullStmt<'db>) -> Result<Vec<Stmt>, TranslationError> {
         match &stmt.kind {
-            StmtKind::Let { name, ty } => self.alloc_var(name.as_str(), ty),
-            StmtKind::Assign { lhs, rhs } => self.hull_assign(lhs, rhs),
+            StmtKind::Let { name, ty, .. } => self.alloc_var(name.as_str(), ty),
+            StmtKind::Assign { lhs, rhs, .. } => self.hull_assign(lhs, rhs),
             StmtKind::Expr(expr) => self.gen_expr(expr).map(|(stmts, _)| stmts),
             StmtKind::Return(expr) => {
                 let (mut out, loc) = self.gen_expr(expr)?;
@@ -308,6 +308,7 @@ impl<'db> Translator<'db> {
                 target,
                 scrutinee,
                 alts,
+                ..
             } => {
                 let (mut out, loc) = self.gen_expr(scrutinee)?;
                 let normalized = normalize_loc(loc);

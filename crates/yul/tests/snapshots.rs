@@ -209,6 +209,7 @@ fn ink_binary_sum_preserves_nested_layout_snapshot() {
         HullTy::sum(sp, unit.clone(), unit.clone()),
     );
     let program = HullProgram {
+        debug: Default::default(),
         span: sp,
         entry_points: Vec::new(),
         functions: Vec::new(),
@@ -220,6 +221,7 @@ fn ink_binary_sum_preserves_nested_layout_snapshot() {
                 stmts: Vec::new(),
                 functions: vec![HullFunction {
                     span: sp,
+                    generated: None,
                     name: "pick_third".into(),
                     args: Vec::new(),
                     ret: target.clone(),
@@ -255,6 +257,7 @@ fn if_expression_branches_are_lowered_inside_switch_snapshot() {
     let word = HullTy::word(sp);
     let bool_ty = HullTy::bool(sp);
     let program = HullProgram {
+        debug: Default::default(),
         span: sp,
         entry_points: Vec::new(),
         functions: Vec::new(),
@@ -267,6 +270,7 @@ fn if_expression_branches_are_lowered_inside_switch_snapshot() {
                 functions: vec![
                     HullFunction {
                         span: sp,
+                        generated: None,
                         name: "then_value".into(),
                         args: Vec::new(),
                         ret: word.clone(),
@@ -277,6 +281,7 @@ fn if_expression_branches_are_lowered_inside_switch_snapshot() {
                     },
                     HullFunction {
                         span: sp,
+                        generated: None,
                         name: "else_value".into(),
                         args: Vec::new(),
                         ret: word.clone(),
@@ -287,6 +292,7 @@ fn if_expression_branches_are_lowered_inside_switch_snapshot() {
                     },
                     HullFunction {
                         span: sp,
+                        generated: None,
                         name: "main".into(),
                         args: Vec::new(),
                         ret: word.clone(),
@@ -346,6 +352,7 @@ fn word_literals_wrap_to_256_bits_in_yul_expressions_and_patterns() {
     let sp = test_span(&db);
     let word = HullTy::word(sp);
     let program = HullProgram {
+        debug: Default::default(),
         span: sp,
         entry_points: Vec::new(),
         functions: Vec::new(),
@@ -358,6 +365,7 @@ fn word_literals_wrap_to_256_bits_in_yul_expressions_and_patterns() {
                 functions: vec![
                     HullFunction {
                         span: sp,
+                        generated: None,
                         name: "exact".into(),
                         args: Vec::new(),
                         ret: word.clone(),
@@ -368,6 +376,7 @@ fn word_literals_wrap_to_256_bits_in_yul_expressions_and_patterns() {
                     },
                     HullFunction {
                         span: sp,
+                        generated: None,
                         name: "plus".into(),
                         args: Vec::new(),
                         ret: word.clone(),
@@ -378,8 +387,10 @@ fn word_literals_wrap_to_256_bits_in_yul_expressions_and_patterns() {
                     },
                     HullFunction {
                         span: sp,
+                        generated: None,
                         name: "pick".into(),
                         args: vec![HullArg {
+                            binder: Default::default(),
                             span: sp,
                             name: "x".into(),
                             ty: word.clone(),
@@ -388,6 +399,7 @@ fn word_literals_wrap_to_256_bits_in_yul_expressions_and_patterns() {
                         body: vec![HullStmt {
                             span: sp,
                             kind: HullStmtKind::Match {
+                                condition: Default::default(),
                                 target: word.clone(),
                                 scrutinee: HullExpr::var(sp, "x", word.clone()),
                                 alts: vec![
@@ -459,6 +471,7 @@ fn copy_locs_rejects_arity_mismatch() {
         HullTy::sum(sp, unit.clone(), unit.clone()),
     );
     let program = HullProgram {
+        debug: Default::default(),
         span: sp,
         entry_points: Vec::new(),
         functions: Vec::new(),
@@ -469,6 +482,7 @@ fn copy_locs_rejects_arity_mismatch() {
                 span: sp,
                 functions: vec![HullFunction {
                     span: sp,
+                    generated: None,
                     name: "bad".into(),
                     args: Vec::new(),
                     ret: HullTy::unit(sp),
@@ -476,6 +490,7 @@ fn copy_locs_rejects_arity_mismatch() {
                         HullStmt {
                             span: sp,
                             kind: HullStmtKind::Let {
+                                binds: Default::default(),
                                 name: "x".into(),
                                 ty: target.clone(),
                             },
@@ -483,6 +498,7 @@ fn copy_locs_rejects_arity_mismatch() {
                         HullStmt {
                             span: sp,
                             kind: HullStmtKind::Assign {
+                                binds: Default::default(),
                                 lhs: HullExpr::var(sp, "x", target),
                                 rhs: HullExpr::word(sp, "0"),
                             },
@@ -510,6 +526,7 @@ fn zero_sized_structured_return_needs_no_result_binding() {
     let unit = HullTy::unit(sp);
     let zero_sized = HullTy::product(sp, unit.clone(), unit.clone());
     let program = HullProgram {
+        debug: Default::default(),
         span: sp,
         entry_points: Vec::new(),
         functions: Vec::new(),
@@ -520,6 +537,7 @@ fn zero_sized_structured_return_needs_no_result_binding() {
                 span: sp,
                 functions: vec![HullFunction {
                     span: sp,
+                    generated: None,
                     name: "zero".into(),
                     args: Vec::new(),
                     ret: zero_sized.clone(),
@@ -577,12 +595,14 @@ fn assembly_calls_use_checked_hull_function_resolution() {
     };
     let function = |callee: &str, ret, body| HullFunction {
         span: sp,
+        generated: None,
         name: callee.into(),
         args: vec![],
         ret,
         body,
     };
     let program = HullProgram {
+        debug: Default::default(),
         span: sp,
         entry_points: vec!["main".into()],
         objects: vec![],
@@ -829,10 +849,12 @@ fn top_level_no_object_hull_wraps_like_assemble_hs_snapshot() {
     let sp = test_span(&db);
     let word = HullTy::word(sp);
     let program = HullProgram {
+        debug: Default::default(),
         span: sp,
         entry_points: vec!["main".into()],
         functions: vec![HullFunction {
             span: sp,
+            generated: None,
             name: "main".into(),
             args: Vec::new(),
             ret: word.clone(),

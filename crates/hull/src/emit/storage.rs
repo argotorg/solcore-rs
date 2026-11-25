@@ -41,6 +41,32 @@ impl<'db> Emitter<'db> {
         fields
     }
 
+    /// The fields of a contract as declared, with the lowered and normalized
+    /// type of each. Only debug information reads them: they are built the way
+    /// [`Self::contract_storage_fields`] builds its types, and no pass depends
+    /// on them.
+    pub(super) fn contract_field_facts(&mut self, def: DefId<'db>) -> Vec<FieldFacts<'db>> {
+        let module = parse_file_to_hir(self.db, def.file(self.db)).module(self.db);
+        let Some(contract) = find_contract(self.db, module, def) else {
+            return Vec::new();
+        };
+        let resolutions = storage_item_type_facts(self.db, module);
+        let lowerer =
+            TypeLowering::from_item_resolutions(self.db, &resolutions, BinderEnv::empty());
+        let mut normalizer = AliasNormalizer::new(self.db, module, &resolutions);
+        contract
+            .fields(self.db)
+            .iter()
+            .enumerate()
+            .map(|(index, field)| FieldFacts {
+                name: field.name().atom().text(self.db).to_owned(),
+                declaration: field.name().span(self.db),
+                ty: normalizer.normalize_ty(lowerer.lower_field(field).ty),
+                index,
+            })
+            .collect()
+    }
+
     fn user_adt_storage_field_kind(
         &mut self,
         ty: SemTy<'db>,
@@ -86,14 +112,17 @@ impl<'db> Emitter<'db> {
         let word = Ty::word(span);
         Function {
             span,
+            generated: Some(GeneratedReason::StorageHelper),
             name: name.into(),
             args: vec![
                 Arg {
+                    binder: DebugBinder::default(),
                     span,
                     name: "x".into(),
                     ty: word.clone(),
                 },
                 Arg {
+                    binder: DebugBinder::default(),
                     span,
                     name: "y".into(),
                     ty: word.clone(),
@@ -104,6 +133,7 @@ impl<'db> Emitter<'db> {
                 Stmt {
                     span,
                     kind: StmtKind::Let {
+                        binds: DebugBinder::default(),
                         name: "out".into(),
                         ty: word.clone(),
                     },
@@ -190,14 +220,17 @@ impl<'db> Emitter<'db> {
         };
         Function {
             span,
+            generated: Some(GeneratedReason::StorageHelper),
             name: name.into(),
             args: vec![
                 Arg {
+                    binder: DebugBinder::default(),
                     span,
                     name: "base".into(),
                     ty: word.clone(),
                 },
                 Arg {
+                    binder: DebugBinder::default(),
                     span,
                     name: "index".into(),
                     ty: word.clone(),
@@ -208,6 +241,7 @@ impl<'db> Emitter<'db> {
                 Stmt {
                     span,
                     kind: StmtKind::Let {
+                        binds: DebugBinder::default(),
                         name: "out".into(),
                         ty: word.clone(),
                     },
@@ -269,8 +303,10 @@ impl<'db> Emitter<'db> {
         let word = Ty::word(span);
         Function {
             span,
+            generated: Some(GeneratedReason::StorageHelper),
             name: name.into(),
             args: vec![Arg {
+                binder: DebugBinder::default(),
                 span,
                 name: "slot".into(),
                 ty: word.clone(),
@@ -351,14 +387,14 @@ impl<'a, 'db> StorageLowerer<'a, 'db> {
 
     fn stmt(&mut self, stmt: Stmt<'db>) -> Vec<Stmt<'db>> {
         match stmt.kind {
-            StmtKind::Let { name, ty } => {
+            StmtKind::Let { name, ty, binds } => {
                 self.shadows.last_mut().insert(name.as_str().to_owned());
                 vec![Stmt {
                     span: stmt.span,
-                    kind: StmtKind::Let { name, ty },
+                    kind: StmtKind::Let { name, ty, binds },
                 }]
             }
-            StmtKind::Assign { lhs, rhs } => {
+            StmtKind::Assign { lhs, rhs, binds } => {
                 if let ExprKind::Var(name) = &lhs.kind
                     && let Some(slot) = self.direct_field(name.as_str()).map(|field| field.slot)
                 {
@@ -368,6 +404,7 @@ impl<'a, 'db> StorageLowerer<'a, 'db> {
                         Stmt {
                             span: stmt.span,
                             kind: StmtKind::Let {
+                                binds: DebugBinder::default(),
                                 name: temp.clone().into(),
                                 ty: lhs.ty.clone(),
                             },
@@ -375,6 +412,7 @@ impl<'a, 'db> StorageLowerer<'a, 'db> {
                         Stmt {
                             span: stmt.span,
                             kind: StmtKind::Assign {
+                                binds: DebugBinder::default(),
                                 lhs: Expr::var(stmt.span, temp.clone(), lhs.ty),
                                 rhs,
                             },
@@ -411,6 +449,7 @@ impl<'a, 'db> StorageLowerer<'a, 'db> {
                         Stmt {
                             span: stmt.span,
                             kind: StmtKind::Let {
+                                binds: DebugBinder::default(),
                                 name: temp.clone().into(),
                                 ty: lhs.ty.clone(),
                             },
@@ -418,6 +457,7 @@ impl<'a, 'db> StorageLowerer<'a, 'db> {
                         Stmt {
                             span: stmt.span,
                             kind: StmtKind::Assign {
+                                binds: DebugBinder::default(),
                                 lhs: Expr::var(stmt.span, temp, lhs.ty),
                                 rhs,
                             },
@@ -425,6 +465,7 @@ impl<'a, 'db> StorageLowerer<'a, 'db> {
                         Stmt {
                             span: stmt.span,
                             kind: StmtKind::Let {
+                                binds: DebugBinder::default(),
                                 name: trap.clone().into(),
                                 ty: word.clone(),
                             },
@@ -432,6 +473,7 @@ impl<'a, 'db> StorageLowerer<'a, 'db> {
                         Stmt {
                             span: stmt.span,
                             kind: StmtKind::Assign {
+                                binds: DebugBinder::default(),
                                 lhs: Expr::var(stmt.span, trap, word.clone()),
                                 rhs: Expr {
                                     span: stmt.span,
@@ -456,6 +498,7 @@ impl<'a, 'db> StorageLowerer<'a, 'db> {
                         Stmt {
                             span: stmt.span,
                             kind: StmtKind::Let {
+                                binds: DebugBinder::default(),
                                 name: slot_temp.clone().into(),
                                 ty: Ty::word(stmt.span),
                             },
@@ -463,6 +506,7 @@ impl<'a, 'db> StorageLowerer<'a, 'db> {
                         Stmt {
                             span: stmt.span,
                             kind: StmtKind::Assign {
+                                binds: DebugBinder::default(),
                                 lhs: slot_ref.clone(),
                                 rhs: lowered_slot,
                             },
@@ -470,6 +514,7 @@ impl<'a, 'db> StorageLowerer<'a, 'db> {
                         Stmt {
                             span: stmt.span,
                             kind: StmtKind::Let {
+                                binds: DebugBinder::default(),
                                 name: value_temp.clone().into(),
                                 ty: lhs.ty.clone(),
                             },
@@ -477,6 +522,7 @@ impl<'a, 'db> StorageLowerer<'a, 'db> {
                         Stmt {
                             span: stmt.span,
                             kind: StmtKind::Assign {
+                                binds: DebugBinder::default(),
                                 lhs: Expr::var(stmt.span, value_temp.clone(), lhs.ty),
                                 rhs,
                             },
@@ -500,6 +546,7 @@ impl<'a, 'db> StorageLowerer<'a, 'db> {
                 vec![Stmt {
                     span: stmt.span,
                     kind: StmtKind::Assign {
+                        binds,
                         lhs: self.expr(lhs),
                         rhs: self.expr(rhs),
                     },
@@ -543,6 +590,7 @@ impl<'a, 'db> StorageLowerer<'a, 'db> {
                 target,
                 scrutinee,
                 alts,
+                condition,
             } => {
                 let scrutinee = self.expr(scrutinee);
                 let alts = alts
@@ -555,6 +603,7 @@ impl<'a, 'db> StorageLowerer<'a, 'db> {
                         target,
                         scrutinee,
                         alts,
+                        condition,
                     },
                 }]
             }

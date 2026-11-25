@@ -7,7 +7,7 @@ use crate::{
     args::{ParsedArgs, help_text, parse_args, usage_text},
     db::DriverDb,
     diagnostics::{apply_warning_policy, render_diagnostics},
-    emit::{BackendFailure, maybe_emit_abi_outputs, maybe_emit_backend_outputs},
+    emit::{BackendFailure, emit_outputs},
     modules::load_reachable_modules,
     paths::{
         absolutize, module_fs_snapshot_for_roots, resolve_main_root, resolve_std_root,
@@ -140,14 +140,7 @@ pub(crate) fn run_compiler() {
         eprint!("{}", render_diagnostics(&db, &diagnostics, &args));
     }
     if !has_errors {
-        match maybe_emit_abi_outputs(&db, entry, &args) {
-            Ok(()) => {}
-            Err(message) => {
-                eprintln!("{message}");
-                std::process::exit(1);
-            }
-        }
-        match maybe_emit_backend_outputs(&db, entry_file, &args) {
+        match emit_outputs(&db, entry, entry_file, &args) {
             Ok(mut diagnostics) => {
                 apply_warning_policy(&mut diagnostics, args.warning_policy);
                 if !diagnostics.is_empty() {

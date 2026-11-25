@@ -10,6 +10,8 @@
 mod check;
 mod emit;
 mod ir;
+pub mod origin;
+mod origin_listing;
 mod pretty;
 mod scope_stack;
 mod word;
@@ -17,8 +19,10 @@ mod word;
 pub use check::{CheckDiagnostic, CheckDiagnosticKind, check_program, check_program_with_db};
 pub use emit::{EmitDiagnostic, EmitDiagnosticKind, EmitOptions, EmitOutput, emit_module};
 pub use ir::{
-    Alt, Arg, CodeBlock, Con, Expr, ExprKind, Function, HullName, Name, Object, Pat, PatKind,
-    Program, Stmt, StmtKind, Ty, TyKind,
+    Alt, Arg, BinderId, CodeBlock, Con, DebugBinder, DebugCondition, DebugTables, Expr, ExprKind,
+    FieldFacts, Function, HullName, Name, Object, Pat, PatKind, Program, SourceBinder, Stmt,
+    StmtKind, Ty, TyKind,
 };
+pub use origin_listing::origin_listing;
 pub use pretty::{PrettyHull, pretty_program};
 pub use word::{WordLiteralError, wrap_word_literal};

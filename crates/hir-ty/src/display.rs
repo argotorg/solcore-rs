@@ -13,6 +13,13 @@ pub(crate) fn display_var_name(index: u32, names: &[String]) -> String {
         .unwrap_or_else(|| "_".to_owned())
 }
 
+/// The type as source text spells it: `mapping(k => v)`, `Pair<a, b>`, `(a, b)` and
+/// `function(a) returns (r)`. Alias names do not survive normalization, so an
+/// alias is shown as the type it stands for. Meant for display only.
+pub fn display_ty<'db>(db: &'db dyn Db, ty: Ty<'db>) -> String {
+    display_ty_source(db, ty, &[])
+}
+
 pub(crate) fn display_ty_source<'db>(db: &'db dyn Db, ty: Ty<'db>, names: &[String]) -> String {
     match ty.kind(db) {
         TyKind::Error => "<error>".to_owned(),
