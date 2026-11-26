@@ -40,6 +40,8 @@ pub(super) struct BodyIndex<'db> {
         FxHashMap<(FuncBody<'db>, Id<Expr<'db>>), LogicalEvidenceBindings<'db>>,
     string_coercion_evidence: FxHashMap<(FuncBody<'db>, Id<Expr<'db>>), LogicalEvidence<'db>>,
     integer_literal_evidence: FxHashMap<(FuncBody<'db>, Id<Expr<'db>>), LogicalEvidence<'db>>,
+    integer_literal_pattern_evidence:
+        FxHashMap<(FuncBody<'db>, Id<Pat<'db>>), LogicalEvidence<'db>>,
     first_builtin_int_evidence: Option<CallSiteEvidence<'db>>,
     comptime_let_stmts: FxHashSet<(FuncBody<'db>, Id<Stmt<'db>>)>,
     comptime_obligations: FxHashMap<FuncBody<'db>, Vec<ComptimeObligation<'db>>>,
@@ -64,6 +66,7 @@ impl<'db> BodyIndex<'db> {
             class_method_value_bindings: FxHashMap::default(),
             string_coercion_evidence: FxHashMap::default(),
             integer_literal_evidence: FxHashMap::default(),
+            integer_literal_pattern_evidence: FxHashMap::default(),
             first_builtin_int_evidence: None,
             comptime_let_stmts: FxHashSet::default(),
             comptime_obligations: FxHashMap::default(),
@@ -164,6 +167,14 @@ impl<'db> BodyIndex<'db> {
                 index
                     .integer_literal_evidence
                     .entry((body, expr))
+                    .or_insert_with(|| solved.evidence.clone());
+                continue;
+            }
+            if let hir_ty::ObligationSource::IntegerLiteralPattern { body, pat } = obligation.source
+            {
+                index
+                    .integer_literal_pattern_evidence
+                    .entry((body, pat))
                     .or_insert_with(|| solved.evidence.clone());
                 continue;
             }
@@ -1024,6 +1035,41 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
                             kind: MonoPatKind::Lit(lit.clone()),
                         }],
                     }
+                } else if matches!(lit, LitKind::Number(_) | LitKind::Hex(_))
+                    && matches!(
+                        value_ty.kind(self.driver.db),
+                        TyKind::Named {
+                            ctor: TyCtor::User(_),
+                            ..
+                        }
+                    )
+                    && let Some(evidence) = self
+                        .index
+                        .integer_literal_pattern_evidence
+                        .get(&(self.body, pat_id))
+                        .cloned()
+                {
+                    // On any other type with an `Int` instance the literal
+                    // stands for `Int.fromInteger` of it. Evaluation turns
+                    // that compile-time value into the pattern.
+                    let source = MonoExpr {
+                        span: pat.span,
+                        ty: MonoTy::new_unchecked(Ty::integer(self.driver.db)),
+                        kind: MonoExprKind::Lit(lit.clone()),
+                    };
+                    let kind = self.int_from_integer_call(
+                        vec![source],
+                        value_ty,
+                        pat.span,
+                        Some(evidence),
+                    )?;
+                    MonoPatKind::ComptimeLabel(MonoExpr {
+                        span: pat.span,
+                        ty: self
+                            .driver
+                            .mono_ty(value_ty, "integer literal pattern", pat.span)?,
+                        kind,
+                    })
                 } else {
                     MonoPatKind::Lit(lit.clone())
                 }

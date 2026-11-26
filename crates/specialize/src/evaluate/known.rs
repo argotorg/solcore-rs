@@ -84,12 +84,41 @@ pub(super) fn known_bool<'db>(db: &'db dyn hir_ty::Db, expr: &MonoExpr<'db>) -> 
     }
 }
 
-pub(super) fn literal_from_known_expr(expr: &MonoExpr<'_>) -> Option<LitKind> {
+/// The pattern that matches exactly the known value `expr`: a literal, or a
+/// constructor or tuple of such values, as `Int.fromInteger` builds for an
+/// integer literal pattern.
+pub(super) fn pattern_from_known_expr<'db>(expr: &MonoExpr<'db>) -> Option<MonoPatKind<'db>> {
+    let pats = |values: &[MonoExpr<'db>]| {
+        values
+            .iter()
+            .map(|value| {
+                Some(MonoPat {
+                    span: value.span,
+                    ty: value.ty,
+                    kind: pattern_from_known_expr(value)?,
+                })
+            })
+            .collect::<Option<Vec<_>>>()
+    };
     match &expr.kind {
-        MonoExprKind::Lit(lit) => Some(lit.clone()),
-        MonoExprKind::TypeAnnot { expr, .. } => literal_from_known_expr(expr),
+        MonoExprKind::Lit(lit) => Some(MonoPatKind::Lit(lit.clone())),
+        MonoExprKind::TypeAnnot { expr, .. } => pattern_from_known_expr(expr),
+        MonoExprKind::Con { ctor, args } => Some(MonoPatKind::Con {
+            ctor: ctor.clone(),
+            args: pats(args)?,
+        }),
+        MonoExprKind::Tuple(elems) => Some(MonoPatKind::Tuple(pats(elems)?)),
         _ => None,
     }
+}
+
+/// The pattern of a match label whose expression is evaluated.
+fn label_pattern<'db>(label: &MonoPat<'db>, expr: &MonoExpr<'db>) -> Option<MonoPat<'db>> {
+    Some(MonoPat {
+        span: label.span,
+        ty: label.ty,
+        kind: pattern_from_known_expr(expr)?,
+    })
 }
 
 pub(super) fn int_expr<'db>(value: BigInt, ty: MonoTy<'db>, span: Span<'db>) -> MonoExpr<'db> {
@@ -259,8 +288,10 @@ where
     match &pat.kind {
         MonoPatKind::Wildcard | MonoPatKind::Var(_) => Some(true),
         MonoPatKind::Lit(lit) => is_known(value).then(|| literal_matches(lit, value)),
-        MonoPatKind::ComptimeLabel(expr) => is_known(value)
-            .then(|| literal_from_known_expr(expr).is_some_and(|lit| literal_matches(&lit, value))),
+        MonoPatKind::ComptimeLabel(expr) => match label_pattern(pat, expr) {
+            Some(pat) => pattern_decision(&pat, value, is_known),
+            None => is_known(value).then_some(false),
+        },
         MonoPatKind::Con { ctor, args } => match &unannotated_value(value).kind {
             MonoExprKind::Con {
                 ctor: value_ctor,
@@ -354,9 +385,9 @@ where
             }
             _ => None,
         },
-        MonoPatKind::ComptimeLabel(expr) => literal_from_known_expr(expr)
-            .is_some_and(|lit| literal_matches(&lit, value))
-            .then_some(env),
+        MonoPatKind::ComptimeLabel(expr) => {
+            match_pat(env, &label_pattern(pat, expr)?, value, is_known)
+        }
         MonoPatKind::Error => None,
     }
 }

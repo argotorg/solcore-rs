@@ -29,8 +29,8 @@ use super::{
     ident_text,
     known::{
         KnownPatternBindings, MatchedArm, bool_expr, build_type_reg, int_expr, known_bool,
-        known_int, known_string, literal_from_known_expr, lvalue_root_name, match_arms_with,
-        match_expr_arms_with, match_known_patterns_with, pattern_bindings, string_expr,
+        known_int, known_string, lvalue_root_name, match_arms_with, match_expr_arms_with,
+        match_known_patterns_with, pattern_bindings, pattern_from_known_expr, string_expr,
     },
     value::{
         BigInt, bitand_word, bitor_word, bitxor_word, not_word, shl_word, shr_word, word_div,
@@ -2537,12 +2537,8 @@ impl<'db> Evaluator<'db> {
         match pat.kind {
             MonoPatKind::ComptimeLabel(expr) => {
                 let expr = self.eval_expr(env, comptime_env, expr);
-                match literal_from_known_expr(&expr) {
-                    Some(lit) => MonoPat {
-                        span,
-                        ty,
-                        kind: MonoPatKind::Lit(lit),
-                    },
+                match pattern_from_known_expr(&expr) {
+                    Some(kind) => MonoPat { span, ty, kind },
                     None => {
                         if self.enforce_comptime {
                             self.comptime_failed(

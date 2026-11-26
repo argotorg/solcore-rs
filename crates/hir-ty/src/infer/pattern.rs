@@ -142,18 +142,15 @@ impl<'db> InferCtx<'db> {
                 ctor: TyCtor::Builtin(BuiltinTyCtor::Word | BuiltinTyCtor::Integer),
                 ref args,
             } if args.is_empty() => Some(ty.clone()),
-            ref ty @ InferTy::Named {
-                ctor: TyCtor::User(user),
-                ref args,
-            } if args.is_empty()
-                && crate::support::is_canonical_std_def_named(self.db, user.def, "uint256") =>
-            {
-                Some(ty.clone())
+            // The literal stands for `Int.fromInteger` of it, so every type
+            // with an `Int` instance takes one. A type parameter leaves the
+            // question to its constraints.
+            ty @ (InferTy::Named {
+                ctor: TyCtor::User(_),
+                ..
             }
-            InferTy::Named { .. }
-            | InferTy::Function { .. }
-            | InferTy::Tuple(_)
-            | InferTy::BoundVar(_) => None,
+            | InferTy::BoundVar(_)) => (!self.lacks_int_instance(ty.clone())).then_some(ty),
+            InferTy::Named { .. } | InferTy::Function { .. } | InferTy::Tuple(_) => None,
         }
     }
 
