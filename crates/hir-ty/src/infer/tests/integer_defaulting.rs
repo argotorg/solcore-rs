@@ -349,3 +349,79 @@ function f({context}) returns (bool) {{
         }
     }
 }
+
+// `Read` stands in for the std `RValueIdxAccess` instances: the value type of
+// a read is known only once the index type is, and the index accepts any
+// `Typedef<word>` type, so a literal index stays open until it is defaulted.
+const INDEXED_STD: &str = r#"
+pragma solcore;
+export { uint256(*), Bag(*), Typedef, Read };
+enum uint256 { uint256(word) }
+impl Int<uint256> {
+    function fromInteger(x: integer) returns (uint256) { return uint256(0); }
+}
+trait Typedef<abs, rep> { function rep(x: abs) returns (rep); }
+impl Typedef<word, word> { function rep(x: word) returns (word) { return x; } }
+impl Typedef<uint256, word> { function rep(x: uint256) returns (word) { return 0; } }
+enum Bag { Bag(word) }
+trait Read<col_idx, val> { function read(xi: col_idx) returns (val); }
+impl<i> Read<(Bag, i), uint256> where i: Typedef<word> {
+    function read(xi: (Bag, i)) returns (uint256) { return uint256(0); }
+}
+"#;
+
+#[test]
+fn defaulted_literal_index_solves_obligations_created_before_it() {
+    // `Typedef.rep(...)` is instantiated before its argument, so its
+    // obligation can only be solved after the read below it is: that read is
+    // solvable once its literal index defaults to uint256.
+    for body in [
+        "return Typedef.rep(Read.read((b, 0)));",
+        "let i = 0; return Typedef.rep(Read.read((b, i)));",
+    ] {
+        let source = format!(
+            "pragma solcore;\nimport * from std;\nfunction f(b: Bag) returns (word) {{ {body} }}\n"
+        );
+        let (mut db, main) = db_with_main_typeck(&source);
+        let file = source_file_at_path(&db, &PathBuf::from("/std/std.sol"), INDEXED_STD);
+        db.insert_module_file(
+            ModuleKey {
+                library: LibraryId::Std,
+                logical_path: vec!["std".to_owned()],
+            },
+            file,
+        );
+        let (_, result) =
+            infer_module_function_with_solver(&db, module_id_from_key(&db, &main), "f");
+        assert!(
+            result.diagnostics.is_empty(),
+            "{body}: {:?}",
+            result.diagnostics
+        );
+        let uint256 = canonical_std_adt_ty(&db, "uint256", Vec::new());
+        let typedef = result
+            .obligations
+            .iter()
+            .position(|obligation| {
+                matches!(
+                    obligation.pred.kind(&db),
+                    PredKind::InClass {
+                        class: ClassId::User(class),
+                        main,
+                        args,
+                    } if class.name(&db).as_deref() == Some("Typedef")
+                        && *main == uint256
+                        && args.as_slice() == [Ty::word(&db)]
+                )
+            })
+            .unwrap_or_else(|| panic!("{body}: Typedef obligation: {:?}", result.obligations));
+        assert!(
+            (0..result.obligations.len()).all(|index| result
+                .obligation_evidence
+                .iter()
+                .any(|proof| proof.obligation == index)),
+            "{body}: typedef obligation {typedef}: {:?}",
+            result.obligation_evidence
+        );
+    }
+}

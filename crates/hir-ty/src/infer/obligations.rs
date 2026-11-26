@@ -247,58 +247,43 @@ impl<'db> InferCtx<'db> {
 
         let pending = self.pending.clone();
         let mut deferred = FxHashMap::<usize, FxHashMap<TyVid<'db>, InferTy<'db>>>::default();
-        let mut scheduled: Vec<usize> = (0..pending.len()).collect();
 
-        // Improvement rounds iterate to a fixpoint:
-        // solving one obligation can pin goal metavariables of a sibling via
-        // class-argument unification (improvement). A deferred obligation
-        // records each inference-variable handle and its resolved value, then
-        // is retried only when that snapshot changes. Keeping the original
-        // handles is important: ena may replace their union root, but resolving
-        // an old handle still follows the union to the current representative.
-        // Ground and unchanged goals therefore avoid another normalization,
-        // interning, and solver lookup. Each continuing round resolves at
-        // least one obligation, bounding the loop by `pending.len()` rounds.
-        loop {
-            let mut progress = false;
-            for index in std::mem::take(&mut scheduled) {
-                match self.attempt_obligation(
-                    trait_env,
-                    index,
-                    &pending[index],
-                    true,
-                    &mut evidence,
-                    &mut call_site_evidence,
-                    &mut diagnostics,
-                ) {
-                    ObligationAttempt::Solved => {
-                        deferred.remove(&index);
-                        progress = true;
-                    }
-                    ObligationAttempt::Settled => {
-                        deferred.remove(&index);
-                    }
-                    ObligationAttempt::Deferred(dependencies) => {
-                        deferred.insert(index, dependencies);
-                    }
-                }
-            }
-            if !progress || deferred.is_empty() {
-                break;
-            }
-            scheduled = deferred_obligations_affected_by(&mut self.engine, &deferred);
-            if scheduled.is_empty() {
-                break;
-            }
-        }
+        self.run_improvement_rounds(
+            trait_env,
+            &pending,
+            (0..pending.len()).collect(),
+            &mut deferred,
+            &mut evidence,
+            &mut call_site_evidence,
+            &mut diagnostics,
+        );
 
-        let mut unresolved = deferred.into_keys().collect::<Vec<_>>();
+        let mut unresolved = deferred.keys().copied().collect::<Vec<_>>();
         unresolved.sort_unstable();
 
         self.default_integer_literals_with_non_int_obligations(&pending, &unresolved);
         self.default_integer_literal_patterns();
         self.default_root_integer_literals();
         self.default_open_string_coercions(&pending, &unresolved);
+
+        // Defaulting can pin a variable that a deferred obligation waits on,
+        // and solving that obligation can in turn pin a sibling created
+        // before it: the literal index of `Typedef.rep(s[0])` makes the slice
+        // read solvable, which fixes the argument type of `Typedef.rep`.
+        // Resume the rounds for the affected obligations before reporting.
+        let scheduled = deferred_obligations_affected_by(&mut self.engine, &deferred);
+        self.run_improvement_rounds(
+            trait_env,
+            &pending,
+            scheduled,
+            &mut deferred,
+            &mut evidence,
+            &mut call_site_evidence,
+            &mut diagnostics,
+        );
+
+        let mut unresolved = deferred.into_keys().collect::<Vec<_>>();
+        unresolved.sort_unstable();
 
         // Final phase: no further improvement is possible, so report the
         // remaining deferred obligations exactly as the single-pass solver
@@ -328,6 +313,58 @@ impl<'db> InferCtx<'db> {
                 .into_iter()
                 .map(|(_, diagnostic)| diagnostic)
                 .collect(),
+        }
+    }
+
+    /// Improvement rounds iterate to a fixpoint:
+    /// solving one obligation can pin goal metavariables of a sibling via
+    /// class-argument unification (improvement). A deferred obligation
+    /// records each inference-variable handle and its resolved value, then
+    /// is retried only when that snapshot changes. Keeping the original
+    /// handles is important: ena may replace their union root, but resolving
+    /// an old handle still follows the union to the current representative.
+    /// Ground and unchanged goals therefore avoid another normalization,
+    /// interning, and solver lookup. Each continuing round resolves at
+    /// least one obligation, bounding the loop by `pending.len()` rounds.
+    #[allow(clippy::too_many_arguments)]
+    fn run_improvement_rounds(
+        &mut self,
+        trait_env: TraitEnvId<'db>,
+        pending: &[PendingObligation<'db>],
+        mut scheduled: Vec<usize>,
+        deferred: &mut FxHashMap<usize, FxHashMap<TyVid<'db>, InferTy<'db>>>,
+        evidence: &mut Vec<ObligationEvidence<'db>>,
+        call_site_evidence: &mut Vec<CallSiteEvidence<'db>>,
+        diagnostics: &mut Vec<(usize, TypeckDiagnostic)>,
+    ) {
+        while !scheduled.is_empty() {
+            let mut progress = false;
+            for index in std::mem::take(&mut scheduled) {
+                match self.attempt_obligation(
+                    trait_env,
+                    index,
+                    &pending[index],
+                    true,
+                    evidence,
+                    call_site_evidence,
+                    diagnostics,
+                ) {
+                    ObligationAttempt::Solved => {
+                        deferred.remove(&index);
+                        progress = true;
+                    }
+                    ObligationAttempt::Settled => {
+                        deferred.remove(&index);
+                    }
+                    ObligationAttempt::Deferred(dependencies) => {
+                        deferred.insert(index, dependencies);
+                    }
+                }
+            }
+            if !progress || deferred.is_empty() {
+                break;
+            }
+            scheduled = deferred_obligations_affected_by(&mut self.engine, deferred);
         }
     }
 
