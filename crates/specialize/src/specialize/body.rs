@@ -108,6 +108,24 @@ impl<'db> BodyIndex<'db> {
                 .entry((entry.body, entry.pat))
                 .or_insert_with(|| entry.resolution.clone());
         }
+        // Name resolution defers a leading-dot constructor (`.A`) until the
+        // expected type is known; inference records the constructor it chose.
+        // Complete those entries so `.A` lowers to the same canonical
+        // constructor as `E.A`, which static matching compares by name.
+        for entry in &result.inferred_expr_resolutions {
+            if let Some(current) = index.expr_resolutions.get_mut(&(entry.body, entry.expr))
+                && matches!(current, hir_nameres::Resolution::DotCtorDeferred)
+            {
+                *current = entry.resolution.clone();
+            }
+        }
+        for entry in &result.inferred_pat_resolutions {
+            if let Some(current) = index.pat_resolutions.get_mut(&(entry.body, entry.pat))
+                && matches!(current, hir_nameres::Resolution::DotCtorDeferred)
+            {
+                *current = entry.resolution.clone();
+            }
+        }
         for evidence in &result.call_site_evidence {
             index
                 .call_evidence
