@@ -346,6 +346,11 @@ fn hash_superclasses<'db>(
                     failure.hash(state);
                 }
             }
+            recipe.prerequisites.len().hash(state);
+            for (given, position) in &recipe.prerequisites {
+                hash_pred(db, *given, state);
+                position.hash(state);
+            }
             recipe.bindings.len().hash(state);
             for (given, evidence) in &recipe.bindings {
                 hash_pred(db, *given, state);

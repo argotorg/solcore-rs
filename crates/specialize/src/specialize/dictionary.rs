@@ -58,7 +58,29 @@ pub(super) enum Evidence<'db> {
 pub(super) struct SuperclassRecipe<'db> {
     pub module: Module<'db>,
     pub selection: Result<LogicalEvidence<'db>, SuperclassFailure>,
+    /// Givens of the selection that are prerequisites of the dictionary that
+    /// holds this recipe, with their position among them. A copy here would
+    /// double the dictionary with every level of a conditional impl.
+    pub prerequisites: Vec<(Pred<'db>, usize)>,
+    /// Givens of the selection that come from the function the dictionary
+    /// was built in.
     pub bindings: Vec<(Pred<'db>, Evidence<'db>)>,
+}
+
+impl<'db> SuperclassRecipe<'db> {
+    /// The givens of the selection, with the dictionaries that
+    /// `prerequisites`, those of the dictionary that holds this recipe,
+    /// provide.
+    pub(super) fn givens(
+        &self,
+        prerequisites: &[Evidence<'db>],
+    ) -> Vec<(Pred<'db>, Evidence<'db>)> {
+        self.prerequisites
+            .iter()
+            .map(|(pred, position)| (*pred, prerequisites[*position].clone()))
+            .chain(self.bindings.iter().cloned())
+            .collect()
+    }
 }
 
 /// Predicates followed from one given through the superclasses their classes
@@ -172,13 +194,15 @@ impl<'db> Driver<'db> {
             }
             _ => unreachable!(),
         };
-        let mut local_bindings = prerequisites
+        // The position of each prerequisite binding among the prerequisites.
+        let (prerequisite_positions, mut local_bindings): (Vec<_>, Vec<_>) = prerequisites
             .iter()
-            .filter_map(|evidence| {
+            .enumerate()
+            .filter_map(|(position, evidence)| {
                 self.dictionary_predicate(evidence)
-                    .map(|pred| (pred, evidence.clone()))
+                    .map(|pred| (position, (pred, evidence.clone())))
             })
-            .collect::<Vec<_>>();
+            .unzip();
         let prerequisites_len = local_bindings.len();
         for (pred, evidence) in bindings {
             if !local_bindings.iter().any(|(given, _)| given == pred) {
@@ -214,21 +238,26 @@ impl<'db> Driver<'db> {
             if let Ok(proof) = &selection {
                 collect_given_predicates(proof, &mut referenced);
             }
-            let bindings = local_bindings
-                .iter()
-                .filter(|(pred, _)| referenced.contains(pred))
-                .map(|(pred, evidence)| {
-                    (
+            let mut recipe_prerequisites = Vec::new();
+            let mut bindings = Vec::new();
+            for (index, (pred, evidence)) in local_bindings.iter().enumerate() {
+                if !referenced.contains(pred) {
+                    continue;
+                }
+                match prerequisite_positions.get(index) {
+                    Some(position) => recipe_prerequisites.push((*pred, *position)),
+                    None => bindings.push((
                         *pred,
                         self.normalize_dictionary(evidence.clone(), normalize_projections),
-                    )
-                })
-                .collect();
+                    )),
+                }
+            }
             superclasses.push((
                 pred,
                 SuperclassRecipe {
                     module,
                     selection,
+                    prerequisites: recipe_prerequisites,
                     bindings,
                 },
             ));
