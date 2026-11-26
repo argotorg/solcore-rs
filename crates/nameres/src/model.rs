@@ -623,6 +623,22 @@ impl<'db> hir_nameres::ImportedNames<'db> for ModuleEnv<'db> {
     ) -> Option<hir_nameres::HiddenConstructor> {
         self.find_hidden_constructor(ty, name)
     }
+
+    fn hidden_same_name_constructor(
+        &self,
+        _db: &'db dyn hir::Db,
+        ty: DefId<'db>,
+    ) -> Option<hir_nameres::HiddenConstructor> {
+        self.find_hidden_same_name_constructor(ty)
+    }
+
+    fn hidden_constructor_named(
+        &self,
+        _db: &'db dyn hir::Db,
+        name: &str,
+    ) -> Option<hir_nameres::HiddenConstructor> {
+        self.find_hidden_constructor_named(name)
+    }
 }
 
 /// Summary returned by full resolution queries.

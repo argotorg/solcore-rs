@@ -74,10 +74,17 @@ impl<'db> ModuleEnv<'db> {
         &self,
         ty: DefId<'db>,
     ) -> Option<hir_nameres::HiddenConstructor> {
-        hidden_fact(&self.surface, &self.hidden_constructors, ty, |fact| {
-            fact.constructor.constructor == fact.constructor.type_name
-        })
-        .map(|fact| fact.constructor.clone())
+        find_hidden_same_name_constructor(&self.surface, &self.hidden_constructors, ty)
+    }
+
+    /// Returns the hidden constructor called `name` when exactly one imported
+    /// data type has one. An unqualified pattern such as `Err(x)` does not
+    /// name its data type.
+    pub fn find_hidden_constructor_named(
+        &self,
+        name: &str,
+    ) -> Option<hir_nameres::HiddenConstructor> {
+        find_hidden_constructor_named(&self.surface, &self.hidden_constructors, name)
     }
 
     /// Returns the constructor of the imported data type `ty` that declares
@@ -166,6 +173,22 @@ impl<'db> hir_nameres::ImportedNames<'db> for SurfaceWithHiddenConstructors<'_, 
     ) -> Option<hir_nameres::HiddenConstructor> {
         find_hidden_constructor(self.surface, self.hidden_constructors, ty, name)
     }
+
+    fn hidden_same_name_constructor(
+        &self,
+        _db: &'db dyn hir::Db,
+        ty: DefId<'db>,
+    ) -> Option<hir_nameres::HiddenConstructor> {
+        find_hidden_same_name_constructor(self.surface, self.hidden_constructors, ty)
+    }
+
+    fn hidden_constructor_named(
+        &self,
+        _db: &'db dyn hir::Db,
+        name: &str,
+    ) -> Option<hir_nameres::HiddenConstructor> {
+        find_hidden_constructor_named(self.surface, self.hidden_constructors, name)
+    }
 }
 
 fn find_hidden_constructor<'db>(
@@ -180,6 +203,29 @@ fn find_hidden_constructor<'db>(
     .map(|fact| fact.constructor.clone())
 }
 
+fn find_hidden_same_name_constructor<'db>(
+    surface: &ModuleImportSurface<'db>,
+    hidden_constructors: &[HiddenConstructorFact<'db>],
+    ty: DefId<'db>,
+) -> Option<hir_nameres::HiddenConstructor> {
+    hidden_fact(surface, hidden_constructors, ty, |fact| {
+        fact.constructor.constructor == fact.constructor.type_name
+    })
+    .map(|fact| fact.constructor.clone())
+}
+
+fn find_hidden_constructor_named<'db>(
+    surface: &ModuleImportSurface<'db>,
+    hidden_constructors: &[HiddenConstructorFact<'db>],
+    name: &str,
+) -> Option<hir_nameres::HiddenConstructor> {
+    let mut named = hidden_constructors
+        .iter()
+        .filter(|fact| fact.constructor.constructor == name && !is_visible(surface, fact));
+    let fact = named.next()?;
+    named.next().is_none().then(|| fact.constructor.clone())
+}
+
 /// Returns the first fact for `ty` that `matches` accepts, unless a term in
 /// `surface` makes its constructor visible.
 fn hidden_fact<'a, 'db>(
@@ -191,12 +237,16 @@ fn hidden_fact<'a, 'db>(
     let fact = hidden_constructors
         .iter()
         .find(|fact| fact.ty == ty && matches(fact))?;
-    let visible = surface.terms.values().any(|resolution| {
+    (!is_visible(surface, fact)).then_some(fact)
+}
+
+/// Whether a term in `surface` resolves to the constructor of `fact`.
+fn is_visible<'db>(surface: &ModuleImportSurface<'db>, fact: &HiddenConstructorFact<'db>) -> bool {
+    surface.terms.values().any(|resolution| {
         matches!(
             resolution,
-            hir_nameres::Resolution::Ctor { ty: visible_ty, index }
-                if *visible_ty == ty && *index == fact.index
+            hir_nameres::Resolution::Ctor { ty, index }
+                if *ty == fact.ty && *index == fact.index
         )
-    });
-    (!visible).then_some(fact)
+    })
 }

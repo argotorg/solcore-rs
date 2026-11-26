@@ -807,6 +807,23 @@ pub trait ImportedNames<'db> {
     ) -> Option<HiddenConstructor> {
         None
     }
+
+    /// Returns the constructor named like the data type `ty`, which the
+    /// pattern `Box(x)` refers to, when it is hidden in the sense of
+    /// [`Self::hidden_constructor`].
+    fn hidden_same_name_constructor(
+        &self,
+        _db: &'db dyn Db,
+        _ty: DefId<'db>,
+    ) -> Option<HiddenConstructor> {
+        None
+    }
+
+    /// Returns the hidden constructor called `name` when exactly one imported
+    /// data type has one.
+    fn hidden_constructor_named(&self, _db: &'db dyn Db, _name: &str) -> Option<HiddenConstructor> {
+        None
+    }
 }
 
 /// Empty import provider used by standalone HIR queries.

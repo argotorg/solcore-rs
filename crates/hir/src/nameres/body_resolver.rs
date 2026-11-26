@@ -370,6 +370,11 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
                                 Resolution::Local(LocalBinding::Pattern { body, pat: pat_id });
                             self.add_local(leaf, resolution.clone(), name.span(self.db));
                             resolution
+                        } else if let Some(diagnostic) =
+                            self.hidden_pattern_constructor_diag(leaf, name.span(self.db))
+                        {
+                            self.map.diagnostics.push(diagnostic);
+                            Resolution::Err
                         } else {
                             self.map
                                 .diagnostics
@@ -791,6 +796,29 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
             return None;
         };
         let constructor = self.imports.hidden_constructor(self.db, def, name)?;
+        Some(NameresDiagnostic::HiddenConstructor {
+            span: LabelSpan::from_span(self.db, span),
+            constructor,
+        })
+    }
+
+    /// Returns an `SC0122` diagnostic when the unqualified pattern head `name`
+    /// refers to a hidden constructor: the one named like the imported data
+    /// type `name`, or the only hidden constructor called `name`.
+    fn hidden_pattern_constructor_diag(
+        &self,
+        name: &str,
+        span: Span<'db>,
+    ) -> Option<NameresDiagnostic> {
+        let same_name = match self.lookup_type(name) {
+            Some(Resolution::Def {
+                def,
+                kind: DefResolutionKind::Adt,
+            }) => self.imports.hidden_same_name_constructor(self.db, def),
+            _ => None,
+        };
+        let constructor =
+            same_name.or_else(|| self.imports.hidden_constructor_named(self.db, name))?;
         Some(NameresDiagnostic::HiddenConstructor {
             span: LabelSpan::from_span(self.db, span),
             constructor,
