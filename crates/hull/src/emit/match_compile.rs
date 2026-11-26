@@ -1303,9 +1303,13 @@ pub(super) fn constructor_index(layout: &AdtLayout<'_>, actual: &str) -> Option<
 }
 
 fn constructor_index_from_names(actual: &str, adt: &str, ctors: &[&str]) -> Option<usize> {
+    // Lowering names a constructor `{Adt}_{Ctor}`. That spelling is tried on
+    // every constructor before a bare name is: in `enum T { T_A, A }` the
+    // reference `T_A` is `T.A`, not the constructor called `T_A`.
     ctors
         .iter()
-        .position(|ctor| actual == *ctor || actual == format!("{adt}_{ctor}"))
+        .position(|ctor| actual == format!("{adt}_{ctor}"))
+        .or_else(|| ctors.iter().position(|ctor| actual == *ctor))
         .or_else(|| {
             ctors
                 .iter()
@@ -1326,6 +1330,18 @@ mod tests {
         assert_eq!(
             constructor_index_from_names("T_B_A", "T", &["A", "B_A"]),
             Some(1)
+        );
+    }
+
+    #[test]
+    fn constructor_lookup_prefers_qualified_names_over_bare_names() {
+        // `T.A` and `T.T_A` lower to `T_A` and `T_T_A`.
+        let ctors = ["T_A", "A"];
+        assert_eq!(constructor_index_from_names("T_A", "T", &ctors), Some(1));
+        assert_eq!(constructor_index_from_names("T_T_A", "T", &ctors), Some(0));
+        assert_eq!(
+            constructor_index_from_names("T_A", "T", &["A", "T_A"]),
+            Some(0)
         );
     }
 }
