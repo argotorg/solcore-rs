@@ -2363,16 +2363,30 @@ impl<'db> Evaluator<'db> {
                 }
             }
         }
-        if self.join_dispatchers.is_empty() {
-            return;
+        // Returns that hold different function values choose one at run time
+        // like a merge does, and the caller cannot tell which one it got.
+        let mut returned = Vec::new();
+        collect_returned_callables(self.db, body, &mut returned);
+        let shapes = returned
+            .iter()
+            .filter_map(|(value, span)| {
+                Some((self.decompose_callable(value, &mut Vec::new())?, *span))
+            })
+            .collect::<Vec<_>>();
+        let mut escapes = Vec::new();
+        if shapes.iter().any(|(shape, _)| *shape != shapes[0].0) {
+            escapes.extend(shapes.iter().map(|(_, span)| *span));
         }
         let dispatchers = self
             .join_dispatchers
             .iter()
             .map(|dispatcher| dispatcher.name.clone())
             .collect::<FxHashSet<_>>();
-        let mut escapes = Vec::new();
-        collect_escapes(body, &dispatchers, &mut escapes);
+        if !dispatchers.is_empty() {
+            collect_escapes(body, &dispatchers, &mut escapes);
+        }
+        let mut seen = FxHashSet::default();
+        escapes.retain(|span| seen.insert(*span));
         for span in escapes {
             self.deferred_diagnostics.push((
                 function.to_owned(),
@@ -2501,6 +2515,46 @@ fn remove_dead_cells(
                 remove_dead_cells(body, cells, live, removed);
             }
             MonoStmtKind::Block(body) => remove_dead_cells(body, cells, live, removed),
+            _ => {}
+        }
+    }
+}
+
+/// The returned values that hold a function value, with the spans of their
+/// `return` statements.
+fn collect_returned_callables<'a, 'db>(
+    db: &'db dyn Db,
+    stmts: &'a [MonoStmt<'db>],
+    out: &mut Vec<(&'a MonoExpr<'db>, Span<'db>)>,
+) {
+    for stmt in stmts {
+        match &stmt.kind {
+            MonoStmtKind::Return(Some(value)) if ty_contains_function(db, value.ty.ty()) => {
+                out.push((value, stmt.span));
+            }
+            MonoStmtKind::If {
+                then_body,
+                else_body,
+                ..
+            } => {
+                collect_returned_callables(db, then_body, out);
+                if let Some(body) = else_body {
+                    collect_returned_callables(db, body, out);
+                }
+            }
+            MonoStmtKind::Match { arms, .. } => {
+                for arm in arms {
+                    collect_returned_callables(db, &arm.body, out);
+                }
+            }
+            MonoStmtKind::For {
+                init, post, body, ..
+            } => {
+                collect_returned_callables(db, init, out);
+                collect_returned_callables(db, post, out);
+                collect_returned_callables(db, body, out);
+            }
+            MonoStmtKind::Block(body) => collect_returned_callables(db, body, out),
             _ => {}
         }
     }

@@ -1,0 +1,29 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/hull/closure_differs_between_returns/main.sol
+---
+error[SC0417]: a function value selected at run time cannot be returned from the function that selects it
+  --> /main/main.sol:18:9
+   |
+17 |     if (c) {
+18 |         return inc;
+   |         ^^^^^^^^^^^ function value selected at run time used here
+19 |     }
+   |
+   = note: function values have no run-time representation: a value chosen by run-time control flow is compiled to a selector over a finite set of closures known at compile time
+   = note: the selector and the captured values exist only in the function that makes the choice: there the selected value can be called or passed to other functions, but it cannot be returned, alone or inside another value
+   = note: help: call the function value where it is selected, or select it in the caller
+---
+
+error[SC0417]: a function value selected at run time cannot be returned from the function that selects it
+  --> /main/main.sol:20:5
+   |
+19 |     }
+20 |     return dbl;
+   |     ^^^^^^^^^^^ function value selected at run time used here
+21 | }
+   |
+   = note: function values have no run-time representation: a value chosen by run-time control flow is compiled to a selector over a finite set of closures known at compile time
+   = note: the selector and the captured values exist only in the function that makes the choice: there the selected value can be called or passed to other functions, but it cannot be returned, alone or inside another value
+   = note: help: call the function value where it is selected, or select it in the caller
