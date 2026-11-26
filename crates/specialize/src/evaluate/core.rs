@@ -537,11 +537,13 @@ impl<'db> Evaluator<'db> {
         // copying every visible binding per statement.
         let mut out = Vec::new();
         for stmt in stmts {
-            let (next_env, next_comptime_env, mut stmts) =
-                self.eval_stmt(type_reg, env, comptime_env, stmt, ret_comptime, scope);
-            env = next_env;
-            comptime_env = next_comptime_env;
-            out.append(&mut stmts);
+            for stmt in self.split_callable_conditional(stmt) {
+                let (next_env, next_comptime_env, mut stmts) =
+                    self.eval_stmt(type_reg, env, comptime_env, stmt, ret_comptime, scope);
+                env = next_env;
+                comptime_env = next_comptime_env;
+                out.append(&mut stmts);
+            }
         }
         (env, comptime_env, out)
     }

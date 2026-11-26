@@ -657,6 +657,129 @@ impl<'db> Evaluator<'db> {
         value
     }
 
+    /// Splits a statement whose value is a conditional expression that holds a
+    /// function value into the statement form of the conditional, which merges
+    /// like any assignment under control flow: `let f = c ? g : h;` becomes
+    /// `let f; if (c) { f = g; } else { f = h; }`. The branches are split in
+    /// turn when they are evaluated.
+    ///
+    /// Such a conditional that is an operand of the statement, as in
+    /// `apply(c ? g : h, x)` and `(c ? g : h)(x)`, is first bound to a variable
+    /// of its own, after the operands that are evaluated before it.
+    pub(super) fn split_callable_conditional(&mut self, stmt: MonoStmt<'db>) -> Vec<MonoStmt<'db>> {
+        let db = self.db;
+        let holds_callable =
+            |expr: &MonoExpr<'db>| ty_contains_function(db, expr.ty.ty()) && is_conditional(expr);
+        let span = stmt.span;
+        let mut stmt = stmt;
+        let value = match &mut stmt.kind {
+            MonoStmtKind::Let {
+                mode: LetMode::Runtime,
+                init: Some(value),
+                ..
+            }
+            | MonoStmtKind::Expr(value)
+            | MonoStmtKind::Return(Some(value))
+            | MonoStmtKind::If { cond: value, .. } => Some(value),
+            MonoStmtKind::Assign { lhs, rhs, .. } if is_atom(lhs) => Some(rhs),
+            _ => None,
+        };
+        let path = value.and_then(
+            |value| match conditional_operand(db, value, &holds_callable) {
+                OperandSearch::Found(path) => Some((value, path)),
+                OperandSearch::Absent | OperandSearch::Blocked => None,
+            },
+        );
+        if let Some((mut value, path)) = path {
+            // Operands evaluated before the conditional keep their order: each
+            // is bound to a variable where it stood.
+            let mut bindings = Vec::new();
+            for (depth, &index) in path.iter().enumerate() {
+                let mut operands = operands_mut(value);
+                for operand in operands.iter_mut().take(index) {
+                    if !is_atom(operand) {
+                        bindings.push(self.bind_operand(operand, "$operand"));
+                    }
+                }
+                let operand = operands.swap_remove(index);
+                if depth + 1 == path.len() {
+                    bindings.push(self.bind_operand(operand, "$choice"));
+                    break;
+                }
+                value = operand;
+            }
+            let mut stmts = Vec::new();
+            for binding in bindings {
+                stmts.extend(self.split_callable_conditional(binding));
+            }
+            stmts.extend(self.split_callable_conditional(stmt));
+            return stmts;
+        }
+        match stmt.kind {
+            MonoStmtKind::Let {
+                mode: mode @ LetMode::Runtime,
+                id,
+                ty,
+                init: Some(init),
+            } if holds_callable(&init) => {
+                let target = var_expr(id.clone());
+                vec![
+                    MonoStmt {
+                        span,
+                        kind: MonoStmtKind::Let {
+                            mode,
+                            ty: Some(ty.unwrap_or(init.ty)),
+                            id,
+                            init: None,
+                        },
+                    },
+                    branch_stmt(span, init, &|value| MonoStmtKind::Assign {
+                        op: AssignOp::Plain,
+                        lhs: target.clone(),
+                        rhs: value,
+                    }),
+                ]
+            }
+            MonoStmtKind::Assign {
+                op: AssignOp::Plain,
+                lhs,
+                rhs,
+            } if matches!(lhs.kind, MonoExprKind::Var(_)) && holds_callable(&rhs) => {
+                vec![branch_stmt(span, rhs, &|value| MonoStmtKind::Assign {
+                    op: AssignOp::Plain,
+                    lhs: lhs.clone(),
+                    rhs: value,
+                })]
+            }
+            MonoStmtKind::Return(Some(value)) if holds_callable(&value) => {
+                vec![branch_stmt(span, value, &|value| {
+                    MonoStmtKind::Return(Some(value))
+                })]
+            }
+            kind => vec![MonoStmt { span, kind }],
+        }
+    }
+
+    /// Replaces `operand` by a fresh variable and returns the statement that
+    /// binds the variable to it.
+    fn bind_operand(&mut self, operand: &mut MonoExpr<'db>, base: &str) -> MonoStmt<'db> {
+        let id = MonoId {
+            name: self.fresh_join_name(base),
+            ty: operand.ty,
+            span: operand.span,
+        };
+        let init = std::mem::replace(operand, var_expr(id.clone()));
+        MonoStmt {
+            span: init.span,
+            kind: MonoStmtKind::Let {
+                mode: LetMode::Runtime,
+                ty: Some(id.ty),
+                id,
+                init: Some(init),
+            },
+        }
+    }
+
     fn intern_join_shape(&mut self, value: &MonoExpr<'db>) -> Option<(usize, Vec<MonoExpr<'db>>)> {
         let mut leaves = Vec::new();
         let shape = self.decompose_callable(value, &mut leaves)?;
@@ -2240,16 +2363,30 @@ impl<'db> Evaluator<'db> {
                 }
             }
         }
-        if self.join_dispatchers.is_empty() {
-            return;
+        // Returns that hold different function values choose one at run time
+        // like a merge does, and the caller cannot tell which one it got.
+        let mut returned = Vec::new();
+        collect_returned_callables(self.db, body, &mut returned);
+        let shapes = returned
+            .iter()
+            .filter_map(|(value, span)| {
+                Some((self.decompose_callable(value, &mut Vec::new())?, *span))
+            })
+            .collect::<Vec<_>>();
+        let mut escapes = Vec::new();
+        if shapes.iter().any(|(shape, _)| *shape != shapes[0].0) {
+            escapes.extend(shapes.iter().map(|(_, span)| *span));
         }
         let dispatchers = self
             .join_dispatchers
             .iter()
             .map(|dispatcher| dispatcher.name.clone())
             .collect::<FxHashSet<_>>();
-        let mut escapes = Vec::new();
-        collect_escapes(body, &dispatchers, &mut escapes);
+        if !dispatchers.is_empty() {
+            collect_escapes(body, &dispatchers, &mut escapes);
+        }
+        let mut seen = FxHashSet::default();
+        escapes.retain(|span| seen.insert(*span));
         for span in escapes {
             self.deferred_diagnostics.push((
                 function.to_owned(),
@@ -2381,6 +2518,171 @@ fn remove_dead_cells(
             _ => {}
         }
     }
+}
+
+/// The returned values that hold a function value, with the spans of their
+/// `return` statements.
+fn collect_returned_callables<'a, 'db>(
+    db: &'db dyn Db,
+    stmts: &'a [MonoStmt<'db>],
+    out: &mut Vec<(&'a MonoExpr<'db>, Span<'db>)>,
+) {
+    for stmt in stmts {
+        match &stmt.kind {
+            MonoStmtKind::Return(Some(value)) if ty_contains_function(db, value.ty.ty()) => {
+                out.push((value, stmt.span));
+            }
+            MonoStmtKind::If {
+                then_body,
+                else_body,
+                ..
+            } => {
+                collect_returned_callables(db, then_body, out);
+                if let Some(body) = else_body {
+                    collect_returned_callables(db, body, out);
+                }
+            }
+            MonoStmtKind::Match { arms, .. } => {
+                for arm in arms {
+                    collect_returned_callables(db, &arm.body, out);
+                }
+            }
+            MonoStmtKind::For {
+                init, post, body, ..
+            } => {
+                collect_returned_callables(db, init, out);
+                collect_returned_callables(db, post, out);
+                collect_returned_callables(db, body, out);
+            }
+            MonoStmtKind::Block(body) => collect_returned_callables(db, body, out),
+            _ => {}
+        }
+    }
+}
+
+/// Result of looking for a conditional among the operands of an expression.
+enum OperandSearch {
+    /// The indexes that lead to it, one per level of [`operands_mut`].
+    Found(Vec<usize>),
+    Absent,
+    /// An operand evaluated before it cannot be bound to a variable.
+    Blocked,
+}
+
+/// Looks for the first operand `holds_callable` accepts among the operands
+/// that evaluating `value` always evaluates, in evaluation order.
+fn conditional_operand<'db>(
+    db: &'db dyn Db,
+    value: &mut MonoExpr<'db>,
+    holds_callable: &dyn Fn(&MonoExpr<'db>) -> bool,
+) -> OperandSearch {
+    for (index, operand) in operands_mut(value).into_iter().enumerate() {
+        if holds_callable(operand) {
+            return OperandSearch::Found(vec![index]);
+        }
+        match conditional_operand(db, operand, holds_callable) {
+            OperandSearch::Found(mut path) => {
+                path.insert(0, index);
+                return OperandSearch::Found(path);
+            }
+            OperandSearch::Blocked => return OperandSearch::Blocked,
+            OperandSearch::Absent => {}
+        }
+        // A later operand may be the conditional: this one is then evaluated
+        // first, in a variable of its own, which needs a run-time type.
+        if !is_atom(operand) && ty_needs_erasure(db, operand.ty.ty()) {
+            return OperandSearch::Blocked;
+        }
+    }
+    OperandSearch::Absent
+}
+
+/// The operands that evaluating `expr` always evaluates, from left to right.
+fn operands_mut<'a, 'db>(expr: &'a mut MonoExpr<'db>) -> Vec<&'a mut MonoExpr<'db>> {
+    match &mut expr.kind {
+        MonoExprKind::Call { args, .. }
+        | MonoExprKind::Con { args, .. }
+        | MonoExprKind::Tuple(args) => args.iter_mut().collect(),
+        MonoExprKind::ClosureDispatch { callee, args } => std::iter::once(&mut **callee)
+            .chain(args.iter_mut())
+            .collect(),
+        // The right operand of `&&` and `||` is not always evaluated.
+        MonoExprKind::BinOp {
+            lhs,
+            op: BinOp::And | BinOp::Or,
+            ..
+        } => vec![&mut **lhs],
+        MonoExprKind::BinOp { lhs, rhs, .. } => vec![&mut **lhs, &mut **rhs],
+        MonoExprKind::UnaryOp { expr, .. }
+        | MonoExprKind::TypeAnnot { expr, .. }
+        | MonoExprKind::Field { base: expr, .. } => vec![&mut **expr],
+        MonoExprKind::If { cond, .. } => vec![&mut **cond],
+        MonoExprKind::Match { scrutinee, .. } => vec![&mut **scrutinee],
+        _ => Vec::new(),
+    }
+}
+
+/// Whether evaluating `expr` only reads: a variable, a literal or a lambda.
+fn is_atom(expr: &MonoExpr<'_>) -> bool {
+    match &expr.kind {
+        MonoExprKind::Var(_)
+        | MonoExprKind::Lit(_)
+        | MonoExprKind::Proxy(_)
+        | MonoExprKind::Lambda { .. } => true,
+        MonoExprKind::TypeAnnot { expr, .. } => is_atom(expr),
+        _ => false,
+    }
+}
+
+/// Whether `expr` is a conditional expression, under its type annotations.
+fn is_conditional(expr: &MonoExpr<'_>) -> bool {
+    match &expr.kind {
+        MonoExprKind::If { .. } | MonoExprKind::Match { .. } => true,
+        MonoExprKind::TypeAnnot { expr, .. } => is_conditional(expr),
+        _ => false,
+    }
+}
+
+/// The statement form of the conditional expression `value`: every branch
+/// ends in the statement that `leaf` builds from the value of that branch.
+fn branch_stmt<'db>(
+    span: Span<'db>,
+    value: MonoExpr<'db>,
+    leaf: &dyn Fn(MonoExpr<'db>) -> MonoStmtKind<'db>,
+) -> MonoStmt<'db> {
+    let leaf_stmt = |value: MonoExpr<'db>| MonoStmt {
+        span: value.span,
+        kind: leaf(value),
+    };
+    let kind = match value.kind {
+        MonoExprKind::If {
+            cond,
+            then_expr,
+            else_expr,
+        } => MonoStmtKind::If {
+            cond: *cond,
+            then_body: vec![leaf_stmt(*then_expr)],
+            else_body: Some(vec![leaf_stmt(*else_expr)]),
+        },
+        MonoExprKind::Match { scrutinee, arms } => MonoStmtKind::Match {
+            scrutinees: vec![*scrutinee],
+            arms: arms
+                .into_iter()
+                .map(|arm| MonoArm {
+                    span: arm.span,
+                    pats: vec![arm.pat],
+                    body: vec![leaf_stmt(arm.expr)],
+                })
+                .collect(),
+        },
+        MonoExprKind::TypeAnnot { expr, .. } => return branch_stmt(span, *expr, leaf),
+        kind => leaf(MonoExpr {
+            span: value.span,
+            ty: value.ty,
+            kind,
+        }),
+    };
+    MonoStmt { span, kind }
 }
 
 /// Spans of residual statements where a merged function value would reach
