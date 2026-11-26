@@ -41,6 +41,17 @@ pub enum SpecializeDiagnosticKind<'db> {
     ComptimeEvaluationFailed {
         context: String,
     },
+    /// A call that takes or returns a compile-time value is left for run
+    /// time although its arguments are known: evaluating it did not end in a
+    /// value.
+    ComptimeCallNotEvaluated {
+        function: String,
+    },
+    /// The `Int` impl of `ty` did not turn the integer `value` into a `ty`.
+    IntegerNotConverted {
+        value: String,
+        ty: String,
+    },
     ComptimeFuelExhausted {
         function: String,
         limit: usize,
@@ -135,7 +146,9 @@ impl SpecializeDiagnosticKind<'_> {
             Self::MissingEvidence { .. } => DiagnosticCode::SPECIALIZE_MISSING_EVIDENCE,
             Self::UnsupportedEvidence { .. } => DiagnosticCode::SPECIALIZE_UNSUPPORTED_EVIDENCE,
             Self::UnresolvedExternal { .. } => DiagnosticCode::SPECIALIZE_UNRESOLVED_EXTERNAL,
-            Self::ComptimeEvaluationFailed { .. } => {
+            Self::ComptimeEvaluationFailed { .. }
+            | Self::ComptimeCallNotEvaluated { .. }
+            | Self::IntegerNotConverted { .. } => {
                 DiagnosticCode::SPECIALIZE_COMPTIME_EVALUATION_FAILED
             }
             Self::ComptimeFuelExhausted { .. } => {
@@ -166,7 +179,12 @@ impl SpecializeDiagnosticKind<'_> {
             Self::MissingEvidence { .. } => "trait evidence required here",
             Self::UnsupportedEvidence { .. } => "unsupported trait evidence here",
             Self::UnresolvedExternal { .. } => "external function required here",
-            Self::ComptimeEvaluationFailed { .. } => "comptime evaluation failed here",
+            Self::ComptimeEvaluationFailed { .. } | Self::ComptimeCallNotEvaluated { .. } => {
+                "comptime evaluation failed here"
+            }
+            Self::IntegerNotConverted { .. } => {
+                "`Int.fromInteger` returns no value for this integer"
+            }
             Self::ComptimeFuelExhausted { .. } => "comptime fuel limit reached here",
             Self::ComptimeRecursion { .. } => "recursive comptime call cannot be reduced here",
             Self::ReductionRecursion { .. } => "recursive call cannot be reduced here",
@@ -222,6 +240,20 @@ impl SpecializeDiagnosticKind<'_> {
             ],
             Self::TypeSizeExceeded { .. } => vec![
                 "help: simplify the specialized type or raise --pe-max-type-nodes when using solcore-driver"
+                    .to_owned(),
+            ],
+            Self::ComptimeCallNotEvaluated { function } => vec![
+                format!(
+                    "`{function}` takes or returns a compile-time value, so a call to it is evaluated at compile time"
+                ),
+                "the evaluation ends without a value when it reaches code with a run-time effect, such as a panic"
+                    .to_owned(),
+            ],
+            Self::IntegerNotConverted { ty, .. } => vec![
+                format!(
+                    "an integer literal gets the type `{ty}` through `Int.fromInteger`, which is evaluated at compile time"
+                ),
+                "for this integer the evaluation ends without a value, as it does in std for an integer outside the range of the type"
                     .to_owned(),
             ],
             Self::ComptimeFuelExhausted { .. } => vec![
@@ -360,6 +392,13 @@ impl fmt::Display for SpecializeDiagnosticKind<'_> {
             Self::UnresolvedExternal { name, .. } => write!(f, "unresolved external: {name}"),
             Self::ComptimeEvaluationFailed { context } => {
                 write!(f, "comptime evaluation failed: {context}")
+            }
+            Self::ComptimeCallNotEvaluated { function } => write!(
+                f,
+                "comptime evaluation failed: the call to `{function}` does not reduce to a value"
+            ),
+            Self::IntegerNotConverted { value, ty } => {
+                write!(f, "integer `{value}` cannot be converted to `{ty}`")
             }
             Self::ComptimeFuelExhausted { function, limit } => write!(
                 f,

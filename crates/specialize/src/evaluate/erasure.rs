@@ -1,11 +1,12 @@
-use hir::span::Span;
+use hir::{ast::function::LitKind, span::Span};
 use hir_ty::{BuiltinTyCtor, Db, Ty, TyCtor, TyKind, UserTyCtorKind, is_canonical_std_def_named};
 
 use super::{core::Evaluator, known::known_string};
 use crate::{
     ir::{
-        MonoCallOrigin, MonoExpr, MonoExprKind, MonoFunction, MonoIntrinsic, MonoItem, MonoModule,
-        MonoParam, MonoPat, MonoPatKind, MonoStmt, MonoStmtKind,
+        MonoCallOrigin, MonoExpr, MonoExprKind, MonoFunction, MonoFunctionOrigin, MonoId,
+        MonoIntrinsic, MonoItem, MonoModule, MonoParam, MonoPat, MonoPatKind, MonoStmt,
+        MonoStmtKind,
         visit::{Visitor, walk_expr, walk_pat, walk_stmt},
     },
     specialize::{SpecializeDiagnostic, SpecializeDiagnosticKind, display_backend_ty},
@@ -202,30 +203,110 @@ pub(super) fn erase_comptime_ty<'db>(db: &'db dyn Db, ty: Ty<'db>) -> Ty<'db> {
     }
 }
 
+/// The text of the integer literal `expr`, under its type annotations.
+fn integer_literal_text(expr: &MonoExpr<'_>) -> Option<String> {
+    match &expr.kind {
+        MonoExprKind::Lit(LitKind::Number(text) | LitKind::Hex(text)) => Some(text.clone()),
+        MonoExprKind::TypeAnnot { expr, .. } => integer_literal_text(expr),
+        _ => None,
+    }
+}
+
 impl<'db> Evaluator<'db> {
     pub(super) fn check_integer_erasure(&mut self, module: &MonoModule<'db>) {
+        let first = self.diagnostics.len();
+        let mut compile_time_only = Vec::new();
         for item in &module.items {
             let MonoItem::Function(function) = item else {
                 continue;
             };
-            if self.check_erasure_ty(
-                format!(
-                    "return type of `{}`",
-                    display_mono_function_name(self.db, function)
-                ),
-                function.ret.ty(),
-                Some(function.span),
-            ) {
+            // A function that takes or returns a compile-time value cannot
+            // run. It is still here because a call to it was not evaluated,
+            // and that call is reported: its body has nothing to add.
+            if !module.entry_points.contains(&function.name)
+                && (ty_needs_erasure(self.db, function.ret.ty())
+                    || function
+                        .params
+                        .iter()
+                        .any(|param| ty_needs_erasure(self.db, param.ty.ty())))
+            {
+                compile_time_only.push(function);
                 continue;
             }
-            for param in &function.params {
-                self.check_erasure_ty(
-                    format!("parameter '{}'", param.name),
-                    param.ty.ty(),
-                    Some(param.span),
-                );
+            self.check_function_erasure(function);
+        }
+        // Should such a function be reached without a reported call, it is
+        // reported itself: nothing compile-time may pass to the backend.
+        if self.diagnostics.len() == first {
+            for function in compile_time_only {
+                self.check_function_erasure(function);
             }
-            self.check_integer_erasure_stmts(&function.body);
+        }
+    }
+
+    fn check_function_erasure(&mut self, function: &MonoFunction<'db>) {
+        if self.check_erasure_ty(
+            format!(
+                "return type of `{}`",
+                display_mono_function_name(self.db, function)
+            ),
+            function.ret.ty(),
+            Some(function.span),
+        ) {
+            return;
+        }
+        for param in &function.params {
+            self.check_erasure_ty(
+                format!("parameter '{}'", param.name),
+                param.ty.ty(),
+                Some(param.span),
+            );
+        }
+        self.check_integer_erasure_stmts(&function.body);
+    }
+
+    /// Reports the call `expr`, whose callee takes or returns a compile-time
+    /// value. With known arguments the evaluator has tried the call, so what
+    /// is wrong is that the evaluation did not end in a value.
+    fn unevaluated_comptime_call(
+        &mut self,
+        expr: &MonoExpr<'db>,
+        callee: &MonoId<'db>,
+        args: &[MonoExpr<'db>],
+        origin: MonoCallOrigin<'db>,
+    ) {
+        let function = display_call_name(self.db, origin, &callee.name);
+        let kind = if !args.iter().all(|arg| self.expr_is_known_value(arg)) {
+            SpecializeDiagnosticKind::IntegerErasure {
+                context: format!("call to `{function}`"),
+                ty: display_backend_ty(self.db, callee.ty.ty()),
+            }
+        } else if let Some(value) = self.converted_integer(callee, args) {
+            SpecializeDiagnosticKind::IntegerNotConverted {
+                value,
+                ty: display_backend_ty(self.db, expr.ty.ty()),
+            }
+        } else {
+            SpecializeDiagnosticKind::ComptimeCallNotEvaluated { function }
+        };
+        self.diagnostics.push(SpecializeDiagnostic {
+            kind,
+            span: Some(expr.span),
+        });
+    }
+
+    /// The integer that a call of `Int.fromInteger` converts, as written.
+    fn converted_integer(&self, callee: &MonoId<'db>, args: &[MonoExpr<'db>]) -> Option<String> {
+        let function = self.functions.get(&callee.name)?;
+        let MonoFunctionOrigin::InstanceMethod { class, method, .. } = &function.origin else {
+            return None;
+        };
+        if class != "Int" || method != "fromInteger" {
+            return None;
+        }
+        match args {
+            [arg] => integer_literal_text(arg),
+            _ => None,
         }
     }
 
@@ -308,14 +389,8 @@ impl<'db> Visitor<'db> for Evaluator<'db> {
                 {
                     return;
                 }
-                if self.check_erasure_ty(
-                    format!(
-                        "call to `{}`",
-                        display_call_name(self.db, *origin, &callee.name)
-                    ),
-                    callee.ty.ty(),
-                    Some(expr.span),
-                ) {
+                if ty_needs_erasure(self.db, callee.ty.ty()) {
+                    self.unevaluated_comptime_call(expr, callee, args, *origin);
                     return;
                 }
                 walk_expr(self, expr);
@@ -368,5 +443,120 @@ impl<'db> Visitor<'db> for Evaluator<'db> {
             MonoPatKind::Tuple(_) | MonoPatKind::ComptimeLabel(_) => walk_pat(self, pat),
             MonoPatKind::Wildcard | MonoPatKind::Lit(_) | MonoPatKind::Error => {}
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use hir::input::SourceFile;
+    use hir_ty::FrontendDesugarPlan;
+    use parser::parse_file_to_hir;
+    use solcore_test_utils::define_frontend_test_db;
+
+    use super::*;
+    use crate::ir::{MonoFunctionOrigin, MonoTy, ParamMode};
+
+    define_frontend_test_db!(TestDb, hir_ty);
+
+    /// A module with the entry `entry`, whose body is `body`, and the function
+    /// `helper(comptime value: integer) -> word`.
+    fn check<'db>(
+        db: &'db TestDb,
+        body: impl FnOnce(Span<'db>, MonoTy<'db>, MonoTy<'db>) -> Vec<MonoStmt<'db>>,
+    ) -> Vec<SpecializeDiagnosticKind<'db>> {
+        let file = SourceFile::new(
+            db,
+            "memory:///erasure.sol".parse().unwrap(),
+            Some("pragma solcore;".to_owned()),
+        );
+        let hir = parse_file_to_hir(db, file).module(db);
+        let span = hir.span(db);
+        let word = MonoTy::new_unchecked(Ty::builtin(db, BuiltinTyCtor::Word));
+        let integer = MonoTy::new_unchecked(Ty::integer(db));
+        let function = |name: &str, params, body| {
+            MonoItem::Function(MonoFunction {
+                origin: MonoFunctionOrigin::Source,
+                source: None,
+                shadowed_top_level: None,
+                name: name.to_owned(),
+                span,
+                params,
+                ret: word,
+                comptime_obligations: Vec::new(),
+                body,
+            })
+        };
+        let helper_param = MonoParam {
+            name: "value".to_owned(),
+            mode: ParamMode::Comptime,
+            ty: integer,
+            span,
+        };
+        let module = MonoModule {
+            module: hir.def_id(db),
+            frontend_desugar: FrontendDesugarPlan { bodies: Vec::new() },
+            entry_points: vec!["entry".to_owned()],
+            items: vec![
+                function("entry", Vec::new(), body(span, word, integer)),
+                function("helper", vec![helper_param], Vec::new()),
+            ],
+        };
+        let mut evaluator = Evaluator::new(db, &module, 100, 32);
+        evaluator.check_integer_erasure(&module);
+        evaluator
+            .diagnostics
+            .into_iter()
+            .map(|diagnostic| diagnostic.kind)
+            .collect()
+    }
+
+    #[test]
+    fn an_unevaluated_call_is_reported_without_the_function_it_calls() {
+        let db = TestDb::default();
+        let diagnostics = check(&db, |span, word, integer| {
+            let call = MonoExpr {
+                span,
+                ty: word,
+                kind: MonoExprKind::Call {
+                    callee: MonoId {
+                        span,
+                        name: "helper".to_owned(),
+                        ty: MonoTy::new_unchecked(Ty::function(&db, vec![integer.ty()], word.ty())),
+                    },
+                    args: vec![MonoExpr {
+                        span,
+                        ty: integer,
+                        kind: MonoExprKind::Lit(LitKind::Number("3".to_owned())),
+                    }],
+                    origin: MonoCallOrigin::ByName,
+                },
+            };
+            vec![MonoStmt {
+                span,
+                kind: MonoStmtKind::Return(Some(call)),
+            }]
+        });
+        assert!(
+            matches!(
+                diagnostics.as_slice(),
+                [SpecializeDiagnosticKind::ComptimeCallNotEvaluated { function }]
+                    if function == "helper"
+            ),
+            "{diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn a_compile_time_function_without_a_reported_call_is_reported_itself() {
+        let db = TestDb::default();
+        let diagnostics = check(&db, |_, _, _| Vec::new());
+        assert!(
+            matches!(
+                diagnostics.as_slice(),
+                [SpecializeDiagnosticKind::IntegerErasure { context, .. }]
+                    if context == "parameter 'value'"
+            ),
+            "{diagnostics:?}"
+        );
     }
 }

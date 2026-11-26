@@ -1,0 +1,75 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/hull/integer_literal_not_converted/main.sol
+---
+error[SC0409]: integer `256` cannot be converted to `uint8`
+  --> /main/main.sol:35:24
+   |
+34 | function widen<t>(x: t) returns (uint256) where t: Typedef<word> {
+35 |     let limit: uint8 = 256;
+   |                        ^^^ `Int.fromInteger` returns no value for this integer
+36 |     return uint256(Typedef.rep(x)) + uint256(Typedef.rep(limit));
+   |
+   = note: an integer literal gets the type `uint8` through `Int.fromInteger`, which is evaluated at compile time
+   = note: for this integer the evaluation ends without a value, as it does in std for an integer outside the range of the type
+---
+
+error[SC0409]: integer `300` cannot be converted to `uint8`
+  --> /main/main.sol:41:24
+   |
+40 |     function unsigned() public returns (uint256) {
+41 |         let x: uint8 = 300;
+   |                        ^^^ `Int.fromInteger` returns no value for this integer
+42 |         return uint256(Typedef.rep(x));
+   |
+   = note: an integer literal gets the type `uint8` through `Int.fromInteger`, which is evaluated at compile time
+   = note: for this integer the evaluation ends without a value, as it does in std for an integer outside the range of the type
+---
+
+error[SC0409]: integer `-129` cannot be converted to `int8`
+  --> /main/main.sol:46:23
+   |
+45 |     function signed() public returns (uint256) {
+46 |         let x: int8 = -129;
+   |                       ^^^^ `Int.fromInteger` returns no value for this integer
+47 |         return 1;
+   |
+   = note: an integer literal gets the type `int8` through `Int.fromInteger`, which is evaluated at compile time
+   = note: for this integer the evaluation ends without a value, as it does in std for an integer outside the range of the type
+---
+
+error[SC0409]: integer `115792089237316195423570985008687907853269984665640564039457584007913129639936` cannot be converted to `uint256`
+  --> /main/main.sol:51:16
+   |
+50 |     function full() public returns (uint256) {
+51 |         return 115792089237316195423570985008687907853269984665640564039457584007913129639936;
+   |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `Int.fromInteger` returns no value for this integer
+52 |     }
+   |
+   = note: an integer literal gets the type `uint256` through `Int.fromInteger`, which is evaluated at compile time
+   = note: for this integer the evaluation ends without a value, as it does in std for an integer outside the range of the type
+---
+
+error[SC0409]: integer `0x100` cannot be converted to `uint8`
+  --> /main/main.sol:55:20
+   |
+54 |     function operand(x: uint8) public returns (bool) {
+55 |         return x < 0x100;
+   |                    ^^^^^ `Int.fromInteger` returns no value for this integer
+56 |     }
+   |
+   = note: an integer literal gets the type `uint8` through `Int.fromInteger`, which is evaluated at compile time
+   = note: for this integer the evaluation ends without a value, as it does in std for an integer outside the range of the type
+---
+
+error[SC0409]: integer `7` cannot be converted to `Even`
+  --> /main/main.sol:59:31
+   |
+58 |     function user() public returns (uint256) {
+59 |         return half(4) + half(7);
+   |                               ^ `Int.fromInteger` returns no value for this integer
+60 |     }
+   |
+   = note: an integer literal gets the type `Even` through `Int.fromInteger`, which is evaluated at compile time
+   = note: for this integer the evaluation ends without a value, as it does in std for an integer outside the range of the type

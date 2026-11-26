@@ -108,12 +108,15 @@ contract C {{
 }}
 "#
             ));
+            // The literal is the one error: nothing is reported inside std.
             assert!(
-                output.diagnostics.iter().any(|diagnostic| matches!(
-                    diagnostic.kind,
-                    SpecializeDiagnosticKind::ComptimeEvaluationFailed { .. }
-                        | SpecializeDiagnosticKind::IntegerErasure { .. }
-                )),
+                matches!(
+                    output.diagnostics.as_slice(),
+                    [diagnostic] if matches!(
+                        diagnostic.kind,
+                        SpecializeDiagnosticKind::IntegerNotConverted { .. }
+                    )
+                ),
                 "{ty} = {literal}: {:?}",
                 output.diagnostics
             );

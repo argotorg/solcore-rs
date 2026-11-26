@@ -173,7 +173,7 @@ fn classify_inline_budget_exhaustion(
 
 pub(super) struct Evaluator<'db> {
     pub(super) db: &'db dyn Db,
-    functions: FxHashMap<String, MonoFunction<'db>>,
+    pub(super) functions: FxHashMap<String, MonoFunction<'db>>,
     pure_funs: FxHashSet<String>,
     // `pure_funs` plus functions whose only effects are guarded statement
     // calls (such as checked-arithmetic panics); see `compute_inlinable_funs`.
@@ -461,7 +461,7 @@ impl<'db> Evaluator<'db> {
         function
     }
 
-    fn expr_is_known_value(&self, expr: &MonoExpr<'db>) -> bool {
+    pub(super) fn expr_is_known_value(&self, expr: &MonoExpr<'db>) -> bool {
         match &expr.kind {
             MonoExprKind::Lit(_) | MonoExprKind::Proxy(_) | MonoExprKind::Lambda { .. } => true,
             MonoExprKind::Var(id) => self.functions.contains_key(&id.name),
