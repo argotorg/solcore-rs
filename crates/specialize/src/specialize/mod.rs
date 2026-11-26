@@ -71,7 +71,7 @@ mod products;
 mod ty_subst;
 
 use body::{BinOpExpr, BodyCtx, BodyIndex};
-pub use diagnostics::{SpecializeDiagnostic, SpecializeDiagnosticKind};
+pub use diagnostics::{RuntimeFunctionChoiceIssue, SpecializeDiagnostic, SpecializeDiagnosticKind};
 use dictionary::{Evidence, MethodEvidence};
 use driver::{
     AdtInfo, DerivedAbiFamily, DerivedAbiKey, DerivedClassKey, DerivedStorageFamily,

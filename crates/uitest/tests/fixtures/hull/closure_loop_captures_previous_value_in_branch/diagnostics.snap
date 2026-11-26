@@ -1,0 +1,20 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/hull/closure_loop_captures_previous_value_in_branch/main.sol
+---
+error[SC0417]: `f` is rebound in a loop to a closure that captures its own earlier value
+  --> /main/main.sol:20:21
+   |
+19 |               if (i < 2) {
+20 |                   f = lam (a: word) -> word {
+   |  _____________________^
+21 | |                     return f(a) + 1;
+22 | |                 };
+   | |_________________^ this closure captures a closure that the loop rebinds
+23 |               } else {
+   |
+   = note: function values have no run-time representation: a value chosen by run-time control flow is compiled to a selector over a finite set of closures known at compile time
+   = note: the closure captures, directly or through another variable that the loop rebinds, a closure that `f` held before, so the closures nest one level deeper with each iteration that creates it
+   = note: a loop is compiled as a loop and is not unrolled, even when its trip count is known at compile time, so the closures that `f` can hold do not form a fixed set
+   = note: help: keep the changing state in an ordinary variable, such as a counter or an accumulator, and build the closure from that variable instead of from a closure that the loop rebinds

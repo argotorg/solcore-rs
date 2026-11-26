@@ -1,0 +1,16 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/hull/closure_selected_at_runtime_returned/main.sol
+---
+error[SC0417]: a function value selected at run time cannot be returned from the function that selects it
+  --> /main/main.sol:17:5
+   |
+16 |     }
+17 |     return f;
+   |     ^^^^^^^^^ function value selected at run time used here
+18 | }
+   |
+   = note: function values have no run-time representation: a value chosen by run-time control flow is compiled to a selector over a finite set of closures known at compile time
+   = note: the selector and the captured values exist only in the function that makes the choice: there the selected value can be called or passed to other functions, but it cannot be returned, alone or inside another value
+   = note: help: call the function value where it is selected, or select it in the caller

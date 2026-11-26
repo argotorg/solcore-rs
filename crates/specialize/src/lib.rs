@@ -27,6 +27,6 @@ pub use ir::{
     MonoStorageIndexKind, MonoTy, ParamMode, collect_leaking_let_stmts,
 };
 pub use specialize::{
-    SpecializeDiagnostic, SpecializeDiagnosticKind, SpecializeOptions, SpecializeOutput,
-    specialize_module, specialize_name, specialize_prepared_module,
+    RuntimeFunctionChoiceIssue, SpecializeDiagnostic, SpecializeDiagnosticKind, SpecializeOptions,
+    SpecializeOutput, specialize_module, specialize_name, specialize_prepared_module,
 };

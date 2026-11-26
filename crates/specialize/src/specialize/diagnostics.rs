@@ -72,6 +72,36 @@ pub enum SpecializeDiagnosticKind<'db> {
         first: String,
         second: String,
     },
+    /// A function value depends on run-time control flow in a way that cannot
+    /// be reduced to a selector over a finite, compile-time set of closures.
+    UnsupportedRuntimeFunctionChoice {
+        variable: String,
+        issue: RuntimeFunctionChoiceIssue,
+    },
+}
+
+/// Why a function value chosen by run-time control flow is rejected.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RuntimeFunctionChoiceIssue {
+    /// A loop rebinds the variable to a closure that captures, directly or
+    /// through another variable the loop rebinds, a closure the variable held
+    /// before. Loops are not unrolled, so the closures nest without a bound
+    /// known at compile time.
+    SelfCapturingLoop,
+    /// Different paths give the variable aggregates whose constructors or
+    /// compile-time fields differ.
+    MixedStaticStructure,
+    /// Some path reaching the merge does not give the variable a known
+    /// function value.
+    NotAssignedOnEveryPath,
+    /// A variable that is not a function has no value before the run-time
+    /// branch or loop that assigns it a value holding a function value.
+    UninitializedAggregate,
+    /// More candidates than the specializer enumerates.
+    TooManyCandidates { limit: usize },
+    /// The selected value is returned, alone or inside another value, from
+    /// the function that selects it, and the call cannot be folded.
+    Escapes,
 }
 
 impl<'db> SpecializeDiagnostic<'db> {
@@ -119,6 +149,9 @@ impl SpecializeDiagnosticKind<'_> {
             Self::IntegerErasure { .. } => DiagnosticCode::SPECIALIZE_INTEGER_ERASURE,
             Self::PublicComptimeParam { .. } => DiagnosticCode::SPECIALIZE_PUBLIC_COMPTIME_PARAM,
             Self::IncoherentInstance { .. } => DiagnosticCode::SPECIALIZE_INCOHERENT_INSTANCE,
+            Self::UnsupportedRuntimeFunctionChoice { .. } => {
+                DiagnosticCode::SPECIALIZE_UNSUPPORTED_RUNTIME_FUNCTION_CHOICE
+            }
         }
     }
 
@@ -143,6 +176,26 @@ impl SpecializeDiagnosticKind<'_> {
             Self::IntegerErasure { .. } => "not representable at runtime",
             Self::PublicComptimeParam { .. } => "public entry parameter is runtime",
             Self::IncoherentInstance { .. } => "resolved to a second impl here",
+            Self::UnsupportedRuntimeFunctionChoice { issue, .. } => match issue {
+                RuntimeFunctionChoiceIssue::SelfCapturingLoop => {
+                    "this closure captures a closure that the loop rebinds"
+                }
+                RuntimeFunctionChoiceIssue::MixedStaticStructure => {
+                    "the aggregate holding the function value differs between paths"
+                }
+                RuntimeFunctionChoiceIssue::NotAssignedOnEveryPath => {
+                    "assigned under run-time control flow here"
+                }
+                RuntimeFunctionChoiceIssue::UninitializedAggregate => {
+                    "a value holding a function value is assigned here"
+                }
+                RuntimeFunctionChoiceIssue::TooManyCandidates { .. } => {
+                    "too many function values can reach this point"
+                }
+                RuntimeFunctionChoiceIssue::Escapes => {
+                    "function value selected at run time used here"
+                }
+            },
         }
     }
 
@@ -218,6 +271,56 @@ impl SpecializeDiagnosticKind<'_> {
                 "this is a compiler bug: impl placement checks should have rejected the program"
                     .to_owned(),
             ],
+            Self::UnsupportedRuntimeFunctionChoice { variable, issue } => {
+                let representation = "function values have no run-time representation: a value chosen by run-time control flow is compiled to a selector over a finite set of closures known at compile time"
+                    .to_owned();
+                match issue {
+                    RuntimeFunctionChoiceIssue::SelfCapturingLoop => vec![
+                        representation,
+                        format!(
+                            "the closure captures, directly or through another variable that the loop rebinds, a closure that `{variable}` held before, so the closures nest one level deeper with each iteration that creates it"
+                        ),
+                        format!(
+                            "a loop is compiled as a loop and is not unrolled, even when its trip count is known at compile time, so the closures that `{variable}` can hold do not form a fixed set"
+                        ),
+                        "help: keep the changing state in an ordinary variable, such as a counter or an accumulator, and build the closure from that variable instead of from a closure that the loop rebinds"
+                            .to_owned(),
+                    ],
+                    RuntimeFunctionChoiceIssue::MixedStaticStructure => vec![
+                        representation,
+                        "the constructor and the compile-time fields of an aggregate that holds a function value must be the same on every path"
+                            .to_owned(),
+                        "help: use the same constructor and compile-time fields on every path, or keep the function value in its own variable"
+                            .to_owned(),
+                    ],
+                    RuntimeFunctionChoiceIssue::NotAssignedOnEveryPath => vec![
+                        representation,
+                        format!(
+                            "help: give `{variable}` a known function value before the branch or loop, so that every path holds one"
+                        ),
+                    ],
+                    RuntimeFunctionChoiceIssue::UninitializedAggregate => vec![
+                        representation,
+                        "a variable that is not itself a function can hold a function value chosen at run time only if it holds a value with a function value in it before the branch or loop"
+                            .to_owned(),
+                        format!(
+                            "help: give `{variable}` such a value before the branch or loop, and use the same constructor for `{variable}` on every path"
+                        ),
+                    ],
+                    RuntimeFunctionChoiceIssue::TooManyCandidates { .. } => vec![
+                        representation,
+                        "help: reduce the number of different closures assigned under run-time control flow"
+                            .to_owned(),
+                    ],
+                    RuntimeFunctionChoiceIssue::Escapes => vec![
+                        representation,
+                        "the selector and the captured values exist only in the function that makes the choice: there the selected value can be called or passed to other functions, but it cannot be returned, alone or inside another value"
+                            .to_owned(),
+                        "help: call the function value where it is selected, or select it in the caller"
+                            .to_owned(),
+                    ],
+                }
+            }
             _ => Vec::new(),
         }
     }
@@ -289,6 +392,32 @@ impl fmt::Display for SpecializeDiagnosticKind<'_> {
                 f,
                 "constraint `{goal}` resolves to two different impls: one in {first} and one in {second}"
             ),
+            Self::UnsupportedRuntimeFunctionChoice { variable, issue } => match issue {
+                RuntimeFunctionChoiceIssue::SelfCapturingLoop => write!(
+                    f,
+                    "`{variable}` is rebound in a loop to a closure that captures its own earlier value"
+                ),
+                RuntimeFunctionChoiceIssue::MixedStaticStructure => write!(
+                    f,
+                    "`{variable}` holds aggregates with different constructors or compile-time fields on different run-time paths"
+                ),
+                RuntimeFunctionChoiceIssue::NotAssignedOnEveryPath => write!(
+                    f,
+                    "`{variable}` does not hold a known function value on every path"
+                ),
+                RuntimeFunctionChoiceIssue::UninitializedAggregate => write!(
+                    f,
+                    "`{variable}` is assigned a value holding a function value under run-time control flow, but has no value before it"
+                ),
+                RuntimeFunctionChoiceIssue::TooManyCandidates { limit } => write!(
+                    f,
+                    "`{variable}` can hold more than {limit} different function values here"
+                ),
+                RuntimeFunctionChoiceIssue::Escapes => write!(
+                    f,
+                    "a function value selected at run time cannot be returned from the function that selects it"
+                ),
+            },
         }
     }
 }

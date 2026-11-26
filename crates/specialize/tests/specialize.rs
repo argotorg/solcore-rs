@@ -24,8 +24,8 @@ use salsa::Setter;
 use solcore_specialize::{
     MonoComptimeObligationKind, MonoEntry, MonoExpr, MonoExprKind, MonoFunctionOrigin, MonoItem,
     MonoPatKind, MonoRuntimeMainOrigin, MonoStmt, MonoStmtKind, MonoStorageIndexKind,
-    SpecializeDiagnosticKind, SpecializeOptions, SpecializeOutput, specialize_module,
-    specialize_name, specialize_prepared_module,
+    RuntimeFunctionChoiceIssue, SpecializeDiagnosticKind, SpecializeOptions, SpecializeOutput,
+    specialize_module, specialize_name, specialize_prepared_module,
 };
 
 #[path = "specialize/checked_closures.rs"]
@@ -36,6 +36,8 @@ mod checked_defaults;
 mod integer_literals;
 #[path = "specialize/resource_limits.rs"]
 mod resource_limits;
+#[path = "specialize/runtime_closure_joins.rs"]
+mod runtime_closure_joins;
 #[path = "specialize/signed_integers.rs"]
 mod signed_integers;
 

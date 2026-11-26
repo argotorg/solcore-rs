@@ -1,0 +1,17 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/hull/closure_unassigned_on_some_path/main.sol
+---
+error[SC0417]: `f` does not hold a known function value on every path
+  --> /main/main.sol:12:13
+   |
+11 |           if (x < 100) {
+12 | /             f = lam (a: word) -> word {
+13 | |                 return a + 1;
+14 | |             };
+   | |______________^ assigned under run-time control flow here
+15 |           }
+   |
+   = note: function values have no run-time representation: a value chosen by run-time control flow is compiled to a selector over a finite set of closures known at compile time
+   = note: help: give `f` a known function value before the branch or loop, so that every path holds one

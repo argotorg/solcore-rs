@@ -243,8 +243,18 @@ impl<'db> Evaluator<'db> {
         }
         let type_reg = build_type_reg(&params, &[]);
         let ret_comptime = lambda_ret_is_comptime(self.db, ty.ty());
-        let (_, _, body) =
+        // The body is a template: it is evaluated again after lifting, and in
+        // every clone that binds its captured callables. Loops and run-time
+        // regions of the enclosing function do not extend into it.
+        self.template_depth += 1;
+        let context = self.enter_join_context();
+        let (_, _, mut body) =
             self.eval_stmts(&type_reg, closed_env, local_comptime, body, ret_comptime);
+        self.leave_join_context(context);
+        self.template_depth -= 1;
+        // A merge or a closure created in a nested scope can leave a snapshot
+        // binding that the rest of the body reads; it is not a capture.
+        self.repair_fresh_binding_scopes(&params, &mut body);
         // Dead branches may discard unavailable captures. Reject only uses
         // that survive evaluation, including assignment and assembly targets.
         if self
@@ -360,7 +370,9 @@ impl<'db> Evaluator<'db> {
             expr => expr,
         };
         let MonoExprKind::Lambda { params, body, .. } = &expr.kind else {
-            if materialize_payload && !self.expr_is_known_value(&expr) {
+            // A poisoned value has nothing to snapshot, and a merge that meets
+            // it must see which failure it stands for.
+            if materialize_payload && !self.expr_is_known_value(&expr) && !self.is_poison(&expr) {
                 let (value, binding) = self.materialize_callable_payload(expr);
                 return (value, vec![binding]);
             }
@@ -728,6 +740,20 @@ impl<'db> Evaluator<'db> {
         ty: MonoTy<'db>,
         span: Span<'db>,
     ) -> MonoExpr<'db> {
+        self.bound_closure_with(target, captures, ty, span, |this, index| {
+            this.fresh_clone_name(&format!("$arg{index}"))
+        })
+    }
+
+    /// `bound_closure` with the forwarding parameters named by `param_name`.
+    pub(super) fn bound_closure_with(
+        &mut self,
+        target: &MonoId<'db>,
+        captures: Vec<MonoExpr<'db>>,
+        ty: MonoTy<'db>,
+        span: Span<'db>,
+        mut param_name: impl FnMut(&mut Self, usize) -> String,
+    ) -> MonoExpr<'db> {
         if captures.is_empty() {
             return MonoExpr {
                 span,
@@ -749,7 +775,7 @@ impl<'db> Evaluator<'db> {
             .iter()
             .enumerate()
             .map(|(index, ty)| MonoParam {
-                name: self.fresh_clone_name(&format!("$arg{index}")),
+                name: param_name(self, index),
                 mode: ParamMode::Runtime,
                 ty: MonoTy::new_unchecked(*ty),
                 span,
@@ -892,7 +918,7 @@ impl<'db> Evaluator<'db> {
     }
 }
 
-fn bound_closure_parts<'a, 'db>(
+pub(super) fn bound_closure_parts<'a, 'db>(
     expr: &'a MonoExpr<'db>,
 ) -> Option<(&'a MonoId<'db>, &'a [MonoExpr<'db>])> {
     let MonoExprKind::Lambda { name, params, body } = &expr.kind else {
@@ -917,7 +943,7 @@ fn bound_closure_parts<'a, 'db>(
     Some((callee, args.get(params.len()..)?))
 }
 
-fn bound_closure_parts_mut<'a, 'db>(
+pub(super) fn bound_closure_parts_mut<'a, 'db>(
     expr: &'a mut MonoExpr<'db>,
 ) -> Option<(&'a mut MonoId<'db>, &'a mut [MonoExpr<'db>])> {
     let MonoExprKind::Lambda { name, params, body } = &mut expr.kind else {
@@ -963,7 +989,11 @@ fn callable_payload_parameter<'db>(
     var_expr(id)
 }
 
-fn function_ty<'db>(db: &'db dyn Db, params: &[MonoParam<'db>], ret: MonoTy<'db>) -> MonoTy<'db> {
+pub(super) fn function_ty<'db>(
+    db: &'db dyn Db,
+    params: &[MonoParam<'db>],
+    ret: MonoTy<'db>,
+) -> MonoTy<'db> {
     MonoTy::new_unchecked(hir_ty::Ty::function(
         db,
         params.iter().map(|param| param.ty.ty()).collect(),
@@ -971,7 +1001,7 @@ fn function_ty<'db>(db: &'db dyn Db, params: &[MonoParam<'db>], ret: MonoTy<'db>
     ))
 }
 
-fn var_expr(id: MonoId<'_>) -> MonoExpr<'_> {
+pub(super) fn var_expr(id: MonoId<'_>) -> MonoExpr<'_> {
     MonoExpr {
         span: id.span,
         ty: id.ty,

@@ -43,6 +43,7 @@ pub(crate) fn evaluate_module<'db>(
     }
     module.items = items;
     module = eliminate_dead_functions(module);
+    evaluator.flush_join_diagnostics(&module);
     if !evaluator.diagnostics.iter().any(|diagnostic| {
         matches!(
             diagnostic.kind,
@@ -51,6 +52,7 @@ pub(crate) fn evaluate_module<'db>(
                 | SpecializeDiagnosticKind::ComptimeRecursion { .. }
                 | SpecializeDiagnosticKind::ReductionRecursion { .. }
                 | SpecializeDiagnosticKind::ReductionFuelExhausted { .. }
+                | SpecializeDiagnosticKind::UnsupportedRuntimeFunctionChoice { .. }
         )
     }) {
         evaluator.check_integer_erasure(&module);

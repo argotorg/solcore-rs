@@ -1,0 +1,18 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/hull/closure_constructor_differs_by_path/main.sol
+---
+error[SC0417]: `m` holds aggregates with different constructors or compile-time fields on different run-time paths
+  --> /main/main.sol:17:13
+   |
+16 |           if (x < 100) {
+17 | /             m = Maybe.Just(lam (a: word) -> word {
+18 | |                     return a + 1;
+19 | |                 });
+   | |___________________^ the aggregate holding the function value differs between paths
+20 |           }
+   |
+   = note: function values have no run-time representation: a value chosen by run-time control flow is compiled to a selector over a finite set of closures known at compile time
+   = note: the constructor and the compile-time fields of an aggregate that holds a function value must be the same on every path
+   = note: help: use the same constructor and compile-time fields on every path, or keep the function value in its own variable

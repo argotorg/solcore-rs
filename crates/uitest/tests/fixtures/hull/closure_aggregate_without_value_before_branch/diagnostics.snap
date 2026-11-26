@@ -1,0 +1,18 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/hull/closure_aggregate_without_value_before_branch/main.sol
+---
+error[SC0417]: `m` is assigned a value holding a function value under run-time control flow, but has no value before it
+  --> /main/main.sol:18:13
+   |
+17 |           if (x < 100) {
+18 | /             m = Maybe.Just(lam (a: word) -> word {
+19 | |                     return a + 1;
+20 | |                 });
+   | |___________________^ a value holding a function value is assigned here
+21 |           } else {
+   |
+   = note: function values have no run-time representation: a value chosen by run-time control flow is compiled to a selector over a finite set of closures known at compile time
+   = note: a variable that is not itself a function can hold a function value chosen at run time only if it holds a value with a function value in it before the branch or loop
+   = note: help: give `m` such a value before the branch or loop, and use the same constructor for `m` on every path
