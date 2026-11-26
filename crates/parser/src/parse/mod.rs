@@ -460,7 +460,7 @@ fn parse_body_statements_impl<'src>(
         .collect::<Vec<_>>();
     nesting_errors.extend(suppress_body_cascades(parse_errors));
     if let Some(output) = output.as_deref() {
-        validate_expression_statement_terminators(output, true, &mut nesting_errors);
+        validate_expression_statement_terminators(source, output, true, &mut nesting_errors);
     }
 
     ParseOutput {
@@ -470,6 +470,7 @@ fn parse_body_statements_impl<'src>(
 }
 
 fn validate_expression_statement_terminators(
+    source: &str,
     stmts: &[ParsedStmt<'_>],
     allow_final_unterminated: bool,
     errors: &mut Vec<ParsedError>,
@@ -485,7 +486,9 @@ fn validate_expression_statement_terminators(
                     stmt.span,
                     "expression statement requires trailing `;`; only a final named function body expression may omit it",
                 );
-                if let Some((ty, name)) = typed_local_declaration(expr, stmts.get(index + 1)) {
+                if let Some((ty, name)) =
+                    typed_local_declaration(source, expr, stmts.get(index + 1))
+                {
                     error = error.with_note(format!(
                         "to declare a local variable, write `let {name}: {ty} = ...;`"
                     ));
@@ -494,23 +497,28 @@ fn validate_expression_statement_terminators(
             }
             ParsedStmtKind::Match { arms, .. } => {
                 for arm in arms {
-                    validate_expression_statement_terminators(&arm.body, false, errors);
+                    validate_expression_statement_terminators(source, &arm.body, false, errors);
                 }
             }
             ParsedStmtKind::For { body, .. } => {
-                validate_expression_statement_terminators(&body.stmts, false, errors);
+                validate_expression_statement_terminators(source, &body.stmts, false, errors);
             }
             ParsedStmtKind::Block { body } | ParsedStmtKind::Unchecked { body, .. } => {
-                validate_expression_statement_terminators(body, false, errors);
+                validate_expression_statement_terminators(source, body, false, errors);
             }
             ParsedStmtKind::If {
                 then_body,
                 else_body,
                 ..
             } => {
-                validate_expression_statement_terminators(&then_body.stmts, false, errors);
+                validate_expression_statement_terminators(source, &then_body.stmts, false, errors);
                 if let Some(else_body) = else_body {
-                    validate_expression_statement_terminators(&else_body.stmts, false, errors);
+                    validate_expression_statement_terminators(
+                        source,
+                        &else_body.stmts,
+                        false,
+                        errors,
+                    );
                 }
             }
             _ => {}
@@ -520,21 +528,24 @@ fn validate_expression_statement_terminators(
 
 /// Returns the type and variable names of a Solidity-style local declaration
 /// such as `address from = x;`, which parses as the expression statement
-/// `address` followed by the assignment `from = x;`.
+/// `address` followed by the assignment `from = x;`. Both names are on one
+/// line: after a line break, the first one is a statement that lost its `;`.
 fn typed_local_declaration<'src>(
+    source: &str,
     expr: &ParsedExpr<'src>,
     next: Option<&ParsedStmt<'src>>,
 ) -> Option<(&'src str, &'src str)> {
-    let ParsedExprKind::Ident((ty, _)) = &expr.kind else {
+    let ParsedExprKind::Ident((ty, ty_span)) = &expr.kind else {
         return None;
     };
     let ParsedStmtKind::Assign { lhs, .. } = &next?.kind else {
         return None;
     };
-    let ParsedExprKind::Ident((name, _)) = &lhs.kind else {
+    let ParsedExprKind::Ident((name, name_span)) = &lhs.kind else {
         return None;
     };
-    Some((ty, name))
+    let between = source.get(ty_span.end..name_span.start)?;
+    (!between.contains('\n')).then_some((ty, name))
 }
 
 #[cfg(test)]
