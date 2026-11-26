@@ -408,7 +408,7 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
                 if *op == hir::ast::function::AssignOp::Plain
                     && self.memory_array_index_parts(*lhs).is_some() =>
             {
-                MonoStmtKind::Expr(self.memory_array_index_store(*lhs, *rhs, span)?)
+                self.memory_array_index_store(*lhs, *rhs, span)?
             }
             StmtKind::Assign { op, lhs, rhs } => MonoStmtKind::Assign {
                 op: *op,
@@ -2479,15 +2479,15 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
         self.synthetic_std_call(helper, args, ty, span)
     }
 
-    /// The base and index of `m[i]` when `m` is a memory array, after peeling
-    /// type annotations from an assignment target.
+    /// The `m[i]` expression, its base and its index when `m` is a memory
+    /// array, after peeling type annotations from an assignment target.
     fn memory_array_index_parts(
         &self,
         expr: Id<Expr<'db>>,
-    ) -> Option<(Id<Expr<'db>>, Id<Expr<'db>>)> {
+    ) -> Option<(Id<Expr<'db>>, Id<Expr<'db>>, Id<Expr<'db>>)> {
         match &self.body.exprs(self.driver.db).get(expr).kind {
             ExprKind::Index { base, index } if self.is_memory_array_expr(*base) => {
-                Some((*base, *index))
+                Some((expr, *base, *index))
             }
             ExprKind::TypeAnnot { expr, .. } => self.memory_array_index_parts(*expr),
             _ => None,
@@ -2497,22 +2497,89 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
     /// `m[i] = v` lowers to `assignRef(lidx(m, i), v)`: the std
     /// LValueIdxAccess instance checks the bounds and yields a `memref` to the
     /// element.
+    ///
+    /// The parser represents `m[i] op= v` as `m[i] = m[i] op v`. As for a
+    /// storage element, the `memref` is saved and the generated read loads
+    /// through it: `m` and then `i` are evaluated once and `i` is checked
+    /// against the bounds once, before the element is read and `v` evaluated.
     fn memory_array_index_store(
         &mut self,
         lhs: Id<Expr<'db>>,
         rhs: Id<Expr<'db>>,
         span: Span<'db>,
-    ) -> Option<MonoExpr<'db>> {
-        let (base, index) = self.memory_array_index_parts(lhs)?;
+    ) -> Option<MonoStmtKind<'db>> {
+        let (place, base, index) = self.memory_array_index_parts(lhs)?;
         let elem_ty = self.expr_ty(lhs)?;
         let elem_ty = self.normalize_body_ty(self.subst.apply_ty(self.driver.db, elem_ty));
         let cell_ty = self.canonical_std_adt_ty("memref", vec![elem_ty])?;
         let base = self.expr(base)?;
         let index = self.expr(index)?;
         let cell = self.synthetic_std_call("lidx", vec![base, index], cell_ty, span)?;
-        let rhs = self.expr(rhs)?;
+        let mut value = self.expr(rhs)?;
         let unit = Ty::unit(self.driver.db);
-        self.synthetic_std_call("assignRef", vec![cell, rhs], unit, span)
+        if !self.is_compound_assign_rhs(lhs, rhs) {
+            let store = self.synthetic_std_call("assignRef", vec![cell, value], unit, span)?;
+            return Some(MonoStmtKind::Expr(store));
+        }
+        let place_span = self.body.exprs(self.driver.db).get(place).span;
+        let cell_id = MonoId {
+            name: format!("$memory_index_cell_{}", span.begin().as_u32()),
+            ty: cell.ty,
+            span: place_span,
+        };
+        let cell_var = MonoExpr {
+            span: place_span,
+            ty: cell.ty,
+            kind: MonoExprKind::Var(cell_id.clone()),
+        };
+        // The generated read lowered to `ridx(m, i)`, whose std instance is
+        // `CanStore.load(lidx(m, i))`; load through the saved `memref` instead.
+        let loaded = self.resolved_class_call(
+            "CanStore",
+            "load",
+            vec![cell_var.clone()],
+            elem_ty,
+            place_span,
+        )?;
+        let db = self.driver.db;
+        replace_desugared_read_at_span(&mut value, place_span, loaded.ty, &loaded, |kind| {
+            matches!(
+                kind,
+                MonoExprKind::Call {
+                    origin: MonoCallOrigin::Source(def),
+                    ..
+                } if is_canonical_std_def_named(db, *def, "ridx")
+            )
+        });
+        let store = self.synthetic_std_call("assignRef", vec![cell_var, value], unit, span)?;
+        Some(MonoStmtKind::Block(vec![
+            MonoStmt {
+                span,
+                kind: MonoStmtKind::Let {
+                    mode: LetMode::Runtime,
+                    id: cell_id,
+                    ty: Some(cell.ty),
+                    init: Some(cell),
+                },
+            },
+            MonoStmt {
+                span,
+                kind: MonoStmtKind::Expr(store),
+            },
+        ]))
+    }
+
+    /// Whether `rhs` is the operator expression the parser builds for the
+    /// compound assignment `lhs op= v`: its first operand is the copy of `lhs`
+    /// that keeps the source span of `lhs`.
+    fn is_compound_assign_rhs(&self, lhs: Id<Expr<'db>>, rhs: Id<Expr<'db>>) -> bool {
+        let exprs = self.body.exprs(self.driver.db);
+        let (ExprKind::BinOp { lhs: read, .. } | ExprKind::UnaryOp { expr: read, .. }) =
+            &exprs.get(rhs).kind
+        else {
+            return false;
+        };
+        exprs.get(*read).span == exprs.get(lhs).span
     }
 
     fn calldata_array_index(
@@ -3023,7 +3090,8 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
     }
 }
 
-/// Reuses the storage reference or struct snapshot saved for a compound assignment.
+/// Reuses the storage or memory element reference, or the struct snapshot,
+/// saved for a compound assignment.
 ///
 /// The parser represents `lhs op= rhs` as `lhs = lhs op rhs` and preserves the
 /// source span on the cloned `lhs`. Matching that span keeps the optimization
