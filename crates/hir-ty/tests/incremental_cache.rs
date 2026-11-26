@@ -351,6 +351,58 @@ fn import_diagnostic_span_edit_does_not_rerun_unrelated_body_inference(
     }
 }
 
+#[dir_test::dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/incremental_cache/hidden_constructor_edit_does_not_rerun_opaque_field_inference", glob: "before.sol")]
+fn hidden_constructor_edit_does_not_rerun_opaque_field_inference(fixture: dir_test::Fixture<&str>) {
+    let sibling = |name: &str| {
+        std::fs::read_to_string(std::path::Path::new(fixture.path()).with_file_name(name))
+            .expect("fixture source")
+    };
+    let (mut db, _, key) = db_with_file_backed_main(&sibling("main.sol"));
+    let mut insert = |library: LibraryId, name: &str, url: &str, content: String| {
+        let file = SourceFile::new(&db, url.parse().expect("valid URL"), Some(content));
+        let key = ModuleKey {
+            library,
+            logical_path: vec![name.to_owned()],
+        };
+        db.insert_module_file(key, file);
+        file
+    };
+    insert(
+        LibraryId::Std,
+        "std",
+        "file:///memory/std/std.sol",
+        sibling("std.sol"),
+    );
+    let util = insert(
+        LibraryId::Main,
+        "util",
+        "file:///memory/util.sol",
+        fixture.content().to_string(),
+    );
+
+    {
+        let module = module_id_from_key(&db, &key);
+        // `v.length` reads a property of a struct whose constructor is hidden.
+        assert!(module_typeck_diagnostics(&db, module).is_empty());
+    }
+
+    // The edit changes a hidden constructor that `main` imports, and nothing
+    // that `size` uses.
+    util.set_content(&mut db).to(Some(sibling("after.sol")));
+
+    {
+        let module = module_id_from_key(&db, &key);
+        let _ = db.take_executed();
+        assert!(module_typeck_diagnostics(&db, module).is_empty());
+        let executed = db.take_executed();
+        assert_eq!(
+            query_executions(&executed, "infer_body"),
+            0,
+            "{executed:#?}"
+        );
+    }
+}
+
 #[dir_test::dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/incremental_cache/desugar_body_edit_does_not_rerun_unrelated_body_inference", glob: "before.sol")]
 fn desugar_body_edit_does_not_rerun_unrelated_body_inference(fixture: dir_test::Fixture<&str>) {
     let before = fixture.content();

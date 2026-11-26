@@ -161,11 +161,16 @@ impl<'db> InferCtx<'db> {
                 let receiver =
                     (!self.is_namespace_expr(body, *base)).then(|| self.infer_expr(body, *base));
                 let resolution = self.expr_resolutions.get(&(body, expr_id)).cloned();
-                let mut hidden_field = None;
+                let mut opaque_receiver = None;
                 if resolution.is_none()
                     && let Some(receiver) = receiver.clone()
-                    && let Some(field_ty) =
-                        self.infer_struct_field(body, expr_id, *base, receiver, &mut hidden_field)
+                    && let Some(field_ty) = self.infer_struct_field(
+                        body,
+                        expr_id,
+                        *base,
+                        receiver,
+                        &mut opaque_receiver,
+                    )
                 {
                     field_ty
                 } else if resolution.is_none()
@@ -179,6 +184,10 @@ impl<'db> InferCtx<'db> {
                     } else {
                         let span = self.field_label_span(body, expr_id);
                         let field = self.field_name(body, expr_id);
+                        // The import environment is read only here, where the
+                        // access is already an error.
+                        let hidden_field = opaque_receiver
+                            .and_then(|def| self.hidden_field_constructor(def, &field));
                         let diagnostic = match hidden_field {
                             Some((constructor, declaration)) => TypeckDiagnostic::HiddenField {
                                 span,
@@ -280,15 +289,15 @@ impl<'db> InferCtx<'db> {
     }
 
     /// Types a field projection on a struct value. When the struct's
-    /// constructor is not visible, returns `None` and stores the hidden
-    /// constructor that declares the field in `hidden_field`.
+    /// constructor is not visible, returns `None` and stores the struct in
+    /// `opaque_receiver`.
     fn infer_struct_field(
         &mut self,
         body: FuncBody<'db>,
         expr: Id<Expr<'db>>,
         base: Id<Expr<'db>>,
         receiver: InferTy<'db>,
-        hidden_field: &mut Option<(hir_nameres::HiddenConstructor, LabelSpan)>,
+        opaque_receiver: &mut Option<DefId<'db>>,
     ) -> Option<InferTy<'db>> {
         let loaded_receiver = receiver.clone();
         // CanStore's output is chosen by the solver after expression inference.
@@ -318,8 +327,7 @@ impl<'db> InferCtx<'db> {
         // A projection exposes the product representation just like a
         // constructor pattern.
         if !self.is_adt_ctor_visible(*def, hir_nameres::CtorIndex::from_usize(0)) {
-            let field = self.field_name(body, expr);
-            *hidden_field = self.hidden_field_constructor(*def, &field);
+            *opaque_receiver = Some(*def);
             return None;
         }
         let field = self.field_name(body, expr);
