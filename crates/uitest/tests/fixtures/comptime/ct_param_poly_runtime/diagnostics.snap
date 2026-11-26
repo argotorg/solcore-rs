@@ -3,11 +3,11 @@ source: crates/test-utils/src/lib.rs
 expression: rendered
 input_file: crates/uitest/tests/fixtures/comptime/ct_param_poly_runtime/main.sol
 ---
-error[SC0409]: comptime evaluation failed: runtime value passed to comptime parameter 'x' of 'unwrap'
-  --> /main/main.sol:22:12
+error[SC0240]: runtime value passed to comptime parameter 'x' of 'Wrap.unwrap'
+  --> /main/main.sol:28:24
    |
-21 | function process<t>(z: t) returns (word) where t: Wrap {
-22 |     return Wrap.unwrap(z);
-   |            ^^^^^^^^^^^^^^ comptime evaluation failed here
-23 | }
+27 |         let value: word = 42;
+28 |         return process(value);
+   |                        ^^^^^ runtime value passed here
+29 |     }
    |
