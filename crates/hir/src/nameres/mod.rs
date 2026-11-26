@@ -57,7 +57,7 @@ mod util;
 
 use body_resolver::BodyResolver;
 use builtins::{best_name_suggestion, builtin_term, builtin_type_or_class};
-pub use diagnostic::{NameresDiagnostic, UndefinedNameKind};
+pub use diagnostic::{NameresDiagnostic, UndefinedNameHint, UndefinedNameKind};
 use diagnostic::{
     duplicate_diagnostic, invalid_pattern, undefined_class, undefined_name, undefined_type_ctor,
     unqualified_constructor,

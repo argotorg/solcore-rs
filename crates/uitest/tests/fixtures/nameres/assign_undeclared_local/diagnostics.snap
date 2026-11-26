@@ -1,0 +1,14 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/nameres/assign_undeclared_local/main.sol
+---
+error[SC0101]: undefined name: total
+ --> /main/main.sol:4:5
+  |
+3 | function main() returns (word) {
+4 |     total = 1;
+  |     ^^^^^ unknown name
+5 |     return 0;
+  |
+  = help: to declare a new local variable, write `let total = ...;`

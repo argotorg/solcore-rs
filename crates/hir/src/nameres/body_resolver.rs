@@ -65,7 +65,13 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
             }
             StmtKind::Expr(expr) => self.expr(body, *expr),
             StmtKind::Assign { lhs, rhs, .. } => {
-                self.expr(body, *lhs);
+                if let ExprKind::Ident(name) = &body.exprs(self.db).get(*lhs).kind {
+                    let resolution = self
+                        .resolve_ident_with_hint(name, Some(UndefinedNameHint::AssignmentTarget));
+                    self.map.record_expr(body, *lhs, resolution);
+                } else {
+                    self.expr(body, *lhs);
+                }
                 self.expr(body, *rhs);
             }
             StmtKind::Match { scrutinees, arms } => {
@@ -441,6 +447,14 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
     }
 
     fn resolve_ident(&mut self, name: &SpannedElem<'db, Ident<'db>>) -> Resolution<'db> {
+        self.resolve_ident_with_hint(name, None)
+    }
+
+    fn resolve_ident_with_hint(
+        &mut self,
+        name: &SpannedElem<'db, Ident<'db>>,
+        hint: Option<UndefinedNameHint>,
+    ) -> Resolution<'db> {
         let text = ident_text_str(self.db, name);
         self.lookup_local(text)
             // Contract fields intentionally beat same-name functions in the
@@ -469,11 +483,15 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
                     ));
                     return Resolution::Err;
                 }
-                self.map.diagnostics.push(self.undefined_name_diag(
-                    text,
-                    name.span(self.db),
-                    UndefinedNameKind::Term,
-                ));
+                self.map
+                    .diagnostics
+                    .push(self.undefined_name_diag_with_hint(
+                        text,
+                        name.span(self.db),
+                        UndefinedNameKind::Term,
+                        None,
+                        hint,
+                    ));
                 Resolution::Err
             })
     }
@@ -543,11 +561,25 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
         let resolution = self
             .lookup_unique_visible_class_method(method)
             .unwrap_or_else(|| {
-                self.map.diagnostics.push(self.undefined_name_diag(
-                    method,
-                    field.span(self.db),
-                    UndefinedNameKind::Field,
-                ));
+                let names_function = matches!(
+                    self.lookup_qualified_term(method),
+                    Some(Resolution::Def {
+                        kind: DefResolutionKind::Function,
+                        ..
+                    })
+                );
+                let hint = names_function.then(|| UndefinedNameHint::FunctionCalledAsMethod {
+                    receiver: expr_path(self.db, body, base).map(|segments| segments.join(".")),
+                });
+                self.map
+                    .diagnostics
+                    .push(self.undefined_name_diag_with_hint(
+                        method,
+                        field.span(self.db),
+                        UndefinedNameKind::Field,
+                        None,
+                        hint,
+                    ));
                 Resolution::Err
             });
         self.map.record_expr(body, expr_id, resolution);
@@ -702,11 +734,31 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
         kind: UndefinedNameKind,
         private_candidate: Option<PrivateCandidate>,
     ) -> NameresDiagnostic {
-        let suggestion = private_candidate
-            .is_none()
+        self.undefined_name_diag_with_hint(name, span, kind, private_candidate, None)
+    }
+
+    fn undefined_name_diag_with_hint(
+        &self,
+        name: &str,
+        span: Span<'db>,
+        kind: UndefinedNameKind,
+        private_candidate: Option<PrivateCandidate>,
+        hint: Option<UndefinedNameHint>,
+    ) -> NameresDiagnostic {
+        let suggest = private_candidate.is_none()
+            && !matches!(hint, Some(UndefinedNameHint::FunctionCalledAsMethod { .. }));
+        let suggestion = suggest
             .then(|| best_name_suggestion(name, self.name_candidate_names()))
             .flatten();
-        undefined_name(self.db, name, span, kind, suggestion, private_candidate)
+        undefined_name(
+            self.db,
+            name,
+            span,
+            kind,
+            suggestion,
+            private_candidate,
+            hint,
+        )
     }
 
     fn undefined_type_ctor_diag(&self, name: &str, span: Span<'db>) -> NameresDiagnostic {

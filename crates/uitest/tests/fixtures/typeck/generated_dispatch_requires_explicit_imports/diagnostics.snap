@@ -31,7 +31,6 @@ error[SC0101]: undefined name: Method
   |          ^ unknown name
 4 |     function echo(value: uint256) public returns (uint256) {
   |
-  = help: did you mean `echo`?
 ---
 
 error[SC0101]: undefined name: Proxy

@@ -14,7 +14,7 @@ pub(super) fn best_name_suggestion(
     let mut best: Option<(usize, String)> = None;
     for candidate in candidates {
         let distance = edit_distance(name, &candidate);
-        let limit = suggestion_distance_limit(name, &candidate);
+        let limit = suggestion_distance_limit(name);
         if distance == 0 || distance > limit {
             continue;
         }
@@ -28,9 +28,9 @@ pub(super) fn best_name_suggestion(
     best.map(|(_, candidate)| candidate)
 }
 
-fn suggestion_distance_limit(left: &str, right: &str) -> usize {
-    let max_len = left.chars().count().max(right.chars().count());
-    if max_len <= 4 { 1 } else { 3 }
+// Allows one edit for every 3 characters of the looked-up name, and at least one.
+fn suggestion_distance_limit(name: &str) -> usize {
+    name.chars().count().max(3) / 3
 }
 
 fn edit_distance(left: &str, right: &str) -> usize {
