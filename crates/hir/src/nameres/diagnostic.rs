@@ -44,6 +44,9 @@ pub enum UndefinedNameHint {
     FunctionCalledAsMethod {
         /// Receiver path as written, when the receiver is a plain name.
         receiver: Option<String>,
+        /// Whether the function may have a parameter to pass the receiver as.
+        /// False only when its declaration is known to have none.
+        has_parameters: bool,
     },
 }
 
@@ -168,19 +171,23 @@ impl NameresDiagnostic {
                             "to declare a new local variable, write `let {name} = ...;`"
                         ));
                     }
-                    Some(UndefinedNameHint::FunctionCalledAsMethod { receiver }) => {
-                        diagnostic = diagnostic
-                            .with_note(format!(
-                                "`{name}` is a function, and method-call syntax only works for trait methods"
-                            ))
-                            .with_help(match receiver {
-                                Some(receiver) => format!(
-                                    "pass `{receiver}` as the first argument of `{name}`"
-                                ),
-                                None => format!(
-                                    "pass the receiver as the first argument of `{name}`"
-                                ),
+                    Some(UndefinedNameHint::FunctionCalledAsMethod {
+                        receiver,
+                        has_parameters,
+                    }) => {
+                        diagnostic = diagnostic.with_note(format!(
+                            "`{name}` is a function, and method-call syntax only works for trait methods"
+                        ));
+                        if *has_parameters {
+                            diagnostic = diagnostic.with_help(match receiver {
+                                Some(receiver) => {
+                                    format!("pass `{receiver}` as the first argument of `{name}`")
+                                }
+                                None => {
+                                    format!("pass the receiver as the first argument of `{name}`")
+                                }
                             });
+                        }
                     }
                     None => {}
                 }

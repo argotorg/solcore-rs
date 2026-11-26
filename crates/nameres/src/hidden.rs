@@ -103,9 +103,10 @@ impl<'db> ModuleEnv<'db> {
     }
 }
 
-/// Import names for body name resolution: the import surface plus the hidden
-/// constructor facts that only diagnostics read.
+/// Import names for body name resolution: the import surface plus what only
+/// diagnostics read, the hidden constructor facts and function declarations.
 pub(super) struct SurfaceWithHiddenConstructors<'a, 'db> {
+    pub(super) db: &'db dyn Db,
     pub(super) surface: &'a ModuleImportSurface<'db>,
     pub(super) hidden_constructors: &'a [HiddenConstructorFact<'db>],
 }
@@ -189,6 +190,34 @@ impl<'db> hir_nameres::ImportedNames<'db> for SurfaceWithHiddenConstructors<'_, 
     ) -> Option<hir_nameres::HiddenConstructor> {
         find_hidden_constructor_named(self.surface, self.hidden_constructors, name)
     }
+
+    fn function_parameter_count(
+        &self,
+        _db: &'db dyn hir::Db,
+        function: DefId<'db>,
+    ) -> Option<usize> {
+        function_parameter_count(self.db, function)
+    }
+}
+
+/// Returns how many parameters the function `function` declares, at module
+/// level or in a contract.
+fn function_parameter_count<'db>(db: &'db dyn Db, function: DefId<'db>) -> Option<usize> {
+    let declares = |def: &FunctionDef<'db>| {
+        (def.def_id(db) == function).then(|| def.sig(db).params.atom().len())
+    };
+    parse_file_to_hir(db, function.file(db))
+        .module(db)
+        .items(db)
+        .iter()
+        .find_map(|item| match item {
+            Item::FunctionDef(def) => declares(def),
+            Item::ContractDef(contract) => contract.items(db).iter().find_map(|item| match item {
+                ContractItem::FunctionDef(def) => declares(def),
+                _ => None,
+            }),
+            _ => None,
+        })
 }
 
 fn find_hidden_constructor<'db>(

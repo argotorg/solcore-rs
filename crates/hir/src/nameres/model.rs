@@ -824,6 +824,12 @@ pub trait ImportedNames<'db> {
     fn hidden_constructor_named(&self, _db: &'db dyn Db, _name: &str) -> Option<HiddenConstructor> {
         None
     }
+
+    /// Returns how many parameters the function `function` declares, when the
+    /// provider can read its declaration.
+    fn function_parameter_count(&self, _db: &'db dyn Db, _function: DefId<'db>) -> Option<usize> {
+        None
+    }
 }
 
 /// Empty import provider used by standalone HIR queries.

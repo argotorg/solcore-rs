@@ -396,6 +396,7 @@ pub fn body_diagnostics<'db>(
     record_body_field(db, body);
     let policy = BodyDiagnosticPolicy::from_suppress_for_parse_errors(suppress_for_parse_errors);
     let imports = SurfaceWithHiddenConstructors {
+        db,
         surface: &surface,
         hidden_constructors: &hidden_constructors,
     };

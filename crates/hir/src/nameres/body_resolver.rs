@@ -598,15 +598,17 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
         let resolution = self
             .lookup_unique_visible_class_method(method)
             .unwrap_or_else(|| {
-                let names_function = matches!(
-                    self.lookup_qualified_term(method),
+                let function = match self.lookup_qualified_term(method) {
                     Some(Resolution::Def {
+                        def,
                         kind: DefResolutionKind::Function,
-                        ..
-                    })
-                );
-                let hint = names_function.then(|| UndefinedNameHint::FunctionCalledAsMethod {
+                    }) => Some(def),
+                    _ => None,
+                };
+                let hint = function.map(|function| UndefinedNameHint::FunctionCalledAsMethod {
                     receiver: expr_path(self.db, body, base).map(|segments| segments.join(".")),
+                    has_parameters: self.imports.function_parameter_count(self.db, function)
+                        != Some(0),
                 });
                 self.map
                     .diagnostics
