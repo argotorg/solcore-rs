@@ -1,15 +1,13 @@
 pragma solcore;
 
-export { Marker, Box, Phantom };
+export { Marker, marked, Box, Phantom };
 
-trait Marker<a> {
-    function mark(x: a) returns (word);
-}
+trait Marker<a> {}
 
-impl Marker<word> {
-    function mark(x: word) returns (word) {
-        return x;
-    }
+impl Marker<word> {}
+
+function marked<a>(x: a) returns (word) where a: Marker {
+    return 1;
 }
 
 #[derive(Marker)]

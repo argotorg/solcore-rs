@@ -123,10 +123,7 @@ pub(crate) fn class_derivation_diagnostics<'db>(
             });
         }
     }
-    let Some(generic) = visible_generic_class(db, env).or_else(|| local_generic_class(db, module))
-    else {
-        return diagnostics;
-    };
+    let generic = visible_generic_class(db, env).or_else(|| local_generic_class(db, module));
     for plan in derived_class_plans_with_resolutions(db, module, item_resolutions) {
         let Some(info) = infos
             .iter()
@@ -134,13 +131,22 @@ pub(crate) fn class_derivation_diagnostics<'db>(
         else {
             continue;
         };
-        let target = DerivedTarget {
-            module,
-            item_resolutions,
-            info,
-            plan: &plan,
+        let reason = match generic {
+            Some(generic) => {
+                let target = DerivedTarget {
+                    module,
+                    item_resolutions,
+                    info,
+                    plan: &plan,
+                };
+                representation_failure(db, trait_env, generic, &target)
+            }
+            None => derive_uses_generic(db, &plan).then(|| {
+                "deriving it needs the Generic trait in scope; add 'import * from std.Generic;'"
+                    .to_owned()
+            }),
         };
-        let Some(reason) = representation_failure(db, trait_env, generic, &target) else {
+        let Some(reason) = reason else {
             continue;
         };
         let span = derived_class_target_span(db, module, plan.adt, plan.target_index)
@@ -153,6 +159,10 @@ pub(crate) fn class_derivation_diagnostics<'db>(
         });
     }
     diagnostics
+}
+
+fn derive_uses_generic<'db>(db: &'db dyn Db, plan: &DerivedClassPlan<'db>) -> bool {
+    !plan.empty && user_class_has_methods(db, plan.class)
 }
 
 /// A derived impl and the declarations it is derived from.
@@ -182,7 +192,7 @@ fn representation_failure<'db>(
     target: &DerivedTarget<'_, 'db>,
 ) -> Option<String> {
     let plan = target.plan;
-    if plan.empty || !user_class_has_methods(db, plan.class) {
+    if !derive_uses_generic(db, plan) {
         return None;
     }
     let PredKind::InClass { main, .. } = plan.head.kind(db) else {
@@ -197,12 +207,27 @@ fn representation_failure<'db>(
         *main,
         vec![Ty::bound(db, rep_var)],
     );
-    let Solution::Unique { subst, .. } = solve(
+    let subst = match solve(
         db,
         trait_env,
         canonical_goal_with_allowed(db, generic_goal, vec![rep_var]),
-    ) else {
-        return None;
+    ) {
+        Solution::Unique { subst, .. } => subst,
+        Solution::Ambiguous { .. } => return None,
+        Solution::NoSolution => {
+            let name = ident_text(db, &target.info.adt.name_elem(db));
+            return Some(
+                if super::derived_generic::no_generic_instance_for(db, target.module)
+                    .contains(&name)
+                {
+                    format!(
+                        "'pragma no-generic-instance-for {name}' removes its Generic impl, and no other impl provides one"
+                    )
+                } else {
+                    "it has no Generic impl to derive through".to_owned()
+                },
+            );
+        }
     };
     let rep = subst
         .values
