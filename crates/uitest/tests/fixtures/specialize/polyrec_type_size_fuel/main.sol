@@ -5,7 +5,8 @@ function go<a>(x: a) returns (word) {
 }
 
 contract C {
-    function main(x: word) public returns (word) {
+    function main() public returns (word) {
+        let x: word = 1;
         return go(x);
     }
 }

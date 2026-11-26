@@ -4,7 +4,7 @@ use std::{
 };
 
 use dir_test::{Fixture, dir_test};
-use hir::diag::Diagnostic;
+use hir::diag::{Diagnostic, DiagnosticLevel};
 use nameres::{Db as _, ModuleKey, module_id_from_key};
 use solcore_test_utils::{
     assert_diagnostics_snapshot, define_frontend_test_db, load_fixture_case,
@@ -62,7 +62,7 @@ fn solver_fail_diagnostics(fixture: Fixture<&str>) {
     glob: "**/main.sol"
 )]
 fn comptime_fail_diagnostics(fixture: Fixture<&str>) {
-    run_fixture_case(fixture, specialize_diagnostics);
+    run_fixture_case_with_dependencies(fixture, specialize_diagnostics);
 }
 
 #[dir_test(
@@ -70,7 +70,7 @@ fn comptime_fail_diagnostics(fixture: Fixture<&str>) {
     glob: "**/main.sol"
 )]
 fn specialize_fail_diagnostics(fixture: Fixture<&str>) {
-    run_fixture_case(fixture, specialize_diagnostics);
+    run_fixture_case_with_dependencies(fixture, specialize_diagnostics);
 }
 
 #[dir_test(
@@ -137,7 +137,16 @@ fn full_frontend_diagnostics(db: &TestDb, entry: ModuleKey) -> Vec<Diagnostic> {
     lower_any_diagnostics(db, diagnostics)
 }
 
+/// Diagnostics of specialization, as the compiler gives them: a program with
+/// frontend errors is not specialized, so those errors are the result.
 fn specialize_diagnostics(db: &TestDb, entry: ModuleKey) -> Vec<Diagnostic> {
+    let frontend = full_frontend_diagnostics(db, entry.clone());
+    if frontend
+        .iter()
+        .any(|diagnostic| diagnostic.level == DiagnosticLevel::Error)
+    {
+        return frontend;
+    }
     let entry = module_id_from_key(db, &entry);
     let Some(file) = db.module_file(entry) else {
         return Vec::new();

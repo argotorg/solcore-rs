@@ -1,5 +1,7 @@
 pragma solcore;
 
+import * from std;
+
 function storeLoad(x: word) returns (word) {
     let result: word;
     assembly {
@@ -48,7 +50,7 @@ contract Loop {
             count := calldatasize()
         }
         let seed: comptime<word> = storeLoad(42);
-        while (primEqWord(count, 1)) {
+        while (count == 1) {
             // A later iteration cannot reuse memory from before the loop.
             let observed: comptime<word> = readMem();
             writeMem();
@@ -64,7 +66,7 @@ contract Branch {
             count := calldatasize()
         }
         let seed: comptime<word> = storeLoad(42);
-        if (primEqWord(count, 1)) {
+        if (count == 1) {
             writeMem();
         }
         let observed: comptime<word> = readMem();

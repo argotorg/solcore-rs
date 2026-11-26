@@ -3,13 +3,49 @@ source: crates/test-utils/src/lib.rs
 expression: rendered
 input_file: crates/uitest/tests/fixtures/specialize/ergo_integer_erasure_branch/main.sol
 ---
-error[SC0401]: cannot specialize expression: type is not concrete
-  --> /main/main.sol:19:17
+error[SC0411]: runtime lowering cannot represent `(integer) -> Box` in constructor `Box.MkBox`
+  --> /main/main.sol:18:22
    |
+17 |         }
 18 |         let b: Box = Box.MkBox(1);
+   |                      ^^^^^^^^^^^^ not representable at runtime
 19 |         if (v > 0) {
-   |                 ^ type must be concrete here
-20 |             b = Box.MkBox(2);
    |
-   = note: this can happen when a constructor or expression leaves a type parameter unresolved
-   = note: help: add a type annotation that fixes the concrete type
+   = note: `integer`, `string`, and `comptime` values must be eliminated before runtime lowering
+   = note: help: evaluate the value at comptime or change it to a runtime-representable type
+---
+
+error[SC0411]: runtime lowering cannot represent `(integer) -> Box` in constructor `Box.MkBox`
+  --> /main/main.sol:20:17
+   |
+19 |         if (v > 0) {
+20 |             b = Box.MkBox(2);
+   |                 ^^^^^^^^^^^^ not representable at runtime
+21 |         }
+   |
+   = note: `integer`, `string`, and `comptime` values must be eliminated before runtime lowering
+   = note: help: evaluate the value at comptime or change it to a runtime-representable type
+---
+
+error[SC0411]: runtime lowering cannot represent `integer` in pattern
+  --> /main/main.sol:23:28
+   |
+22 |         match (b) {
+23 |             case Box.MkBox(i) {
+   |                            ^ not representable at runtime
+24 |                 return wordFromInteger(i);
+   |
+   = note: `integer`, `string`, and `comptime` values must be eliminated before runtime lowering
+   = note: help: evaluate the value at comptime or change it to a runtime-representable type
+---
+
+error[SC0411]: runtime lowering cannot represent `(integer) -> word` in call to `wordFromInteger`
+  --> /main/main.sol:24:24
+   |
+23 |             case Box.MkBox(i) {
+24 |                 return wordFromInteger(i);
+   |                        ^^^^^^^^^^^^^^^^^^ not representable at runtime
+25 |             }
+   |
+   = note: `integer`, `string`, and `comptime` values must be eliminated before runtime lowering
+   = note: help: evaluate the value at comptime or change it to a runtime-representable type

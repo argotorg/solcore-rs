@@ -3,13 +3,33 @@ source: crates/test-utils/src/lib.rs
 expression: rendered
 input_file: crates/uitest/tests/fixtures/specialize/ergo_ct_public_param/main.sol
 ---
-error[SC0413]: public function `double` cannot take comptime parameter `x`
-  --> /main/main.sol:11:21
+error[SC0207]: cannot satisfy trait constraint: Contract<Method<DispatchNameTy_CtPublicParam_double, NonPayable, word, word, function(comptime<word>) returns (word)>, Fallback<NonPayable, (), (), function() returns (())>>: RunContract
+  --> /main/main.sol:10:10
+   |
+ 9 |
+10 | contract CtPublicParam {
+   |          ^^^^^^^^^^^^^ constraint originates here
+11 |     function double(comptime x: word) public returns (word) {
+   |
+   = note: no visible impl matches `Contract<Method<DispatchNameTy_CtPublicParam_double, NonPayable, word, word, function(comptime<word>) returns (word)>, Fallback<NonPayable, (), (), function() returns (())>>: RunContract`
+   = help: add a matching impl or strengthen the surrounding type context
+---
+
+error[SC0231]: ABI parameter cannot be represented in the ABI: comptime<word>
+  --> /main/main.sol:11:5
    |
 10 | contract CtPublicParam {
 11 |     function double(comptime x: word) public returns (word) {
-   |                     ^^^^^^^^^^^^^^^^ public entry parameter is runtime
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ unsupported ABI type
 12 |         return x + x;
    |
-   = note: public function parameters are supplied from calldata at runtime
-   = note: help: remove `comptime` from the public parameter or call a private comptime helper with a compile-time value
+---
+
+error[SC0231]: double cannot be represented in the ABI: comptime<word>
+  --> /main/main.sol:11:5
+   |
+10 | contract CtPublicParam {
+11 |     function double(comptime x: word) public returns (word) {
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ unsupported ABI type
+12 |         return x + x;
+   |
