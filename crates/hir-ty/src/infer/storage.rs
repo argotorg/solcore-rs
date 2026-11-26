@@ -149,6 +149,74 @@ impl<'db> InferCtx<'db> {
         true
     }
 
+    /// `c[i] = v` on a user-defined collection stores through the std
+    /// `LValueIdxAccess` instance for `(c, i)`, as `assignRef(lidx(c, i), v)`
+    /// does: the reference that the instance yields takes `v` through
+    /// `Assign`.
+    pub(super) fn infer_user_collection_index_assign(
+        &mut self,
+        body: FuncBody<'db>,
+        lhs: Id<Expr<'db>>,
+        rhs: Id<Expr<'db>>,
+    ) -> bool {
+        let Some((index_expr, base, index)) = self.read_only_array_index_parts(body, lhs) else {
+            return false;
+        };
+        let base_ty = self.infer_expr(body, base);
+        if !matches!(
+            self.engine.resolve(base_ty.clone()),
+            InferTy::Named {
+                ctor: TyCtor::User(_),
+                ..
+            }
+        ) {
+            return false;
+        }
+        let (Some(lvalue), Some(assign)) = (
+            self.canonical_std_class("LValueIdxAccess"),
+            self.canonical_std_class("Assign"),
+        ) else {
+            return false;
+        };
+        let index_ty = self.infer_expr(body, index);
+        let ref_ty = self.engine.fresh_var();
+        // Specialization reads the reference type from this obligation.
+        self.pending.push(PendingObligation {
+            class: lvalue,
+            main: product_infer_ty(vec![base_ty, index_ty]),
+            args: vec![ref_ty.clone()],
+            source: ObligationSource::ClassMethod {
+                body,
+                expr: index_expr,
+            },
+        });
+        let value_ty = self.engine.fresh_var();
+        self.pending.push(PendingObligation {
+            class: assign,
+            main: ref_ty,
+            args: vec![value_ty.clone()],
+            source: ObligationSource::ClassMethod {
+                body,
+                expr: index_expr,
+            },
+        });
+        let lhs_ty = self.record_read_only_array_index_lhs_ty(body, lhs, value_ty);
+        let rhs_ty = self.infer_expr_expected(body, rhs, Some(lhs_ty.clone()));
+        self.unify_expr(body, rhs, lhs_ty, rhs_ty);
+        true
+    }
+
+    /// The std class called `name`, when the name in scope is that class.
+    fn canonical_std_class(&self, name: &str) -> Option<ClassId<'db>> {
+        self.lookup_class_id(name).filter(|class| {
+            matches!(
+                class,
+                ClassId::User(def)
+                    if crate::support::is_canonical_std_def_named(self.db, *def, name)
+            )
+        })
+    }
+
     pub(super) fn reject_calldata_array_index_assign(
         &mut self,
         body: FuncBody<'db>,
