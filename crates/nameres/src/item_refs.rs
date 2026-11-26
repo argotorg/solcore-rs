@@ -607,7 +607,7 @@ pub(super) fn class_methods_for_ref<'db>(db: &'db dyn Db, item_ref: &ItemRef<'db
         .collect()
 }
 
-fn find_origin_adt<'db>(
+pub(super) fn find_origin_adt<'db>(
     db: &'db dyn Db,
     module: ModuleId<'db>,
     def_id: DefId<'db>,

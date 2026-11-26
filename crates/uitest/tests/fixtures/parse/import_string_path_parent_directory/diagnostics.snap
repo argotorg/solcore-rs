@@ -1,0 +1,15 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/parse/import_string_path_parent_directory/main.sol
+---
+error[SC0001]: parse error: unexpected string literal "../interfaces/IERC20.sol"
+ --> /main/main.sol:3:24
+  |
+2 |
+3 | import { IERC20 } from "../interfaces/IERC20.sol";
+  |                        ^^^^^^^^^^^^^^^^^^^^^^^^^^ unexpected token
+4 |
+  |
+  = note: module paths are not strings and have no `.sol` extension: write the path from the library root with `.` between its segments, as in `lib.token`
+  = note: while parsing import declaration

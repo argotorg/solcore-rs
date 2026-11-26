@@ -135,10 +135,17 @@ impl<'db> ModuleDiagnostic<'db> {
                     .with_primary_label_span(span.clone(), Some("module reference"))
                     .with_help("check the module path or add the missing source file");
                 if let Some(suggestion) = suggestion {
-                    let help = if *path == format!("{suggestion}.sol") {
-                        format!("module paths leave out the `.sol` extension: write `{suggestion}`")
+                    // The suggestion replaces the path segments, which start
+                    // after the `@` of an external library.
+                    let written = if path.starts_with('@') {
+                        format!("@{suggestion}")
                     } else {
-                        format!("did you mean `{suggestion}`?")
+                        suggestion.clone()
+                    };
+                    let help = if *path == format!("{written}.sol") {
+                        format!("module paths leave out the `.sol` extension: write `{written}`")
+                    } else {
+                        format!("did you mean `{written}`?")
                     };
                     diagnostic = diagnostic
                         .with_help(help)
@@ -382,7 +389,7 @@ pub fn module_diagnostics<'db>(db: &'db dyn Db, module: ModuleId<'db>) -> Vec<An
 #[tracing::instrument(
     target = "nameres::query",
     level = "debug",
-    skip(db, body, context, surface),
+    skip(db, body, context, surface, hidden_constructors),
     fields(file = field::Empty, def = field::Empty)
 )]
 pub fn body_diagnostics<'db>(
@@ -390,15 +397,21 @@ pub fn body_diagnostics<'db>(
     body: FuncBody<'db>,
     context: hir_nameres::BodyResolutionContext<'db>,
     surface: ModuleImportSurface<'db>,
+    hidden_constructors: Vec<HiddenConstructorFact<'db>>,
     suppress_for_parse_errors: bool,
 ) -> Vec<AnyDiagnostic> {
     record_body_field(db, body);
     let policy = BodyDiagnosticPolicy::from_suppress_for_parse_errors(suppress_for_parse_errors);
+    let imports = SurfaceWithHiddenConstructors {
+        db,
+        surface: &surface,
+        hidden_constructors: &hidden_constructors,
+    };
     let resolution = hir_nameres::resolve_body_with_imports_and_policy(
         db,
         body,
         &context,
-        &surface,
+        &imports,
         policy.as_hir_policy(),
     );
     let mut diagnostics = resolution
@@ -418,6 +431,11 @@ fn is_suppressed_unknown_diagnostic(
     match diagnostic {
         hir_nameres::NameresDiagnostic::UndefinedName { name, .. } => {
             surface.unknown_unqualified_wildcard || surface.unknown_unqualified_names.contains(name)
+        }
+        // A wildcard import from a module with parse errors may make the
+        // constructor visible.
+        hir_nameres::NameresDiagnostic::HiddenConstructor { .. } => {
+            surface.unknown_unqualified_wildcard
         }
         _ => false,
     }
@@ -525,6 +543,7 @@ impl<'a, 'db> BodyDiagnosticCollector<'a, 'db> {
                 body,
                 context,
                 self.env.import_surface(),
+                self.env.hidden_constructors.clone(),
                 self.policy.suppress_for_parse_errors(),
             )
             .iter()

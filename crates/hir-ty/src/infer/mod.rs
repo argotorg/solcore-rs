@@ -513,6 +513,7 @@ enum DotCtorLookup<'db> {
     },
     NoExpected,
     NoMatch,
+    Hidden(hir_nameres::HiddenConstructor),
     Ambiguous(Vec<String>),
 }
 

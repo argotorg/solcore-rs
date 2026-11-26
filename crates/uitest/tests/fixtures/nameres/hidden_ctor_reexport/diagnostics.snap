@@ -1,0 +1,21 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/nameres/hidden_ctor_reexport/main.sol
+---
+error[SC0122]: constructor `Color.Blue` is not exported by module `opaque`
+ --> /main/main.sol:6:18
+  |
+5 | function main() returns (Color) {
+6 |     return Color.Blue(0);
+  |                  ^^^^ constructor not exported
+7 | }
+  |
+ ::: /main/colors.sol:6
+  |
+6 |     Red(word),
+7 |     Blue(word)
+  |     ---- constructor declared here
+8 | }
+  |
+  = note: module `opaque` exports `Color` without this constructor

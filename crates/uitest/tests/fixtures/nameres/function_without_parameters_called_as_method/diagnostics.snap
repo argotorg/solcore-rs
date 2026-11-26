@@ -1,0 +1,48 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/nameres/function_without_parameters_called_as_method/main.sol
+---
+error[SC0101]: undefined name: zero
+  --> /main/main.sol:15:19
+   |
+14 |     function main(x: word) public returns (word) {
+15 |         let a = x.zero();
+   |                   ^^^^ unknown name
+16 |         let b = x.one();
+   |
+   = note: `zero` is a function, and method-call syntax only works for trait methods
+---
+
+error[SC0101]: undefined name: one
+  --> /main/main.sol:16:19
+   |
+15 |         let a = x.zero();
+16 |         let b = x.one();
+   |                   ^^^ unknown name
+17 |         let c = x.reset();
+   |
+   = note: `one` is a function, and method-call syntax only works for trait methods
+---
+
+error[SC0101]: undefined name: reset
+  --> /main/main.sol:17:19
+   |
+16 |         let b = x.one();
+17 |         let c = x.reset();
+   |                   ^^^^^ unknown name
+18 |         return x.twice();
+   |
+   = note: `reset` is a function, and method-call syntax only works for trait methods
+---
+
+error[SC0101]: undefined name: twice
+  --> /main/main.sol:18:18
+   |
+17 |         let c = x.reset();
+18 |         return x.twice();
+   |                  ^^^^^ unknown name
+19 |     }
+   |
+   = note: `twice` is a function, and method-call syntax only works for trait methods
+   = help: pass `x` as the first argument of `twice`

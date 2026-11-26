@@ -281,7 +281,8 @@ for (const [directory, helpers, count, failing, prepare = source => source] of [
 }
 
 for (const [directory, helpers, name, message] of [
-  ['workshop-3-done', ['ownable.sol'], 'steal', 'type name used as callee: `Ownable`'],
+  ['workshop-3-done', ['ownable.sol'], 'steal',
+    'the constructor of `Ownable` is not exported by module `ownable`'],
   ['workshop-solution', ['events.sol', 'ownable.sol'], 'anyTopic',
     "comptime evaluation failed: runtime value passed to comptime parameter 'signature' of 'topic'"],
 ]) {

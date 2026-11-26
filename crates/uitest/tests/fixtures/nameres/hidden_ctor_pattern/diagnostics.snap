@@ -1,0 +1,21 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/nameres/hidden_ctor_pattern/main.sol
+---
+error[SC0122]: constructor `Token.Err` is not exported by module `lib`
+  --> /main/main.sol:10:20
+   |
+ 9 |         }
+10 |         case Token.Err(x) {
+   |                    ^^^ constructor not exported
+11 |             return x;
+   |
+  ::: /main/lib.sol:6
+   |
+ 6 |     Ok(word),
+ 7 |     Err(word)
+   |     --- constructor declared here
+ 8 | }
+   |
+   = note: module `lib` exports `Token` without this constructor

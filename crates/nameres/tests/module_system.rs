@@ -1075,6 +1075,47 @@ fn parse_broken_qualified_import_does_not_blame_importer() {
 }
 
 #[test]
+fn parse_broken_wildcard_import_suppresses_hidden_constructor() {
+    let (db, entry) = load_sources([
+        (
+            vec!["main"],
+            "pragma solcore;\nimport {Token} from lib;\nimport * from util;\n\
+             function main() returns (Token) { return Token.Err(0); }",
+        ),
+        (
+            vec!["lib"],
+            "pragma solcore; export {Token(Ok)}; enum Token { Ok(word), Err(word) }",
+        ),
+        (
+            vec!["util"],
+            "pragma solcore;\nlost(x) returns (word) { return 0; }\n             function other() {}",
+        ),
+    ]);
+    let main = module_id_from_key(&db, &entry);
+    assert_eq!(module_diagnostic_codes(&db, main), Vec::<String>::new());
+}
+
+#[test]
+fn hidden_constructor_without_broken_imports_is_reported() {
+    let (db, entry) = load_sources([
+        (
+            vec!["main"],
+            "pragma solcore;\nimport {Token} from lib;\n\
+             function main() returns (Token) { return Token.Err(0); }",
+        ),
+        (
+            vec!["lib"],
+            "pragma solcore; export {Token(Ok)}; enum Token { Ok(word), Err(word) }",
+        ),
+    ]);
+    let main = module_id_from_key(&db, &entry);
+    assert_eq!(
+        module_diagnostic_codes(&db, main),
+        vec!["SC0122".to_owned()]
+    );
+}
+
+#[test]
 fn parse_broken_leaf_does_not_mark_unrelated_module_prefixes_incomplete() {
     let (db, entry) = load_sources([
         (

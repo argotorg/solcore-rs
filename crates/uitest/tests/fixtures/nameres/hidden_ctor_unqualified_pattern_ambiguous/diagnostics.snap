@@ -1,0 +1,13 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/nameres/hidden_ctor_unqualified_pattern_ambiguous/main.sol
+---
+error[SC0107]: invalid pattern syntax
+  --> /main/main.sol:10:14
+   |
+ 9 |         }
+10 |         case Err(x) {
+   |              ^^^^^^ invalid pattern
+11 |             return x;
+   |

@@ -1,0 +1,39 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/typeck/hidden_ctor_enum_same_name/main.sol
+---
+error[SC0122]: constructor `Tok.Tok` is not exported by module `lib`
+ --> /main/main.sol:6:12
+  |
+5 | function call() returns (Tok) {
+6 |     return Tok(0);
+  |            ^^^ constructor not exported
+7 | }
+  |
+ ::: /main/lib.sol:5
+  |
+5 | enum Tok {
+6 |     Tok(word),
+  |     --- constructor declared here
+7 |     Other
+  |
+  = note: module `lib` exports `Tok` without this constructor
+---
+
+error[SC0122]: constructor `Tok.Tok` is not exported by module `lib`
+  --> /main/main.sol:10:16
+   |
+ 9 | function qualified() returns (Tok) {
+10 |     return Tok.Tok(0);
+   |                ^^^ constructor not exported
+11 | }
+   |
+  ::: /main/lib.sol:5
+   |
+ 5 | enum Tok {
+ 6 |     Tok(word),
+   |     --- constructor declared here
+ 7 |     Other
+   |
+   = note: module `lib` exports `Tok` without this constructor

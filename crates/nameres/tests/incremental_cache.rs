@@ -183,7 +183,17 @@ fn body_diagnostics_key_excludes_module_env_diagnostics() {
     );
 
     let _ = db.take_executed();
-    assert!(body_diagnostics(&db, body, context.clone(), env.import_surface(), false).is_empty());
+    assert!(
+        body_diagnostics(
+            &db,
+            body,
+            context.clone(),
+            env.import_surface(),
+            env.hidden_constructors.clone(),
+            false,
+        )
+        .is_empty()
+    );
     let executed = db.take_executed();
     assert_eq!(query_executions(&executed, "body_diagnostics"), 1);
 
@@ -193,6 +203,7 @@ fn body_diagnostics_key_excludes_module_env_diagnostics() {
             body,
             context,
             diagnostic_only_variant.import_surface(),
+            diagnostic_only_variant.hidden_constructors.clone(),
             false,
         )
         .is_empty()

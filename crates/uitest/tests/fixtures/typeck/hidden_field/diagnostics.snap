@@ -1,0 +1,21 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/typeck/hidden_field/main.sol
+---
+error[SC0122]: field `value` of `Box` is not exported by module `lib`
+  --> /main/main.sol:6:14
+   |
+ 5 | function main(b: Box) returns (word) {
+ 6 |     return b.value;
+   |              ^^^^^ field not exported
+ 7 | }
+   |
+  ::: /main/lib.sol:10
+   |
+10 | struct Box {
+11 |     value: word;
+   |     ----- field declared here
+12 | }
+   |
+   = note: module `lib` exports `Box` without its constructor, which also hides its fields

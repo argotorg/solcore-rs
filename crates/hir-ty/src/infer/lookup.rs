@@ -47,10 +47,7 @@ impl<'db> InferCtx<'db> {
         if def.file(self.db) == self.module.def_id_value(self.db).file(self.db) {
             return true;
         }
-        let Some(module) = nameres::module_id_for_source_file(
-            self.db,
-            self.module.def_id_value(self.db).file(self.db),
-        ) else {
+        let Some(module) = self.checked_module_id() else {
             return false;
         };
         let imports = nameres::module_import_surface(self.db, module);
@@ -58,6 +55,48 @@ impl<'db> InferCtx<'db> {
             matches!(resolution, hir_nameres::Resolution::Ctor { ty, index: visible_index }
                 if *ty == def && *visible_index == index)
         })
+    }
+
+    fn checked_module_id(&self) -> Option<nameres::ModuleId<'db>> {
+        nameres::module_id_for_source_file(self.db, self.module.def_id_value(self.db).file(self.db))
+    }
+
+    /// Import environment of the module being checked, read only when a
+    /// diagnostic is reported.
+    fn checked_module_env(&self) -> Option<nameres::ModuleEnv<'db>> {
+        Some(nameres::module_env(self.db, self.checked_module_id()?))
+    }
+
+    /// Returns the constructor `name` of the imported data type `def` when the
+    /// module it was imported from does not export it.
+    pub(super) fn hidden_constructor(
+        &self,
+        def: DefId<'db>,
+        name: &str,
+    ) -> Option<hir_nameres::HiddenConstructor> {
+        self.checked_module_env()?
+            .find_hidden_constructor(def, name)
+    }
+
+    /// Returns the constructor named like the imported data type `def` when
+    /// the module it was imported from does not export it.
+    pub(super) fn hidden_same_name_constructor(
+        &self,
+        def: DefId<'db>,
+    ) -> Option<hir_nameres::HiddenConstructor> {
+        self.checked_module_env()?
+            .find_hidden_same_name_constructor(def)
+    }
+
+    /// Returns the hidden constructor of the imported data type `def` that
+    /// declares the field `field`, with the field's declaration span.
+    pub(super) fn hidden_field_constructor(
+        &self,
+        def: DefId<'db>,
+        field: &str,
+    ) -> Option<(hir_nameres::HiddenConstructor, LabelSpan)> {
+        self.checked_module_env()?
+            .find_hidden_field_constructor(def, field)
     }
 }
 

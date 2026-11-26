@@ -277,17 +277,35 @@ fn expected_note(
 }
 
 /// Explains a Solidity-style string import path such as `"lib/token.sol"`,
-/// showing the module path `lib.token`.
+/// showing the module path `lib.token`. A string such as `"../token.sol"` or
+/// `"my-lib/token.sol"` has a segment that no module path can spell, so the
+/// note describes the form instead.
 fn import_string_path_note(context: Option<&str>, found: Option<&Token<'_>>) -> Option<String> {
     let (Some("import declaration"), Some(Token::String(literal))) = (context, found) else {
         return None;
     };
     let path = literal.trim_matches('"');
     let path = path.strip_prefix("./").unwrap_or(path);
-    let path = path.strip_suffix(".sol").unwrap_or(path).replace('/', ".");
-    Some(format!(
-        "module paths are not strings and have no `.sol` extension: write `{path}`"
-    ))
+    let path = path.strip_suffix(".sol").unwrap_or(path);
+    let mut segments = path.split('/');
+    // The first segment may name an external library, as in `@lib.token`.
+    let first = segments.next().unwrap_or_default();
+    let is_module_path = is_module_path_segment(first.strip_prefix('@').unwrap_or(first))
+        && segments.all(is_module_path_segment);
+    Some(if is_module_path {
+        format!(
+            "module paths are not strings and have no `.sol` extension: write `{}`",
+            path.replace('/', ".")
+        )
+    } else {
+        "module paths are not strings and have no `.sol` extension: write the path from the library root with `.` between its segments, as in `lib.token`".to_owned()
+    })
+}
+
+/// Whether `segment` is spelled like an identifier.
+fn is_module_path_segment(segment: &str) -> bool {
+    let mut chars = segment.chars();
+    chars.next().is_some_and(char::is_alphabetic) && chars.all(|c| c.is_alphanumeric() || c == '_')
 }
 
 fn keyword_identifier_note(

@@ -19,5 +19,5 @@ function inspect(x: Secret) returns (word) {
 }
 
 //~ loader: project
-//~ infer: forge solve contains-code=SC0224
-//~ infer: inspect solve contains-code=SC0224
+//~ infer: forge solve contains-code=SC0122
+//~ infer: inspect solve contains-code=SC0122

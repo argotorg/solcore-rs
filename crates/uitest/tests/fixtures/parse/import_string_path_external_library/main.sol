@@ -1,0 +1,7 @@
+pragma solcore;
+
+import { ERC20 } from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+
+function main() returns (word) {
+    return 0;
+}

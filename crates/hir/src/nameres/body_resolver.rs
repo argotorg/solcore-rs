@@ -66,8 +66,11 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
             StmtKind::Expr(expr) => self.expr(body, *expr),
             StmtKind::Assign { lhs, rhs, .. } => {
                 if let ExprKind::Ident(name) = &body.exprs(self.db).get(*lhs).kind {
-                    let resolution = self
-                        .resolve_ident_with_hint(name, Some(UndefinedNameHint::AssignmentTarget));
+                    // A compound assignment reads the name first, so it
+                    // cannot become a declaration.
+                    let hint = (!self.is_compound_assignment(body, name, *rhs))
+                        .then_some(UndefinedNameHint::AssignmentTarget);
+                    let resolution = self.resolve_ident_with_hint(name, hint);
                     self.map.record_expr(body, *lhs, resolution);
                 } else {
                     self.expr(body, *lhs);
@@ -311,6 +314,14 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
                             {
                                 return Resolution::Err;
                             }
+                            if let Some(diagnostic) = self.hidden_constructor_diag(
+                                qualifier_text,
+                                ident_text_str(self.db, name),
+                                name.span(self.db),
+                            ) {
+                                self.map.diagnostics.push(diagnostic);
+                                return Resolution::Err;
+                            }
                             let kind = if self.lookup_type(qualifier_text).is_some()
                                 || self.lookup_module(qualifier_text).is_some()
                             {
@@ -362,6 +373,11 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
                                 Resolution::Local(LocalBinding::Pattern { body, pat: pat_id });
                             self.add_local(leaf, resolution.clone(), name.span(self.db));
                             resolution
+                        } else if let Some(diagnostic) =
+                            self.hidden_pattern_constructor_diag(leaf, name.span(self.db))
+                        {
+                            self.map.diagnostics.push(diagnostic);
+                            Resolution::Err
                         } else {
                             self.map
                                 .diagnostics
@@ -444,6 +460,27 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
         if let FuncParam::Typed { ty, .. } = param {
             self.ty(*ty);
         }
+    }
+
+    /// Whether `rhs` is what the parser builds for a compound assignment such
+    /// as `target += 1`: an operator expression whose operand is a copy of
+    /// `target`, at the same span.
+    fn is_compound_assignment(
+        &self,
+        body: FuncBody<'db>,
+        target: &SpannedElem<'db, Ident<'db>>,
+        rhs: Id<Expr<'db>>,
+    ) -> bool {
+        let exprs = body.exprs(self.db);
+        let operand = match &exprs.get(rhs).kind {
+            ExprKind::BinOp { lhs, .. } => *lhs,
+            ExprKind::UnaryOp { expr, .. } => *expr,
+            _ => return false,
+        };
+        matches!(
+            &exprs.get(operand).kind,
+            ExprKind::Ident(read) if read.span(self.db) == target.span(self.db)
+        )
     }
 
     fn resolve_ident(&mut self, name: &SpannedElem<'db, Ident<'db>>) -> Resolution<'db> {
@@ -561,15 +598,17 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
         let resolution = self
             .lookup_unique_visible_class_method(method)
             .unwrap_or_else(|| {
-                let names_function = matches!(
-                    self.lookup_qualified_term(method),
+                let function = match self.lookup_qualified_term(method) {
                     Some(Resolution::Def {
+                        def,
                         kind: DefResolutionKind::Function,
-                        ..
-                    })
-                );
-                let hint = names_function.then(|| UndefinedNameHint::FunctionCalledAsMethod {
+                    }) => Some(def),
+                    _ => None,
+                };
+                let hint = function.map(|function| UndefinedNameHint::FunctionCalledAsMethod {
                     receiver: expr_path(self.db, body, base).map(|segments| segments.join(".")),
+                    has_parameters: self.imports.function_parameter_count(self.db, function)
+                        != Some(0),
                 });
                 self.map
                     .diagnostics
@@ -675,11 +714,16 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
                 } | Resolution::Builtin(BuiltinKind::Type(_) | BuiltinKind::Class(_))
             )
         ) {
-            self.map.diagnostics.push(self.undefined_name_diag(
-                field_text,
-                field.span(self.db),
-                UndefinedNameKind::Field,
-            ));
+            let diagnostic = self
+                .hidden_constructor_diag(&qualifier, field_text, field.span(self.db))
+                .unwrap_or_else(|| {
+                    self.undefined_name_diag(
+                        field_text,
+                        field.span(self.db),
+                        UndefinedNameKind::Field,
+                    )
+                });
+            self.map.diagnostics.push(diagnostic);
             return Some(Resolution::Err);
         }
 
@@ -759,6 +803,52 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
             private_candidate,
             hint,
         )
+    }
+
+    /// Returns an `SC0122` diagnostic when `qualifier` names an imported data
+    /// type whose constructor `name` the module it was imported from does not
+    /// export.
+    fn hidden_constructor_diag(
+        &self,
+        qualifier: &str,
+        name: &str,
+        span: Span<'db>,
+    ) -> Option<NameresDiagnostic> {
+        let Some(Resolution::Def {
+            def,
+            kind: DefResolutionKind::Adt,
+        }) = self.lookup_type(qualifier)
+        else {
+            return None;
+        };
+        let constructor = self.imports.hidden_constructor(self.db, def, name)?;
+        Some(NameresDiagnostic::HiddenConstructor {
+            span: LabelSpan::from_span(self.db, span),
+            constructor,
+        })
+    }
+
+    /// Returns an `SC0122` diagnostic when the unqualified pattern head `name`
+    /// refers to a hidden constructor: the one named like the imported data
+    /// type `name`, or the only hidden constructor called `name`.
+    fn hidden_pattern_constructor_diag(
+        &self,
+        name: &str,
+        span: Span<'db>,
+    ) -> Option<NameresDiagnostic> {
+        let same_name = match self.lookup_type(name) {
+            Some(Resolution::Def {
+                def,
+                kind: DefResolutionKind::Adt,
+            }) => self.imports.hidden_same_name_constructor(self.db, def),
+            _ => None,
+        };
+        let constructor =
+            same_name.or_else(|| self.imports.hidden_constructor_named(self.db, name))?;
+        Some(NameresDiagnostic::HiddenConstructor {
+            span: LabelSpan::from_span(self.db, span),
+            constructor,
+        })
     }
 
     fn undefined_type_ctor_diag(&self, name: &str, span: Span<'db>) -> NameresDiagnostic {

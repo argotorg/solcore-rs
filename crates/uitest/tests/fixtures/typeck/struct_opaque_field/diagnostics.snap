@@ -3,23 +3,37 @@ source: crates/test-utils/src/lib.rs
 expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/struct_opaque_field/main.sol
 ---
-error[SC0205]: cannot resolve field `value`
+error[SC0122]: field `value` of `Secret` is not exported by module `secret`
  --> /main/main.sol:7:18
   |
 6 | function read(value: Opaque) returns (word) {
 7 |     return value.value;
-  |                  ^^^^^ unknown field
+  |                  ^^^^^ field not exported
 8 | }
   |
-  = help: check that the receiver has this field or constructor path
+ ::: /main/secret.sol:5
+  |
+5 | struct Secret {
+6 |     value: word;
+  |     ----- field declared here
+7 | }
+  |
+  = note: module `secret` exports `Secret` without its constructor, which also hides its fields
 ---
 
-error[SC0205]: cannot resolve field `value`
+error[SC0122]: field `value` of `Secret` is not exported by module `secret`
   --> /main/main.sol:11:29
    |
 10 | function main() returns (word) {
 11 |     return API.makeSecret().value;
-   |                             ^^^^^ unknown field
+   |                             ^^^^^ field not exported
 12 | }
    |
-   = help: check that the receiver has this field or constructor path
+  ::: /main/secret.sol:5
+   |
+ 5 | struct Secret {
+ 6 |     value: word;
+   |     ----- field declared here
+ 7 | }
+   |
+   = note: module `secret` exports `Secret` without its constructor, which also hides its fields

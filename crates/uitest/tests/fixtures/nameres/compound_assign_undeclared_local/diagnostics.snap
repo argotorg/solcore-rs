@@ -1,0 +1,44 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/nameres/compound_assign_undeclared_local/main.sol
+---
+error[SC0101]: undefined name: total
+ --> /main/main.sol:4:5
+  |
+3 | function main() returns (word) {
+4 |     total += 1;
+  |     ^^^^^ unknown name
+5 |     flags ~=;
+  |
+---
+
+error[SC0101]: undefined name: flags
+ --> /main/main.sol:5:5
+  |
+4 |     total += 1;
+5 |     flags ~=;
+  |     ^^^^^ unknown name
+6 |     count = count + 1;
+  |
+---
+
+error[SC0101]: undefined name: count
+ --> /main/main.sol:6:5
+  |
+5 |     flags ~=;
+6 |     count = count + 1;
+  |     ^^^^^ unknown name
+7 |     return 0;
+  |
+  = help: to declare a new local variable, write `let count = ...;`
+---
+
+error[SC0101]: undefined name: count
+ --> /main/main.sol:6:13
+  |
+5 |     flags ~=;
+6 |     count = count + 1;
+  |             ^^^^^ unknown name
+7 |     return 0;
+  |

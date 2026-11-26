@@ -312,8 +312,25 @@ impl<'db> InferCtx<'db> {
                 source.unwrap_or(ObligationSource::ClassMethod { body, expr }),
             ),
             hir_nameres::Resolution::Err => InferTy::Error,
-            hir_nameres::Resolution::Def { kind, .. } => match kind {
+            hir_nameres::Resolution::Def { def, kind } => match kind {
                 hir_nameres::DefResolutionKind::Function => unreachable!("handled above"),
+                hir_nameres::DefResolutionKind::Adt
+                    if matches!(position, ValuePosition::Callee) =>
+                {
+                    if let Some(constructor) = self.hidden_same_name_constructor(def) {
+                        self.emit_expr_error(
+                            body,
+                            expr,
+                            TypeckDiagnostic::HiddenConstructor {
+                                span: self.expr_label_span(body, expr),
+                                constructor,
+                            },
+                        );
+                        InferTy::Error
+                    } else {
+                        self.namespace_as_value(body, expr, ValueNamespace::Type, position)
+                    }
+                }
                 hir_nameres::DefResolutionKind::Adt
                 | hir_nameres::DefResolutionKind::TypeAlias
                 | hir_nameres::DefResolutionKind::Contract
@@ -557,6 +574,16 @@ impl<'db> InferCtx<'db> {
                 );
                 InferTy::Error
             }
+            DotCtorLookup::Hidden(constructor) => {
+                for arg in args {
+                    self.infer_expr(body, *arg);
+                }
+                self.diagnostics.push(TypeckDiagnostic::HiddenConstructor {
+                    span: self.expr_label_span(body, expr),
+                    constructor,
+                });
+                InferTy::Error
+            }
             DotCtorLookup::Ambiguous(candidates) => {
                 for arg in args {
                     self.infer_expr(body, *arg);
@@ -705,7 +732,9 @@ impl<'db> InferCtx<'db> {
             .filter(|entry| self.is_adt_ctor_visible(entry.ty, entry.index))
             .collect::<Vec<_>>();
         match matches.as_slice() {
-            [] => DotCtorLookup::NoMatch,
+            [] => self
+                .hidden_constructor(*def, name)
+                .map_or(DotCtorLookup::NoMatch, DotCtorLookup::Hidden),
             [entry] => {
                 let instantiated = self.engine.instantiate_scheme(entry.scheme);
                 let ctor_ty = self.accept_instantiated(instantiated);
@@ -1095,6 +1124,16 @@ impl<'db> InferCtx<'db> {
                             name,
                             "no matching constructor".to_owned(),
                         );
+                        InferTy::Error
+                    }
+                    DotCtorLookup::Hidden(constructor) => {
+                        for arg in args {
+                            self.infer_pat_expected(body, *arg, None);
+                        }
+                        self.diagnostics.push(TypeckDiagnostic::HiddenConstructor {
+                            span: self.pat_label_span(body, pat),
+                            constructor,
+                        });
                         InferTy::Error
                     }
                     DotCtorLookup::Ambiguous(candidates) => {

@@ -321,6 +321,39 @@ fn cli_reports_missing_module_at_the_import() {
 }
 
 #[test]
+fn cli_explains_the_sol_extension_in_external_library_imports() {
+    let dir = temp_dir("external-sol-extension");
+    let external = dir.join("external");
+    fs::create_dir_all(&external).expect("create temp dir");
+    let input = dir.join("main.sol");
+    fs::write(
+        &input,
+        "pragma solcore;\nimport @pkg.util.sol;\nimport @pkg.utli;\nfunction main() returns (word) { return 0; }\n",
+    )
+    .expect("write source");
+    fs::write(external.join("util.sol"), "pragma solcore;\n").expect("write dependency");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_solcore-driver"))
+        .arg("--color=never")
+        .arg("--external-lib")
+        .arg(format!("pkg={}", external.display()))
+        .arg(&input)
+        .output()
+        .expect("run driver");
+
+    let _ = fs::remove_dir_all(&dir);
+
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("error[SC0109]: import @pkg.util.sol: file not found")
+            && stderr.contains("module paths leave out the `.sol` extension: write `@pkg.util`")
+            && stderr.contains("did you mean `@pkg.util`?"),
+        "stderr:\n{stderr}"
+    );
+}
+
+#[test]
 fn cli_reports_unreadable_reachable_module_as_io_error() {
     let dir = temp_dir("invalid-utf8-module");
     fs::create_dir_all(&dir).expect("create temp dir");
