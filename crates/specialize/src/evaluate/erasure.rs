@@ -208,6 +208,18 @@ impl<'db> Evaluator<'db> {
             let MonoItem::Function(function) = item else {
                 continue;
             };
+            // A function that takes or returns a compile-time value cannot
+            // run. It is still here because a call to it was not evaluated,
+            // and that call is reported: its body has nothing to add.
+            if !module.entry_points.contains(&function.name)
+                && (ty_needs_erasure(self.db, function.ret.ty())
+                    || function
+                        .params
+                        .iter()
+                        .any(|param| ty_needs_erasure(self.db, param.ty.ty())))
+            {
+                continue;
+            }
             if self.check_erasure_ty(
                 format!(
                     "return type of `{}`",
