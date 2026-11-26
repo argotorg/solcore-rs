@@ -1,4 +1,4 @@
-use std::{collections::VecDeque, fs};
+use std::{collections::VecDeque, fs, io};
 
 use nameres::{LibraryId, ModuleKey, module_id_from_key, resolve_module_path_candidate};
 use rustc_hash::FxHashSet;
@@ -83,6 +83,15 @@ pub(crate) fn load_reachable_modules(db: &mut DriverDb, entry: ModuleKey) -> Res
                             ));
                         }
                     },
+                    Err(err) if err.kind() == io::ErrorKind::NotFound => {
+                        // Name resolution reports the missing module at the import.
+                        tracing::debug!(
+                            target: "driver::modules",
+                            module = %module_key_display(&target_key),
+                            file = %file_path.display(),
+                            "module source not found"
+                        );
+                    }
                     Err(err) => {
                         return Err(format!(
                             "failed to read module `{}` from `{}`: {err}",

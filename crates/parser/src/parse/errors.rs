@@ -276,6 +276,20 @@ fn expected_note(
     }
 }
 
+/// Explains a Solidity-style string import path such as `"lib/token.sol"`,
+/// showing the module path `lib.token`.
+fn import_string_path_note(context: Option<&str>, found: Option<&Token<'_>>) -> Option<String> {
+    let (Some("import declaration"), Some(Token::String(literal))) = (context, found) else {
+        return None;
+    };
+    let path = literal.trim_matches('"');
+    let path = path.strip_prefix("./").unwrap_or(path);
+    let path = path.strip_suffix(".sol").unwrap_or(path).replace('/', ".");
+    Some(format!(
+        "module paths are not strings and have no `.sol` extension: write `{path}`"
+    ))
+}
+
 fn keyword_identifier_note(
     context: Option<&str>,
     found: Option<&Token<'_>>,
@@ -334,7 +348,9 @@ pub(super) fn parse_error_from_rich<'src>(error: Rich<'src, Token<'src>, LexSpan
             let mut parsed =
                 ParsedError::new(*error.span(), expected_found_message(expected, found))
                     .with_label("unexpected token");
-            if let Some(note) = expected_note(expected, context.as_deref(), found) {
+            if let Some(note) = import_string_path_note(context.as_deref(), found) {
+                parsed = parsed.with_note(note);
+            } else if let Some(note) = expected_note(expected, context.as_deref(), found) {
                 parsed = parsed.with_note(note);
             }
             if let Some(note) = keyword_identifier_note(context.as_deref(), found) {

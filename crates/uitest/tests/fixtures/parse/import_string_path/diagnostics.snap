@@ -1,0 +1,15 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/parse/import_string_path/main.sol
+---
+error[SC0001]: parse error: unexpected string literal "./lib/helpers.sol"
+ --> /main/main.sol:3:29
+  |
+2 |
+3 | import { helperValue } from "./lib/helpers.sol";
+  |                             ^^^^^^^^^^^^^^^^^^^ unexpected token
+4 |
+  |
+  = note: module paths are not strings and have no `.sol` extension: write `lib.helpers`
+  = note: while parsing import declaration
