@@ -1,0 +1,15 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/parse/import_string_path_external_library/main.sol
+---
+error[SC0001]: parse error: unexpected string literal "@openzeppelin/contracts/token/ERC20/ERC20.sol"
+ --> /main/main.sol:3:23
+  |
+2 |
+3 | import { ERC20 } from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+  |                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ unexpected token
+4 |
+  |
+  = note: module paths are not strings and have no `.sol` extension: write `@openzeppelin.contracts.token.ERC20.ERC20`
+  = note: while parsing import declaration
