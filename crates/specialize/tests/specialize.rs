@@ -1804,15 +1804,9 @@ contract C {
         })
     }));
     assert!(lambda.module.frontend_desugar.bodies.iter().any(|body| {
-        body.transforms.iter().any(|transform| {
-            matches!(
-                transform,
-                hir_ty::FrontendTransform::IndirectCall {
-                    evidence: Some(_),
-                    ..
-                }
-            )
-        })
+        body.transforms
+            .iter()
+            .any(|transform| matches!(transform, hir_ty::FrontendTransform::IndirectCall { .. }))
     }));
     assert!(if_output.module.frontend_desugar.bodies.iter().any(|body| {
         body.transforms

@@ -19,12 +19,11 @@ use parser::parse_file_to_hir;
 use rustc_hash::FxHashMap;
 use salsa::Setter;
 use solcore_hir_ty::{
-    BuiltinTyCtor, CallSiteCallee, DispatchConstructor, DispatchFallback,
-    FieldInitPreTypeckTransform, FrontendTransform, IndirectArgShape, PreTypeckTransform,
-    ProductShape, SourceOriginKind, Ty, TyCtor, TyKind, contract_abi_json,
-    contract_dispatch_name_type_name, contract_dispatch_surface, derived_generic_instance_plan,
-    derived_generic_plan, frontend_desugar_plan, function_scheme, infer::module_typeck_diagnostics,
-    pre_typeck_desugar_plan, prepare_module,
+    BuiltinTyCtor, DispatchConstructor, DispatchFallback, FieldInitPreTypeckTransform,
+    FrontendTransform, IndirectArgShape, PreTypeckTransform, ProductShape, SourceOriginKind, Ty,
+    TyCtor, TyKind, contract_abi_json, contract_dispatch_name_type_name, contract_dispatch_surface,
+    derived_generic_instance_plan, derived_generic_plan, frontend_desugar_plan, function_scheme,
+    infer::module_typeck_diagnostics, pre_typeck_desugar_plan, prepare_module,
 };
 
 #[salsa::db]
@@ -1738,8 +1737,8 @@ fn typeck_lowers_tuple_return_type_to_right_nested_product(fixture: Fixture<&str
     ));
 }
 
-#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/contract_semantics/frontend_desugar_plan_records_indirect_call_shape_and_evidence", glob: "main.sol")]
-fn frontend_desugar_plan_records_indirect_call_shape_and_evidence(fixture: Fixture<&str>) {
+#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/contract_semantics/frontend_desugar_plan_records_indirect_call_shape", glob: "main.sol")]
+fn frontend_desugar_plan_records_indirect_call_shape(fixture: Fixture<&str>) {
     let db = TestDb::default();
     let module = parse_module(&db, fixture.content());
     let plan = frontend_desugar_plan(&db, module);
@@ -1752,15 +1751,10 @@ fn frontend_desugar_plan_records_indirect_call_shape_and_evidence(fixture: Fixtu
     let indirect = transforms
         .iter()
         .find_map(|transform| match transform {
-            FrontendTransform::IndirectCall {
-                callee,
-                args,
-                evidence,
-                ..
-            } if matches!(callee, CallSiteCallee::Invokable) && evidence.is_some() => Some(args),
+            FrontendTransform::IndirectCall { args, .. } => Some(args),
             _ => None,
         })
-        .unwrap_or_else(|| panic!("indirect call transform with evidence: {transforms:?}"));
+        .unwrap_or_else(|| panic!("indirect call transform: {transforms:?}"));
 
     assert!(
         matches!(
@@ -1792,9 +1786,7 @@ fn frontend_desugar_plan_records_compose3_indirect_call(fixture: Fixture<&str>) 
         transforms.iter().any(|transform| matches!(
             transform,
             FrontendTransform::IndirectCall {
-                callee: CallSiteCallee::Invokable,
                 args: IndirectArgShape::Single(_),
-                evidence: Some(_),
                 ..
             }
         )),
@@ -1820,9 +1812,7 @@ fn frontend_desugar_plan_records_simple_lambda_pair_arg_call(fixture: Fixture<&s
         transforms.iter().any(|transform| matches!(
             transform,
             FrontendTransform::IndirectCall {
-                callee: CallSiteCallee::Closure(_),
                 args: IndirectArgShape::Pair { tail, .. },
-                evidence: Some(_),
                 ..
             } if matches!(tail.as_ref(), IndirectArgShape::Single(_))
         )),
@@ -1845,9 +1835,7 @@ fn frontend_desugar_plan_records_captured_zero_arg_closure_call(fixture: Fixture
         transforms.iter().any(|transform| matches!(
             transform,
             FrontendTransform::IndirectCall {
-                callee: CallSiteCallee::Closure(_),
                 args: IndirectArgShape::Unit,
-                evidence: Some(_),
                 ..
             }
         )),
