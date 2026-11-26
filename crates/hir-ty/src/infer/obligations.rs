@@ -765,6 +765,37 @@ impl<'db> InferCtx<'db> {
         }
     }
 
+    /// Whether the solver proves that no `Int` instance covers `ty`, so an
+    /// integer literal can never have that type. Numeric types are the types
+    /// with an `Int` instance, including the std integer types and user
+    /// instances, so the type constructor alone does not decide this. An open
+    /// head, a type parameter, an error-tainted type, or a missing trait
+    /// environment leaves the question to the solver phase.
+    pub(super) fn lacks_int_instance(&mut self, ty: InferTy<'db>) -> bool {
+        let Some(trait_env) = self.trait_env else {
+            return false;
+        };
+        if !self.is_concrete_non_numeric(ty.clone()) || self.infer_ty_contains_error(ty.clone()) {
+            return false;
+        }
+        let goal = PendingObligation {
+            class: ClassId::Builtin(BuiltinClassId::Int),
+            main: ty,
+            args: Vec::new(),
+            source: ObligationSource::Scheme,
+        };
+        let pred = self.pending_obligation_pred(&goal);
+        if matches!(pred.pred.kind(self.db), PredKind::Error) {
+            return false;
+        }
+        let report = solve_report(
+            self.db,
+            trait_env,
+            canonical_goal_with_allowed(self.db, pred.pred, pred.allowed_vars),
+        );
+        !report.exhausted && matches!(report.solution, Solution::NoSolution)
+    }
+
     fn is_concrete_non_callable(&mut self, ty: InferTy<'db>) -> bool {
         if self.callable_sig_for_ty(ty.clone()).is_some() {
             return false;

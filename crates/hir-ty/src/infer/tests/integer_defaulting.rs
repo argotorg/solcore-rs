@@ -228,6 +228,100 @@ function f() returns (bool) {
 }
 
 #[test]
+fn conditional_literal_branches_take_the_other_branch_int_type() {
+    for body in [
+        "return c ? a : 0;",
+        "return c ? 0x1 : a;",
+        "return c ? 1 : 2;",
+        "let x = c ? a : 0; return x;",
+    ] {
+        let source = format!(
+            "pragma solcore; import * from std; \
+             function f(c: bool, a: uint256) returns (uint256) {{ {body} }}"
+        );
+        let (db, key) = numeric_db(&source);
+        let module = module_id_from_key(&db, &key);
+        // Without a trait environment `Int` cannot be decided, so the
+        // conditional must not be rejected either.
+        let (_, unsolved) = infer_module_function(&db, module, "f");
+        assert!(
+            unsolved.diagnostics.is_empty(),
+            "{body}: {:?}",
+            unsolved.diagnostics
+        );
+        let (_, result) = infer_module_function_with_solver(&db, module, "f");
+        assert!(
+            result.diagnostics.is_empty(),
+            "{body}: {:?}",
+            result.diagnostics
+        );
+        let uint256_int = Pred::in_class(
+            &db,
+            ClassId::Builtin(BuiltinClassId::Int),
+            canonical_std_adt_ty(&db, "uint256", Vec::new()),
+            Vec::new(),
+        );
+        let literals = result
+            .obligations
+            .iter()
+            .enumerate()
+            .filter(|(_, obligation)| {
+                matches!(obligation.source, ObligationSource::IntegerLiteral { .. })
+            })
+            .collect::<Vec<_>>();
+        assert!(!literals.is_empty(), "{body}");
+        for (index, obligation) in literals {
+            assert_eq!(obligation.pred, uint256_int, "{body}");
+            assert!(
+                result
+                    .obligation_evidence
+                    .iter()
+                    .any(|proof| proof.obligation == index),
+                "{body}"
+            );
+        }
+    }
+}
+
+#[test]
+fn conditional_literal_branch_needs_an_int_instance_not_a_builtin_type() {
+    let (db, key) = numeric_db(
+        r#"
+pragma solcore;
+import * from std;
+enum Meters { Meters(word) }
+impl Int<Meters> {
+    function fromInteger(x: integer) returns (Meters) { return Meters(0); }
+}
+enum Feet { Feet(word) }
+function numeric(c: bool, m: Meters) returns (Meters) { return c ? m : 3; }
+function nonNumeric(c: bool, f: Feet) returns (Feet) {
+    let x = c ? 3 : f;
+    return x;
+}
+"#,
+    );
+    let module = module_id_from_key(&db, &key);
+    let (_, numeric) = infer_module_function_with_solver(&db, module, "numeric");
+    assert!(numeric.diagnostics.is_empty(), "{:?}", numeric.diagnostics);
+    let (_, non_numeric) = infer_module_function_with_solver(&db, module, "nonNumeric");
+    assert_eq!(
+        non_numeric.diagnostics.len(),
+        1,
+        "{:?}",
+        non_numeric.diagnostics
+    );
+    assert!(
+        matches!(&non_numeric.diagnostics[0],
+            TypeckDiagnostic::Mismatch { expected, actual, .. }
+                if expected == "numeric" && actual == "Feet"
+        ),
+        "{:?}",
+        non_numeric.diagnostics
+    );
+}
+
+#[test]
 fn uint256_numeric_patterns_reject_values_outside_the_range() {
     for literal in [
         "115792089237316195423570985008687907853269984665640564039457584007913129639936",
