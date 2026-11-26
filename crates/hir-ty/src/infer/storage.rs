@@ -72,7 +72,17 @@ impl<'db> InferCtx<'db> {
         if matches!(body.exprs(self.db).get(rhs).kind, ExprKind::Array(_)) && is_contract_field {
             return self.infer_storage_array_literal_assign(body, lhs, rhs, lhs_ty);
         }
-        let expected_rhs = if uses_assign {
+        // A leading-dot constructor is resolved when its expression is typed,
+        // before the `Assign` or `CanStore` instance chooses a value type, so
+        // it names a constructor of the declared type of the location.
+        let shorthand_ty = if self.is_shorthand_ctor_expr(body, rhs) {
+            self.storage_value_ty(lhs_ty.clone())
+        } else {
+            None
+        };
+        let expected_rhs = if let Some(shorthand_ty) = shorthand_ty {
+            shorthand_ty
+        } else if uses_assign {
             self.engine.fresh_var()
         } else {
             self.loaded_ty_for_storage_ty(lhs_ty.clone())
@@ -90,6 +100,33 @@ impl<'db> InferCtx<'db> {
         }
         self.expr_tys.push((body, lhs, rhs_ty));
         true
+    }
+
+    /// Whether the value of `expr` is a leading-dot constructor such as `.B`,
+    /// directly or in a branch of a conditional expression.
+    fn is_shorthand_ctor_expr(&self, body: FuncBody<'db>, expr: Id<Expr<'db>>) -> bool {
+        match body.exprs(self.db).get(expr).kind {
+            ExprKind::DotCtor { .. } => true,
+            ExprKind::If {
+                then_expr,
+                else_expr,
+                ..
+            } => {
+                self.is_shorthand_ctor_expr(body, then_expr)
+                    || self.is_shorthand_ctor_expr(body, else_expr)
+            }
+            _ => false,
+        }
+    }
+
+    /// The declared type `t` of a storage location of type `storage<t>`.
+    fn storage_value_ty(&mut self, ty: InferTy<'db>) -> Option<InferTy<'db>> {
+        let storage_ctor = self.storage_type_ctor()?;
+        let ty = self.normalize_aliases(ty);
+        let InferTy::Named { ctor, mut args } = self.engine.resolve(ty) else {
+            return None;
+        };
+        (ctor == storage_ctor && args.len() == 1).then(|| args.remove(0))
     }
 
     fn is_contract_field_assign_target_expr(
