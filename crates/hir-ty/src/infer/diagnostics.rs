@@ -191,6 +191,27 @@ pub enum TypeckDiagnostic {
         /// Predicate snapshot.
         pred: String,
     },
+    /// `SC0207`: a constraint on type parameters matched a default impl, but
+    /// another default impl that would take precedence, or tie, may apply
+    /// once the type parameters are instantiated.
+    ///
+    /// The instantiated constraint could then resolve to a different impl
+    /// than the generic code chose, so the constraint must come from a where
+    /// clause.
+    DefaultUndecidedForTypeParameter {
+        /// Source span for the obligation that could not be solved.
+        span: LabelSpan,
+        /// Predicate snapshot.
+        pred: String,
+        /// The goal the default impl would decide, when it is not `pred`.
+        goal: Option<String>,
+        /// Head of the competing default impl.
+        competitor: String,
+        /// The competitor's conditions that depend on the type parameters.
+        conditions: Vec<String>,
+        /// Whether both default impls have the same priority.
+        ties: bool,
+    },
     /// `SC0208`: more than one non-default impl solved a trait constraint.
     AmbiguousConstraint {
         /// Source span for the ambiguous obligation.
@@ -748,6 +769,48 @@ impl TypeckDiagnostic {
                         "a default impl matches, but defaults are not used for type parameters: \
                          the module that instantiates the parameter may provide a more specific impl",
                     )
+                    .with_help(format!(
+                        "add `where {pred}` to the enclosing function or impl"
+                    ))
+            }
+            TypeckDiagnostic::DefaultUndecidedForTypeParameter {
+                span,
+                pred,
+                goal,
+                competitor,
+                conditions,
+                ties,
+            } => {
+                let matched = match goal {
+                    Some(goal) => format!("a default impl matches `{goal}`"),
+                    None => "a default impl matches".to_owned(),
+                };
+                let effect = if *ties {
+                    "applies as well"
+                } else {
+                    "takes precedence"
+                };
+                let note = if conditions.is_empty() {
+                    format!(
+                        "{matched}, but default impl `{competitor}` {effect} for some \
+                         instantiations of the type parameters"
+                    )
+                } else {
+                    format!(
+                        "{matched}, but default impl `{competitor}` {effect} wherever `{}` \
+                         holds, which depends on how the type parameters are instantiated",
+                        conditions.join("`, `")
+                    )
+                };
+                let note = if *ties {
+                    format!("{note}; where both apply, the constraint is ambiguous")
+                } else {
+                    note
+                };
+                Diagnostic::error(format!("cannot satisfy trait constraint: {pred}"))
+                    .with_code(DiagnosticCode::TYPECK_UNSATISFIED_CONSTRAINT)
+                    .with_primary_label_span(span.clone(), Some("constraint originates here"))
+                    .with_note(note)
                     .with_help(format!(
                         "add `where {pred}` to the enclosing function or impl"
                     ))

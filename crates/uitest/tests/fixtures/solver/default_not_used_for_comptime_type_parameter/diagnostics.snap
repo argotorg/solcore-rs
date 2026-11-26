@@ -1,0 +1,39 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/solver/default_not_used_for_comptime_type_parameter/main.sol
+---
+error[SC0207]: cannot satisfy trait constraint: t: Fee
+  --> /main/fees.sol:23:17
+   |
+22 | // that calls them with its own type may define a more specific impl.
+23 | function charge<t>(comptime x: t) returns (word) {
+   |                 ^ constraint originates here
+24 |     return Fee.fee(x);
+   |
+   = note: a default impl matches, but defaults are not used for type parameters: the module that instantiates the parameter may provide a more specific impl
+   = help: add `where t: Fee` to the enclosing function or impl
+---
+
+error[SC0207]: cannot satisfy trait constraint: pair<t, t>: Fee
+  --> /main/fees.sol:27:21
+   |
+26 |
+27 | function chargePair<t>(comptime x: t) returns (word) {
+   |                     ^ constraint originates here
+28 |     return Fee.fee((x, x));
+   |
+   = note: a default impl matches, but defaults are not used for type parameters: the module that instantiates the parameter may provide a more specific impl
+   = help: add `where pair<t, t>: Fee` to the enclosing function or impl
+---
+
+error[SC0207]: cannot satisfy trait constraint: Wrapped<t>: Fee
+  --> /main/fees.sol:31:24
+   |
+30 |
+31 | function chargeWrapped<t>(comptime x: t) returns (word) {
+   |                        ^ constraint originates here
+32 |     return Fee.fee(Wrapped(x));
+   |
+   = note: a default impl matches, but defaults are not used for type parameters: the module that instantiates the parameter may provide a more specific impl
+   = help: add `where Wrapped<t>: Fee` to the enclosing function or impl

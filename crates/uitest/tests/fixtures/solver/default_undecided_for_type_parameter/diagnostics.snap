@@ -1,0 +1,27 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/solver/default_undecided_for_type_parameter/main.sol
+---
+error[SC0207]: cannot satisfy trait constraint: Box<u>: StorageSize
+  --> /main/main.sol:33:18
+   |
+32 | // `sizeOf(Box(Foo.Foo))` uses the one above.
+33 | function generic<u>(x: u) returns (word) {
+   |                  ^ constraint originates here
+34 |     return sizeOf(Box(x));
+   |
+   = note: a default impl matches, but default impl `Box<a>: StorageSize` takes precedence wherever `u: Q` holds, which depends on how the type parameters are instantiated
+   = help: add `where Box<u>: StorageSize` to the enclosing function or impl
+---
+
+error[SC0207]: cannot satisfy trait constraint: Box<u>: StorageSize
+  --> /main/main.sol:43:17
+   |
+42 |
+43 | function caller<u>(x: u) returns (word) {
+   |                 ^ constraint originates here
+44 |     return stated(x);
+   |
+   = note: a default impl matches, but default impl `Box<a>: StorageSize` takes precedence wherever `u: Q` holds, which depends on how the type parameters are instantiated
+   = help: add `where Box<u>: StorageSize` to the enclosing function or impl

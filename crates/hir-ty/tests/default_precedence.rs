@@ -6,7 +6,7 @@ use nameres::{Db as _, LibraryId, module_id_from_key, module_key_for_path};
 use parser::parse_file_to_hir;
 use solcore_hir_ty::{
     ClassId, Evidence, Pred, Solution, Ty, TyCtor, UserTyCtor, UserTyCtorKind, canonical_goal,
-    solve, trait_env_for_module,
+    solve, trait_env_for_module, trait_env_with_givens,
 };
 use solcore_test_utils::{
     define_frontend_test_db, load_fixture_case, load_fixture_case_with_file_urls,
@@ -27,9 +27,19 @@ fn default_precedence(fixture: Fixture<&str>) {
         .lines()
         .filter_map(|line| line.strip_prefix("//~ "))
         .collect::<Vec<_>>();
-    assert_eq!(directives.len(), 2, "expected a goal and solution");
+    let given = directives
+        .iter()
+        .find_map(|line| line.strip_prefix("given: "));
+    assert_eq!(
+        directives.len(),
+        2 + usize::from(given.is_some()),
+        "expected a goal, an optional given and a solution"
+    );
     // `goal: Class [Adt]` asks for `word: Class`, or for `Adt<word>: Class`
     // when the fixture's own type constructor carries its defaults.
+    // `goal: Class Adt param` asks for `Adt<t>: Class` instead, where `t` is a
+    // type parameter of the checked code, and `given: Class` assumes
+    // `t: Class` there.
     let mut goal = directives
         .iter()
         .find_map(|line| line.strip_prefix("goal: "))
@@ -37,6 +47,11 @@ fn default_precedence(fixture: Fixture<&str>) {
         .split_whitespace();
     let goal_name = goal.next().expect("goal class");
     let goal_adt = goal.next();
+    let goal_param = match goal.next() {
+        None => false,
+        Some("param") => true,
+        Some(other) => panic!("unknown goal modifier `{other}`"),
+    };
     let expected = directives
         .iter()
         .find_map(|line| line.strip_prefix("solution: "))
@@ -67,18 +82,28 @@ fn default_precedence(fixture: Fixture<&str>) {
         let entry = module_id_from_key(&db, &entry);
         let diagnostics = solcore_hir_ty::collect_frontend_diagnostics(&db, entry);
         assert!(diagnostics.is_empty(), "{diagnostics:?}");
-        let class = loaded_items(&db)
-            .find_map(|item| match item {
-                Item::ClassDef(class)
-                    if class.def_id_value(&db).name(&db).as_deref() == Some(goal_name) =>
-                {
-                    Some(ClassId::User(class.def_id_value(&db)))
-                }
-                _ => None,
-            })
-            .expect("goal class");
+        let find_class = |name: &str| {
+            loaded_items(&db)
+                .find_map(|item| match item {
+                    Item::ClassDef(class)
+                        if class.def_id_value(&db).name(&db).as_deref() == Some(name) =>
+                    {
+                        Some(ClassId::User(class.def_id_value(&db)))
+                    }
+                    _ => None,
+                })
+                .expect("fixture class")
+        };
+        let class = find_class(goal_name);
+        // A bound variable that the goal does not allow the solver to bind
+        // is a type parameter of the checked code.
+        let arg_ty = if goal_param {
+            Ty::bound(&db, 0)
+        } else {
+            Ty::word(&db)
+        };
         let main_ty = match goal_adt {
-            None => Ty::word(&db),
+            None => arg_ty,
             Some(adt_name) => {
                 let def = loaded_items(&db)
                     .find_map(|item| match item {
@@ -96,12 +121,18 @@ fn default_precedence(fixture: Fixture<&str>) {
                         def,
                         kind: UserTyCtorKind::Adt,
                     }),
-                    vec![Ty::word(&db)],
+                    vec![arg_ty],
                 )
             }
         };
         let goal = canonical_goal(&db, Pred::in_class(&db, class, main_ty, vec![]));
-        let actual = solve(&db, trait_env_for_module(&db, entry), goal);
+        let mut env = trait_env_for_module(&db, entry);
+        if let Some(given) = given {
+            assert!(goal_param, "a given needs a goal on a type parameter");
+            let given = Pred::in_class(&db, find_class(given), Ty::bound(&db, 0), vec![]);
+            env = trait_env_with_givens(&db, env, vec![given]);
+        }
+        let actual = solve(&db, env, goal);
         match (expected.as_slice(), &actual) {
             (["unique", owners @ ..], Solution::Unique { evidence, .. }) => {
                 let mut actual_owners = Vec::new();

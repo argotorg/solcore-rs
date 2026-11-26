@@ -497,6 +497,31 @@ pub(super) fn head_can_unify<'db>(
     unify_pred(db, instantiated.head, goal, &mut subst, &bindable)
 }
 
+/// Instantiates `clause`'s conditions for an instance of `goal` its head unifies
+/// with, treating `goal_vars` as instantiable like the clause's binders.
+pub(super) fn unified_clause_conditions<'db>(
+    db: &'db dyn Db,
+    clause: &ProgramClause<'db>,
+    goal: Pred<'db>,
+    goal_vars: &FxHashSet<u32>,
+) -> Option<Vec<Pred<'db>>> {
+    let instantiated = instantiate_clause(db, clause, goal, goal_vars);
+    let mut bindable = instantiated
+        .binder_vars
+        .iter()
+        .copied()
+        .collect::<FxHashSet<_>>();
+    bindable.extend(goal_vars.iter().copied());
+    let mut subst = MatchSubst::default();
+    unify_pred(db, instantiated.head, goal, &mut subst, &bindable).then(|| {
+        instantiated
+            .conditions
+            .iter()
+            .map(|condition| subst.apply_pred(db, *condition))
+            .collect()
+    })
+}
+
 fn unify_pred<'db>(
     db: &'db dyn Db,
     lhs: Pred<'db>,

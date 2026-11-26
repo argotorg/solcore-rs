@@ -598,13 +598,35 @@ impl<'db> InferCtx<'db> {
                 }
                 let span = self.unsatisfied_constraint_label_span(&pending.source, pred.pred);
                 let pred_text = self.display_pred(pred.pred);
+                // Both default diagnostics suggest the constraint as a where
+                // clause, which the solver matches through `comptime`.
+                let where_pred = crate::solver::without_comptime(self.db, pred.pred);
+                let where_pred_text = self.display_pred(where_pred);
                 let diagnostic = self.classify_no_solution(pending).unwrap_or_else(|| {
-                    if crate::solver::default_skipped_for_type_parameter(
+                    if let Some(undecided) = &report.undecided_default {
+                        TypeckDiagnostic::DefaultUndecidedForTypeParameter {
+                            span,
+                            pred: where_pred_text,
+                            goal: (undecided.goal != where_pred)
+                                .then(|| self.display_pred(undecided.goal)),
+                            competitor: crate::solver::instance_head_source(
+                                self.db,
+                                undecided.competitor,
+                            )
+                            .unwrap_or_else(|| "_".to_owned()),
+                            conditions: undecided
+                                .conditions
+                                .iter()
+                                .map(|condition| self.display_pred(*condition))
+                                .collect(),
+                            ties: undecided.ties,
+                        }
+                    } else if crate::solver::default_skipped_for_type_parameter(
                         self.db, trait_env, pred.pred,
                     ) {
                         TypeckDiagnostic::DefaultNotUsedForTypeParameter {
                             span,
-                            pred: pred_text,
+                            pred: where_pred_text,
                         }
                     } else {
                         TypeckDiagnostic::UnsatisfiedConstraint {

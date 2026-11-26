@@ -1,0 +1,15 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/solver/default_undecided_head_for_type_parameter/main.sol
+---
+error[SC0207]: cannot satisfy trait constraint: Box<u>: StorageSize
+  --> /main/main.sol:27:18
+   |
+26 | // Whether `Box<u>` is a `Box<Wrap<_>>` depends on `u`.
+27 | function generic<u>(x: u) returns (word) {
+   |                  ^ constraint originates here
+28 |     return sizeOf(Box(x));
+   |
+   = note: a default impl matches, but default impl `Box<Wrap<a>>: StorageSize` takes precedence for some instantiations of the type parameters
+   = help: add `where Box<u>: StorageSize` to the enclosing function or impl

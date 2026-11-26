@@ -1,0 +1,15 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/solver/default_undecided_for_impl_condition/main.sol
+---
+error[SC0207]: cannot satisfy trait constraint: Box<u>: Outer
+  --> /main/main.sol:35:18
+   |
+34 | // The impl's condition `Box<u>: StorageSize` is the goal left undecided.
+35 | function generic<u>(x: u) returns (word) {
+   |                  ^ constraint originates here
+36 |     return outerOf(Box(x));
+   |
+   = note: a default impl matches `Box<u>: StorageSize`, but default impl `Box<a>: StorageSize` takes precedence wherever `u: Q` holds, which depends on how the type parameters are instantiated
+   = help: add `where Box<u>: Outer` to the enclosing function or impl
