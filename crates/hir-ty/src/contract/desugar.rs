@@ -144,12 +144,29 @@ pub fn frontend_desugar_plan<'db>(
     db: &'db dyn Db,
     module: Module<'db>,
 ) -> FrontendDesugarPlan<'db> {
-    let resolution = hir_nameres::resolve_module(db, module);
+    let resolution = module_resolution(db, module);
     let mut bodies = Vec::new();
     for item in module.items(db) {
         collect_desugar_plans(db, *item, &resolution, &mut bodies);
     }
     FrontendDesugarPlan { bodies }
+}
+
+/// Resolves `module` with the names it imports, as type checking does. A
+/// module outside the module tree has no imports to resolve.
+fn module_resolution<'db>(
+    db: &'db dyn Db,
+    module: Module<'db>,
+) -> hir_nameres::ModuleResolutionMap<'db> {
+    let Some(module_id) = nameres::module_id_for_source_file(db, module.def_id_value(db).file(db))
+    else {
+        return hir_nameres::resolve_module(db, module);
+    };
+    let env = nameres::module_env_for_hir_module(db, module_id, module);
+    match env.item_scope.clone() {
+        Some(scope) => hir_nameres::resolve_module_with_imports(db, module, scope, &env),
+        None => hir_nameres::resolve_module(db, module),
+    }
 }
 
 fn collect_desugar_plans<'db>(

@@ -1843,6 +1843,53 @@ fn frontend_desugar_plan_records_captured_zero_arg_closure_call(fixture: Fixture
     );
 }
 
+#[test]
+fn frontend_desugar_plan_resolves_calls_through_imports() {
+    let (mut db, key) = db_with_main(
+        r#"pragma solcore;
+import { twice } from util;
+
+function quadruple(x: word) returns (word) {
+    return twice(twice(x));
+}
+"#,
+    );
+    insert_module_source(
+        &mut db,
+        ModuleKey {
+            library: LibraryId::Main,
+            logical_path: vec!["util".to_owned()],
+        },
+        "/main/util.sol",
+        r#"pragma solcore;
+
+function twice(x: word) returns (word) {
+    return x;
+}
+
+export { twice };
+"#,
+    );
+    let nameres_diagnostics = nameres::reachable_diagnostics(&db, module_id_from_key(&db, &key));
+    assert!(nameres_diagnostics.is_empty(), "{nameres_diagnostics:?}");
+
+    let file = db.module_files[&key];
+    let module = parse_file_to_hir(&db, file).module(&db);
+    let plan = frontend_desugar_plan(&db, module);
+    let transforms = plan
+        .bodies
+        .iter()
+        .flat_map(|body| body.transforms.iter())
+        .collect::<Vec<_>>();
+
+    assert!(
+        !transforms
+            .iter()
+            .any(|transform| matches!(transform, FrontendTransform::IndirectCall { .. })),
+        "a call of an imported function is a direct call: {transforms:?}"
+    );
+}
+
 #[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/contract_semantics/derived_generic_plan_uses_right_nested_product_rep_for_tree", glob: "main.sol")]
 fn derived_generic_plan_uses_right_nested_product_rep_for_tree(fixture: Fixture<&str>) {
     let db = TestDb::default();
