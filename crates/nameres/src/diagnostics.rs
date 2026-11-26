@@ -135,10 +135,17 @@ impl<'db> ModuleDiagnostic<'db> {
                     .with_primary_label_span(span.clone(), Some("module reference"))
                     .with_help("check the module path or add the missing source file");
                 if let Some(suggestion) = suggestion {
-                    let help = if *path == format!("{suggestion}.sol") {
-                        format!("module paths leave out the `.sol` extension: write `{suggestion}`")
+                    // The suggestion replaces the path segments, which start
+                    // after the `@` of an external library.
+                    let written = if path.starts_with('@') {
+                        format!("@{suggestion}")
                     } else {
-                        format!("did you mean `{suggestion}`?")
+                        suggestion.clone()
+                    };
+                    let help = if *path == format!("{written}.sol") {
+                        format!("module paths leave out the `.sol` extension: write `{written}`")
+                    } else {
+                        format!("did you mean `{written}`?")
                     };
                     diagnostic = diagnostic
                         .with_help(help)
