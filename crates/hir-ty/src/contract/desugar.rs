@@ -9,13 +9,10 @@ use hir::{
 };
 use rustc_hash::FxHashMap;
 
-use super::helpers::{
-    function_type_vars, ident_text, param_names, selector_name, type_var_bindings,
-};
+use super::helpers::{ident_text, selector_name};
 use crate::{
-    AliasNormalizer, BinderEnv, BodyTyContext, CallSiteCallee, CallSiteEvidence, Db, TypeLowering,
+    Db,
     desugar::{ProductShape, SourceOrigin, SourceOriginKind},
-    infer_body, trait_env_from_module_resolution, trait_env_with_givens,
 };
 
 /// Tracked backend-facing frontend rewrite plan for one module.
@@ -23,8 +20,9 @@ use crate::{
 /// This is intentionally separate from `crate::desugar::PreTypeckDesugarPlan`.
 /// Pre-typecheck desugar changes the input view used by inference, while this
 /// plan records rewrites that need resolved storage fields, ABI/dispatch
-/// context, solved call-site evidence, or backend-compatibility metadata and
-/// are consumed by specialization and later backend phases.
+/// context, or backend-compatibility metadata and are consumed by
+/// specialization and later backend phases. It is built from the syntax and
+/// the name resolution of the module: no body is type-checked for it.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct FrontendDesugarPlan<'db> {
     /// Per-body transform plan entries.
@@ -118,12 +116,8 @@ pub enum FrontendTransform<'db> {
         callee_expr: Id<Expr<'db>>,
         /// User syntax that should receive diagnostics for generated nodes.
         origin: SourceOrigin<'db>,
-        /// Callee identity used for evidence replay.
-        callee: CallSiteCallee<'db>,
         /// Unit, single-argument, or right-nested pair payload shape.
         args: IndirectArgShape<'db>,
-        /// Solved call-site evidence for the invokable obligation.
-        evidence: Option<CallSiteEvidence<'db>>,
     },
 }
 
@@ -150,79 +144,51 @@ pub fn frontend_desugar_plan<'db>(
     db: &'db dyn Db,
     module: Module<'db>,
 ) -> FrontendDesugarPlan<'db> {
-    let resolution = hir_nameres::resolve_module(db, module);
+    let resolution = module_resolution(db, module);
     let mut bodies = Vec::new();
     for item in module.items(db) {
-        collect_desugar_plans(db, module, *item, &resolution, &[], &mut bodies);
+        collect_desugar_plans(db, *item, &resolution, &mut bodies);
     }
     FrontendDesugarPlan { bodies }
 }
 
-fn collect_desugar_plans<'db>(
+/// Resolves `module` with the names it imports, as type checking does. A
+/// module outside the module tree has no imports to resolve.
+fn module_resolution<'db>(
     db: &'db dyn Db,
     module: Module<'db>,
+) -> hir_nameres::ModuleResolutionMap<'db> {
+    let Some(module_id) = nameres::module_id_for_source_file(db, module.def_id_value(db).file(db))
+    else {
+        return hir_nameres::resolve_module(db, module);
+    };
+    let env = nameres::module_env_for_hir_module(db, module_id, module);
+    match env.item_scope.clone() {
+        Some(scope) => hir_nameres::resolve_module_with_imports(db, module, scope, &env),
+        None => hir_nameres::resolve_module(db, module),
+    }
+}
+
+fn collect_desugar_plans<'db>(
+    db: &'db dyn Db,
     item: Item<'db>,
     resolution: &hir_nameres::ModuleResolutionMap<'db>,
-    inherited_type_vars: &[hir_nameres::TypeVarBinding<'db>],
     out: &mut Vec<BodyDesugarPlan<'db>>,
 ) {
     match item {
         Item::FunctionDef(function) => {
-            collect_function_desugar_plan(
-                db,
-                module,
-                function,
-                resolution,
-                inherited_type_vars,
-                &[],
-                out,
-            );
+            collect_function_desugar_plan(db, function, resolution, out);
         }
         Item::ContractDef(contract) => {
-            let mut inherited = inherited_type_vars.to_vec();
-            inherited.extend(type_var_bindings(
-                contract.def_id_value(db),
-                contract.ty_param_elems(db),
-            ));
             for item in contract.items(db) {
                 if let ContractItem::FunctionDef(function) = *item {
-                    collect_function_desugar_plan(
-                        db,
-                        module,
-                        function,
-                        resolution,
-                        &inherited,
-                        &[],
-                        out,
-                    );
+                    collect_function_desugar_plan(db, function, resolution, out);
                 }
             }
         }
         Item::InstanceDef(instance) => {
-            let mut inherited = inherited_type_vars.to_vec();
-            inherited.extend(type_var_bindings(
-                instance.def_id_value(db),
-                instance.type_var_elems(db),
-            ));
-            let lowerer = TypeLowering::from_item_resolutions(
-                db,
-                &resolution.item_resolutions,
-                BinderEnv::from_type_vars(&inherited),
-            );
-            let mut normalizer = AliasNormalizer::new(db, module, &resolution.item_resolutions);
-            let mut givens = instance
-                .preds(db)
-                .iter()
-                .copied()
-                .map(|pred| normalizer.normalize_pred(lowerer.lower_pred(pred)))
-                .collect::<Vec<_>>();
-            let head = normalizer.normalize_pred(lowerer.lower_pred(instance.head(db)));
-            let env = desugar_trait_env(db, module, resolution);
-            givens.extend(crate::direct_superclass_predicates(db, env.base(db), head));
             for method in instance.methods(db) {
-                collect_function_desugar_plan(
-                    db, module, *method, resolution, &inherited, &givens, out,
-                );
+                collect_function_desugar_plan(db, *method, resolution, out);
             }
         }
         Item::TypeAlias(_)
@@ -237,11 +203,8 @@ fn collect_desugar_plans<'db>(
 
 fn collect_function_desugar_plan<'db>(
     db: &'db dyn Db,
-    module: Module<'db>,
     function: FunctionDef<'db>,
     resolution: &hir_nameres::ModuleResolutionMap<'db>,
-    inherited_type_vars: &[hir_nameres::TypeVarBinding<'db>],
-    inherited_givens: &[crate::Pred<'db>],
     out: &mut Vec<BodyDesugarPlan<'db>>,
 ) {
     let Some(body) = function.body(db) else {
@@ -260,34 +223,11 @@ fn collect_function_desugar_plan<'db>(
         .iter()
         .map(|entry| ((entry.body, entry.pat), entry.resolution.clone()))
         .collect::<FxHashMap<_, _>>();
-    let call_site_evidence = desugar_inference_result(
-        db,
-        module,
-        function,
-        resolution,
-        body_map,
-        inherited_type_vars,
-        inherited_givens,
-    )
-    .map(|result| {
-        result
-            .call_site_evidence
-            .into_iter()
-            .map(|evidence| {
-                (
-                    (evidence.body, evidence.call_expr, evidence.callee_expr),
-                    evidence,
-                )
-            })
-            .collect::<FxHashMap<_, _>>()
-    })
-    .unwrap_or_default();
     let mut collector = DesugarCollector {
         db,
         body,
         expr_resolutions,
         pat_resolutions,
-        call_site_evidence,
         transforms: Vec::new(),
     };
     for stmt in body.top_level_stmts(db) {
@@ -302,83 +242,11 @@ fn collect_function_desugar_plan<'db>(
     }
 }
 
-fn desugar_trait_env<'db>(
-    db: &'db dyn Db,
-    module: Module<'db>,
-    resolution: &hir_nameres::ModuleResolutionMap<'db>,
-) -> crate::TraitEnvId<'db> {
-    let Some(module_id) = nameres::module_id_for_source_file(db, module.def_id_value(db).file(db))
-    else {
-        return trait_env_from_module_resolution(db, module, resolution);
-    };
-    let env = nameres::module_env_for_hir_module(db, module_id, module);
-    crate::trait_env_from_module_resolution_and_imports(
-        db,
-        module,
-        resolution,
-        &env.import_surface(),
-    )
-}
-
-fn desugar_inference_result<'db>(
-    db: &'db dyn Db,
-    module: Module<'db>,
-    function: FunctionDef<'db>,
-    resolution: &hir_nameres::ModuleResolutionMap<'db>,
-    body_map: &hir_nameres::BodyResolutionMap<'db>,
-    inherited_type_vars: &[hir_nameres::TypeVarBinding<'db>],
-    inherited_givens: &[crate::Pred<'db>],
-) -> Option<crate::InferenceResult<'db>> {
-    if !body_map.diagnostics.is_empty() {
-        return None;
-    }
-    let body = function.body(db)?;
-    let sig = function.sig(db);
-    let mut type_vars = inherited_type_vars.to_vec();
-    type_vars.extend(function_type_vars(db, &[], function.def_id_value(db), sig));
-    let lowerer = TypeLowering::from_item_resolutions(
-        db,
-        &resolution.item_resolutions,
-        BinderEnv::from_type_vars(&type_vars),
-    );
-    let mut normalizer = AliasNormalizer::new(db, module, &resolution.item_resolutions);
-    let mut lowered = lowerer.lower_function(function);
-    lowered.scheme = normalizer.normalize_scheme(lowered.scheme);
-    lowered.params = lowered
-        .params
-        .into_iter()
-        .map(|param| normalizer.normalize_ty(param))
-        .collect();
-    lowered.ret = normalizer.normalize_ty(lowered.ret);
-    let base_trait_env = desugar_trait_env(db, module, resolution);
-    let mut givens = lowered.scheme.body(db).preds(db).clone();
-    givens.extend_from_slice(inherited_givens);
-    let trait_env = trait_env_with_givens(db, base_trait_env, givens);
-    let pre_typeck_desugar = crate::pre_typeck_desugar_body_tree(db, body);
-    let ctx = BodyTyContext::new(
-        module,
-        body_map.clone(),
-        type_vars,
-        lowered.params,
-        Some(lowered.ret),
-    )
-    .with_param_names(param_names(db, sig.params.atom()))
-    .with_ret_display(
-        sig.ret
-            .map(|ret| crate::display::display_type_ref_source(db, ret)),
-    )
-    .with_trait_env(trait_env)
-    .with_pre_typeck_desugar(pre_typeck_desugar);
-    Some(infer_body(db, body, ctx))
-}
-
 struct DesugarCollector<'db> {
     db: &'db dyn Db,
     body: FuncBody<'db>,
     expr_resolutions: FxHashMap<(FuncBody<'db>, Id<Expr<'db>>), hir_nameres::Resolution<'db>>,
     pat_resolutions: FxHashMap<(FuncBody<'db>, Id<Pat<'db>>), hir_nameres::Resolution<'db>>,
-    call_site_evidence:
-        FxHashMap<(FuncBody<'db>, Id<Expr<'db>>, Id<Expr<'db>>), CallSiteEvidence<'db>>,
     transforms: Vec<FrontendTransform<'db>>,
 }
 
@@ -510,7 +378,6 @@ impl<'db> DesugarCollector<'db> {
                         body: *body,
                         expr_resolutions: self.expr_resolutions.clone(),
                         pat_resolutions: self.pat_resolutions.clone(),
-                        call_site_evidence: self.call_site_evidence.clone(),
                         transforms: Vec::new(),
                     };
                     nested.stmt(*stmt);
@@ -533,22 +400,12 @@ impl<'db> DesugarCollector<'db> {
             }
             ExprKind::Call { callee, args } => {
                 if !self.is_direct_call(*callee) {
-                    let evidence = self
-                        .call_site_evidence
-                        .get(&(self.body, expr_id, *callee))
-                        .cloned();
-                    let callee_identity = evidence
-                        .as_ref()
-                        .map(|evidence| evidence.callee.clone())
-                        .unwrap_or(CallSiteCallee::Invokable);
                     self.transforms.push(FrontendTransform::IndirectCall {
                         body: self.body,
                         call_expr: expr_id,
                         callee_expr: *callee,
                         origin: SourceOrigin::new(expr.span, SourceOriginKind::IndirectCall),
-                        callee: callee_identity,
                         args: indirect_arg_shape(args),
-                        evidence,
                     });
                 }
                 self.expr(*callee);
