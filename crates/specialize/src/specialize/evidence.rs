@@ -640,7 +640,7 @@ impl<'db> Driver<'db> {
                             let selected = self.elaborate_dictionary(
                                 recipe.module,
                                 proof.clone(),
-                                &recipe.bindings,
+                                &recipe.givens(sub_evidence),
                                 false,
                             );
                             self.project_superclass(pred, &selected, active)

@@ -163,6 +163,44 @@ contract C {
 }
 SOLCORE
 
+# A chain of generic functions that each wrap their argument once more, under
+# a constraint whose conditional impl has a superclass (issue #175). The
+# dictionary of every level once held a second copy of the level below, in
+# the recipe of its superclass, so each level doubled the work.
+python3 - "$work_dir" <<'PY'
+from pathlib import Path
+import sys
+
+depth = 24
+lines = [
+    "pragma solcore;",
+    "import * from std;",
+    "import * from std.dispatch;",
+    "enum Box<a> { Box(a) }",
+    "impl<a> Eq<Box<a>> where a: Eq {",
+    "    function eq(x: Box<a>, y: Box<a>) returns (bool) { return true; }",
+    "}",
+    "impl<a> Ord<Box<a>> where a: Ord {",
+    "    function gt(x: Box<a>, y: Box<a>) returns (bool) { return true; }",
+    "}",
+]
+for level in range(depth):
+    if level + 1 < depth:
+        body = f"return wrap{level + 1}(Box(x));"
+    else:
+        body = "return Eq.eq(x, x);"
+    lines.append(
+        f"function wrap{level}<p>(x: p) returns (bool) where p: Ord {{ {body} }}"
+    )
+lines += [
+    "contract C {",
+    "    function run(a: uint256) public returns (bool) { return wrap0(a); }",
+    "}",
+]
+path = Path(sys.argv[1], "conditional-superclass-chain.sol")
+path.write_text("\n".join(lines) + "\n")
+PY
+
 run_with_limits() {
   local name="$1"
   shift
@@ -245,6 +283,13 @@ run_with_limits \
   "--std-root=$repo_root/std" \
   "--emit-hull=$work_dir/subtrait-recursive-impl.hull" \
   "$subtrait_recursive_impl"
+
+run_with_limits \
+  conditional-superclass-chain \
+  "${common_args[@]}" \
+  "--std-root=$repo_root/std" \
+  "--emit-hull=$work_dir/conditional-superclass-chain.hull" \
+  "$work_dir/conditional-superclass-chain.sol"
 
 run_with_limits \
   incremental-diagnostics \
