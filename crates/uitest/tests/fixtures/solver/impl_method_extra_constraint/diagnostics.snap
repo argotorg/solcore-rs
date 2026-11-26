@@ -25,3 +25,15 @@ error[SC0249]: impl method `c` requires `a: D`, which its trait method does not 
    |
    = note: callers prove only the trait method's constraints, and the impl adds only its own conditions and superclasses
    = help: remove it: it already follows from the trait method and the impl's conditions
+---
+
+error[SC0249]: impl method `c` requires `a: D`, which its trait method does not declare
+  --> /main/main.sol:66:49
+   |
+65 | impl<a> C<Trio<a>> where a: E, a: G {
+66 |     function c(x: Trio<a>) returns (word) where a: D {
+   |                                                 ^^^^ constraint the trait method does not declare
+67 |         return 4;
+   |
+   = note: callers prove only the trait method's constraints, and the impl adds only its own conditions and superclasses
+   = help: remove it: it already follows from the trait method and the impl's conditions

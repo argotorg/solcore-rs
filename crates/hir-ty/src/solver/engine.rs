@@ -320,6 +320,7 @@ impl<'db> TabledEngine<'db> {
         let logical_key = self.logical_answer_key(key, &answer);
         let branch = (!prerequisites.is_empty())
             .then(|| ProofBranch::new(self.db, key, &answer.candidate.evidence));
+        let (db, env) = (self.db, self.env);
         if let Some(discovery) = &mut self.discovery {
             // Discovery depends only on substitutions and provenance. A
             // repeated witness still proves logical reachability, but needs
@@ -328,7 +329,11 @@ impl<'db> TabledEngine<'db> {
             discovery.record_recipe(key, &logical_key, branch, prerequisites);
             let answers = discovery.answers.entry(key.clone()).or_default();
             if let Some(previous) = answers.get(&logical_key) {
-                discovery.collapsed |= previous != &answer;
+                // A second witness needs the complete pass to settle on one
+                // of them, unless the two differ only in the givens they
+                // start at: those are one dictionary whichever the pass kept.
+                discovery.collapsed |=
+                    previous != &answer && !differ_only_in_givens(db, env, key, previous, &answer);
             } else {
                 answers.insert(logical_key, answer.clone());
             }
@@ -547,14 +552,8 @@ impl<'db> ResolutionContext for TabledEngine<'db> {
             AnswerKey::Logical(self.logical_answer_key(&key.logical, answer))
         } else {
             // Equal-priority dictionaries include all prerequisite evidence.
-            AnswerKey::Complete(
-                answer.candidate.subst.clone(),
-                answer.candidate.evidence.dictionary_identity(&|pred| {
-                    self.env.local_givens(self.db).iter().any(|given| {
-                        canonicalize_local_given(self.db, *given, &key.logical) == pred
-                    })
-                }),
-            )
+            let (subst, identity) = complete_answer_key(self.db, self.env, &key.logical, answer);
+            AnswerKey::Complete(subst, identity)
         }
     }
 
@@ -628,6 +627,41 @@ fn ty_exhausts_budget<'db>(db: &'db dyn Db, ty: Ty<'db>, budget: &mut usize) -> 
         TyKind::Comptime(inner) => ty_exhausts_budget(db, *inner, budget),
         TyKind::BoundVar(_) | TyKind::Error | TyKind::Unknown => false,
     }
+}
+
+/// Whether two answers are one dictionary and start at different givens.
+fn differ_only_in_givens<'db>(
+    db: &'db dyn Db,
+    env: TraitEnvId<'db>,
+    key: &TableKey<'db>,
+    left: &Answer<'db>,
+    right: &Answer<'db>,
+) -> bool {
+    let assumptions = |answer: &Answer<'db>| {
+        let mut assumptions = Vec::new();
+        answer.candidate.evidence.assumptions(&mut assumptions);
+        assumptions
+    };
+    complete_answer_key(db, env, key, left) == complete_answer_key(db, env, key, right)
+        && assumptions(left) != assumptions(right)
+}
+
+fn complete_answer_key<'db>(
+    db: &'db dyn Db,
+    env: TraitEnvId<'db>,
+    key: &TableKey<'db>,
+    answer: &Answer<'db>,
+) -> (Substitution<'db>, evidence::DictionaryIdentity<'db>) {
+    let identity = answer.candidate.evidence.dictionary_identity(&|pred| {
+        evidence::given_root(
+            db,
+            env.local_givens(db)
+                .iter()
+                .map(|given| canonicalize_local_given(db, *given, key)),
+            pred,
+        )
+    });
+    (answer.candidate.subst.clone(), identity)
 }
 
 /// Complete dictionaries are shared only in contexts with the same ancestors.

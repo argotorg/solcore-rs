@@ -710,6 +710,48 @@ pub(super) fn ty_equal<'db>(db: &'db dyn Db, lhs: Ty<'db>, rhs: Ty<'db>) -> bool
     }
 }
 
+pub(super) fn strip_comptime_pred<'db>(db: &'db dyn Db, pred: Pred<'db>) -> Pred<'db> {
+    match pred.kind(db) {
+        PredKind::InClass { class, main, args } => Pred::in_class(
+            db,
+            *class,
+            strip_comptime_ty(db, *main),
+            args.iter().map(|arg| strip_comptime_ty(db, *arg)).collect(),
+        ),
+        PredKind::Eq { lhs, rhs } => {
+            Pred::eq(db, strip_comptime_ty(db, *lhs), strip_comptime_ty(db, *rhs))
+        }
+        PredKind::Error => pred,
+    }
+}
+
+fn strip_comptime_ty<'db>(db: &'db dyn Db, ty: Ty<'db>) -> Ty<'db> {
+    match ty.kind(db) {
+        TyKind::Comptime(inner) => strip_comptime_ty(db, *inner),
+        TyKind::Named { ctor, args } => Ty::named(
+            db,
+            *ctor,
+            args.iter().map(|arg| strip_comptime_ty(db, *arg)).collect(),
+        ),
+        TyKind::Function { params, ret } => Ty::function(
+            db,
+            params
+                .iter()
+                .map(|param| strip_comptime_ty(db, *param))
+                .collect(),
+            strip_comptime_ty(db, *ret),
+        ),
+        TyKind::Tuple(elems) => Ty::tuple(
+            db,
+            elems
+                .iter()
+                .map(|elem| strip_comptime_ty(db, *elem))
+                .collect(),
+        ),
+        TyKind::BoundVar(_) | TyKind::Error | TyKind::Unknown => ty,
+    }
+}
+
 fn occurs_in_ty<'db>(db: &'db dyn Db, var: u32, ty: Ty<'db>) -> bool {
     match ty.kind(db) {
         TyKind::BoundVar(bound) => bound.index == var,

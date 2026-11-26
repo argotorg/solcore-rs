@@ -1,5 +1,22 @@
 use super::*;
 
+/// Pairs of dictionaries that one comparison looks into. A cyclic hierarchy
+/// comes back with ever new ones.
+const MAX_COMPARED_DICTIONARIES: usize = 256;
+
+/// Why evidence denotes no impl or derived dictionary.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum NoDictionary {
+    /// None, or more than one, was found. It fails where it is used.
+    Failed(dictionary::SuperclassFailure),
+    /// The dictionary it is projected from was built in a module that does
+    /// not see the superclass, and does not hold one.
+    Absent,
+    /// It is not known here: an assumption that is still open, or a
+    /// projection that a cyclic or growing hierarchy cut short.
+    Unknown,
+}
+
 impl<'db> Driver<'db> {
     /// Records that the ground goal `head` resolved to `instance`, and reports
     /// (once per goal) a different impl selected earlier for the same class
@@ -400,6 +417,165 @@ impl<'db> Driver<'db> {
                 None
             }
             Evidence::Derived { .. } => None,
+        }
+    }
+
+    /// Whether `left` can stand for `right`, another dictionary of the same
+    /// predicate: they select the same impls, in the dictionary itself, in
+    /// its prerequisites and in its superclasses at any depth, and `left`
+    /// holds every superclass that `right` holds.
+    pub(super) fn same_dictionary(&mut self, left: &Evidence<'db>, right: &Evidence<'db>) -> bool {
+        let mut assumed = FxHashSet::default();
+        let mut budget = MAX_COMPARED_DICTIONARIES;
+        self.same_dictionary_within(left, right, &mut assumed, &mut budget)
+    }
+
+    fn same_dictionary_within(
+        &mut self,
+        left: &Evidence<'db>,
+        right: &Evidence<'db>,
+        assumed: &mut FxHashSet<(Evidence<'db>, Evidence<'db>)>,
+        budget: &mut usize,
+    ) -> bool {
+        if left == right {
+            return true;
+        }
+        let (left, right) = match (
+            self.executable_dictionary(Some(left.clone())),
+            self.executable_dictionary(Some(right.clone())),
+        ) {
+            (Ok(left), Ok(right)) => (left, right),
+            // Both fail, in the same way, where they are used.
+            (Err(left), Err(right)) => return left == right && left != NoDictionary::Unknown,
+            _ => return false,
+        };
+        if left == right {
+            return true;
+        }
+        // A cyclic hierarchy comes back to a pair that is being compared;
+        // what is left to compare is found from where it was first met.
+        if !assumed.insert((left.clone(), right.clone())) {
+            return true;
+        }
+        if *budget == 0 {
+            return false;
+        }
+        *budget -= 1;
+        let (left_children, left_slots, right_children, right_slots) = match (&left, &right) {
+            (
+                Evidence::Instance {
+                    instance: left_instance,
+                    args: left_args,
+                    sub_evidence: left_children,
+                    superclasses: left_slots,
+                },
+                Evidence::Instance {
+                    instance: right_instance,
+                    args: right_args,
+                    sub_evidence: right_children,
+                    superclasses: right_slots,
+                },
+            ) if left_instance == right_instance && left_args == right_args => {
+                (left_children, left_slots, right_children, right_slots)
+            }
+            (
+                Evidence::Derived {
+                    kind: left_kind,
+                    pred: left_pred,
+                    sub_evidence: left_children,
+                    superclasses: left_slots,
+                },
+                Evidence::Derived {
+                    kind: right_kind,
+                    pred: right_pred,
+                    sub_evidence: right_children,
+                    superclasses: right_slots,
+                },
+            ) if left_kind == right_kind && left_pred == right_pred => {
+                (left_children, left_slots, right_children, right_slots)
+            }
+            _ => return false,
+        };
+        if left_children.len() != right_children.len() {
+            return false;
+        }
+        for (left, right) in left_children.iter().zip(right_children) {
+            if !self.same_dictionary_within(left, right, assumed, budget) {
+                return false;
+            }
+        }
+        // A method of either dictionary can use every superclass it holds.
+        let mut slots = left_slots.iter().map(|(pred, _)| *pred).collect::<Vec<_>>();
+        for (pred, _) in right_slots {
+            if !slots.contains(pred) {
+                slots.push(*pred);
+            }
+        }
+        for slot in slots {
+            let left = self.superclass_instance_evidence(slot, &left);
+            let right = match self.superclass_instance_evidence(slot, &right) {
+                // The methods of a dictionary that does not hold the
+                // superclass have it selected where they use it.
+                None if left.is_some() => self.selected_where_used(slot),
+                right => right,
+            };
+            let same = match (left, right) {
+                (Some(left), Some(right)) => {
+                    self.same_dictionary_within(&left, &right, assumed, budget)
+                }
+                (None, None) => true,
+                // Code that holds `right` can project the superclass, which
+                // `left` does not have.
+                _ => false,
+            };
+            if !same {
+                return false;
+            }
+        }
+        true
+    }
+
+    /// Whether `evidence` is a superclass that its dictionary does not hold,
+    /// which fails where it is used.
+    pub(super) fn has_no_dictionary(&mut self, evidence: &Evidence<'db>) -> bool {
+        matches!(
+            self.executable_dictionary(Some(evidence.clone())),
+            Err(NoDictionary::Absent | NoDictionary::Failed(_))
+        )
+    }
+
+    /// The dictionary of an assumption that has none: the impl selected for
+    /// the predicate where a method is called on it.
+    fn selected_where_used(&mut self, pred: Pred<'db>) -> Option<Evidence<'db>> {
+        let selected = self
+            .solve_closed_pred(pred, None)
+            .or_else(|| self.solve_reachable_pred(pred, None))
+            .or_else(|| self.derived_generic_evidence(pred))?;
+        self.executable_dictionary(Some(selected)).ok()
+    }
+
+    /// The impl or derived dictionary that `evidence` denotes; `None` is a
+    /// projection of a dictionary that does not hold the superclass.
+    fn executable_dictionary(
+        &mut self,
+        evidence: Option<Evidence<'db>>,
+    ) -> Result<Evidence<'db>, NoDictionary> {
+        use dictionary::SuperclassFailure;
+        match evidence {
+            Some(evidence @ (Evidence::Instance { .. } | Evidence::Derived { .. })) => Ok(evidence),
+            Some(Evidence::Superclass { pred, child, .. }) => {
+                let projected = self.superclass_instance_evidence(pred, &child);
+                self.executable_dictionary(projected)
+            }
+            Some(Evidence::Unavailable { failure, .. }) => Err(match failure {
+                SuperclassFailure::Exhausted
+                | SuperclassFailure::NoUniqueDictionary
+                | SuperclassFailure::OpenDictionary => NoDictionary::Failed(failure),
+                SuperclassFailure::CyclicDictionary
+                | SuperclassFailure::ProjectionDepthExceeded => NoDictionary::Unknown,
+            }),
+            Some(Evidence::Builtin { .. }) => Err(NoDictionary::Unknown),
+            None => Err(NoDictionary::Absent),
         }
     }
 

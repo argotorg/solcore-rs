@@ -95,7 +95,7 @@ use products::{
     product_expr_from_elems, product_expr_from_vars, product_pat_from_elems, product_pat_from_vars,
     product_vars, unwrap_sum_pat, var_expr, var_pattern, wrap_sum_expr,
 };
-use ty_subst::TySubst;
+use ty_subst::{TySubst, preds_equal_up_to_comptime};
 
 /// Specialization resource limits.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

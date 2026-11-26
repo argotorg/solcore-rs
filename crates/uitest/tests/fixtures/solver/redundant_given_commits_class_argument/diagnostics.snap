@@ -1,0 +1,15 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/solver/redundant_given_commits_class_argument/main.sol
+---
+error[SC0207]: cannot satisfy trait constraint: Foo: Conv2<r>
+  --> /main/main.sol:39:15
+   |
+38 | // `Conv.conv` has type `r`, as with `where t: Conv<r>` alone.
+39 | function f<t, r>(x: t) returns (word) where t: Conv<r>, t: Sup<r> {
+   |               ^ constraint originates here
+40 |     let y = Conv.conv(x);
+   |
+   = note: no visible impl matches `Foo: Conv2<r>`
+   = help: add a matching impl or strengthen the surrounding type context
