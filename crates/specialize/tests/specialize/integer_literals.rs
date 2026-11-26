@@ -92,7 +92,7 @@ contract C {{
                     output.diagnostics.as_slice(),
                     [diagnostic] if matches!(
                         diagnostic.kind,
-                        SpecializeDiagnosticKind::IntegerErasure { .. }
+                        SpecializeDiagnosticKind::IntegerNotConverted { .. }
                     )
                 ),
                 "{ty} = {value}: {:?}",

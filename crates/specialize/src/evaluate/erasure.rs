@@ -1,11 +1,12 @@
-use hir::span::Span;
+use hir::{ast::function::LitKind, span::Span};
 use hir_ty::{BuiltinTyCtor, Db, Ty, TyCtor, TyKind, UserTyCtorKind, is_canonical_std_def_named};
 
 use super::{core::Evaluator, known::known_string};
 use crate::{
     ir::{
-        MonoCallOrigin, MonoExpr, MonoExprKind, MonoFunction, MonoIntrinsic, MonoItem, MonoModule,
-        MonoParam, MonoPat, MonoPatKind, MonoStmt, MonoStmtKind,
+        MonoCallOrigin, MonoExpr, MonoExprKind, MonoFunction, MonoFunctionOrigin, MonoId,
+        MonoIntrinsic, MonoItem, MonoModule, MonoParam, MonoPat, MonoPatKind, MonoStmt,
+        MonoStmtKind,
         visit::{Visitor, walk_expr, walk_pat, walk_stmt},
     },
     specialize::{SpecializeDiagnostic, SpecializeDiagnosticKind, display_backend_ty},
@@ -202,6 +203,15 @@ pub(super) fn erase_comptime_ty<'db>(db: &'db dyn Db, ty: Ty<'db>) -> Ty<'db> {
     }
 }
 
+/// The text of the integer literal `expr`, under its type annotations.
+fn integer_literal_text(expr: &MonoExpr<'_>) -> Option<String> {
+    match &expr.kind {
+        MonoExprKind::Lit(LitKind::Number(text) | LitKind::Hex(text)) => Some(text.clone()),
+        MonoExprKind::TypeAnnot { expr, .. } => integer_literal_text(expr),
+        _ => None,
+    }
+}
+
 impl<'db> Evaluator<'db> {
     pub(super) fn check_integer_erasure(&mut self, module: &MonoModule<'db>) {
         for item in &module.items {
@@ -238,6 +248,51 @@ impl<'db> Evaluator<'db> {
                 );
             }
             self.check_integer_erasure_stmts(&function.body);
+        }
+    }
+
+    /// Reports the call `expr`, whose callee takes or returns a compile-time
+    /// value. With known arguments the evaluator has tried the call, so what
+    /// is wrong is that the evaluation did not end in a value.
+    fn unevaluated_comptime_call(
+        &mut self,
+        expr: &MonoExpr<'db>,
+        callee: &MonoId<'db>,
+        args: &[MonoExpr<'db>],
+        origin: MonoCallOrigin<'db>,
+    ) {
+        let function = display_call_name(self.db, origin, &callee.name);
+        let kind = if !args.iter().all(|arg| self.expr_is_known_value(arg)) {
+            SpecializeDiagnosticKind::IntegerErasure {
+                context: format!("call to `{function}`"),
+                ty: display_backend_ty(self.db, callee.ty.ty()),
+            }
+        } else if let Some(value) = self.converted_integer(callee, args) {
+            SpecializeDiagnosticKind::IntegerNotConverted {
+                value,
+                ty: display_backend_ty(self.db, expr.ty.ty()),
+            }
+        } else {
+            SpecializeDiagnosticKind::ComptimeCallNotEvaluated { function }
+        };
+        self.diagnostics.push(SpecializeDiagnostic {
+            kind,
+            span: Some(expr.span),
+        });
+    }
+
+    /// The integer that a call of `Int.fromInteger` converts, as written.
+    fn converted_integer(&self, callee: &MonoId<'db>, args: &[MonoExpr<'db>]) -> Option<String> {
+        let function = self.functions.get(&callee.name)?;
+        let MonoFunctionOrigin::InstanceMethod { class, method, .. } = &function.origin else {
+            return None;
+        };
+        if class != "Int" || method != "fromInteger" {
+            return None;
+        }
+        match args {
+            [arg] => integer_literal_text(arg),
+            _ => None,
         }
     }
 
@@ -320,14 +375,8 @@ impl<'db> Visitor<'db> for Evaluator<'db> {
                 {
                     return;
                 }
-                if self.check_erasure_ty(
-                    format!(
-                        "call to `{}`",
-                        display_call_name(self.db, *origin, &callee.name)
-                    ),
-                    callee.ty.ty(),
-                    Some(expr.span),
-                ) {
+                if ty_needs_erasure(self.db, callee.ty.ty()) {
+                    self.unevaluated_comptime_call(expr, callee, args, *origin);
                     return;
                 }
                 walk_expr(self, expr);

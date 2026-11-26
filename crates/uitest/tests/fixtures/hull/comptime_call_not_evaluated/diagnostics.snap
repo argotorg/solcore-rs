@@ -1,0 +1,15 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/hull/comptime_call_not_evaluated/main.sol
+---
+error[SC0409]: comptime evaluation failed: the call to `atLeastTen` does not reduce to a value
+  --> /main/main.sol:21:16
+   |
+20 |     function rejected() public returns (word) {
+21 |         return atLeastTen(3);
+   |                ^^^^^^^^^^^^^ comptime evaluation failed here
+22 |     }
+   |
+   = note: `atLeastTen` takes or returns a compile-time value, so a call to it is evaluated at compile time
+   = note: the evaluation ends without a value when it reaches code with a run-time effect, such as a panic
