@@ -1,0 +1,27 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/typeck/user_collection_index_assign_read_only/main.sol
+---
+error[SC0207]: cannot satisfy trait constraint: pair<Squares, uint256>: LValueIdxAccess<_>
+  --> /main/main.sol:23:5
+   |
+22 |     let s = Squares(10);
+23 |     s[3] = 7;
+   |     ^^^^ constraint originates here
+24 |     s[4] += 1;
+   |
+   = note: no visible impl matches `pair<Squares, uint256>: LValueIdxAccess<_>`
+   = help: add a matching impl or strengthen the surrounding type context
+---
+
+error[SC0207]: cannot satisfy trait constraint: pair<Squares, uint256>: LValueIdxAccess<_>
+  --> /main/main.sol:24:5
+   |
+23 |     s[3] = 7;
+24 |     s[4] += 1;
+   |     ^^^^ constraint originates here
+25 |     return s[3];
+   |
+   = note: no visible impl matches `pair<Squares, uint256>: LValueIdxAccess<_>`
+   = help: add a matching impl or strengthen the surrounding type context

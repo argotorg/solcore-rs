@@ -580,7 +580,11 @@ impl<'db> InferCtx<'db> {
                 if can_improve {
                     return ObligationAttempt::Deferred(dependencies);
                 }
-                if !pred.allowed_vars.is_empty() {
+                let index_access = self.index_access_expr(pending);
+                if let Some((body, expr)) = index_access {
+                    self.poison_expr(body, expr);
+                }
+                if !pred.allowed_vars.is_empty() && index_access.is_none() {
                     if !self.reported_ambiguous_constraint {
                         self.reported_ambiguous_constraint = true;
                         let pred_text = self.display_pred(pred.pred);
@@ -693,6 +697,33 @@ impl<'db> InferCtx<'db> {
         vars.into_iter()
             .map(|var| (var, self.engine.resolve(InferTy::Var(var))))
             .collect()
+    }
+
+    /// The index expression whose std index-access obligation `pending` is.
+    /// Only the element or reference type can be unknown in that obligation,
+    /// and the instance decides it, so no solution means that no instance
+    /// covers the collection.
+    fn index_access_expr(
+        &self,
+        pending: &PendingObligation<'db>,
+    ) -> Option<(FuncBody<'db>, Id<Expr<'db>>)> {
+        let ClassId::User(class) = pending.class else {
+            return None;
+        };
+        if !["RValueIdxAccess", "LValueIdxAccess"]
+            .iter()
+            .any(|name| crate::support::is_canonical_std_def_named(self.db, class, name))
+        {
+            return None;
+        }
+        match pending.source {
+            ObligationSource::ClassMethod { body, expr }
+                if matches!(body.exprs(self.db).get(expr).kind, ExprKind::Index { .. }) =>
+            {
+                Some((body, expr))
+            }
+            _ => None,
+        }
     }
 
     fn classify_no_solution(
