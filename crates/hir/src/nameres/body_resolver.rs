@@ -66,8 +66,11 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
             StmtKind::Expr(expr) => self.expr(body, *expr),
             StmtKind::Assign { lhs, rhs, .. } => {
                 if let ExprKind::Ident(name) = &body.exprs(self.db).get(*lhs).kind {
-                    let resolution = self
-                        .resolve_ident_with_hint(name, Some(UndefinedNameHint::AssignmentTarget));
+                    // A compound assignment reads the name first, so it
+                    // cannot become a declaration.
+                    let hint = (!self.is_compound_assignment(body, name, *rhs))
+                        .then_some(UndefinedNameHint::AssignmentTarget);
+                    let resolution = self.resolve_ident_with_hint(name, hint);
                     self.map.record_expr(body, *lhs, resolution);
                 } else {
                     self.expr(body, *lhs);
@@ -457,6 +460,27 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
         if let FuncParam::Typed { ty, .. } = param {
             self.ty(*ty);
         }
+    }
+
+    /// Whether `rhs` is what the parser builds for a compound assignment such
+    /// as `target += 1`: an operator expression whose operand is a copy of
+    /// `target`, at the same span.
+    fn is_compound_assignment(
+        &self,
+        body: FuncBody<'db>,
+        target: &SpannedElem<'db, Ident<'db>>,
+        rhs: Id<Expr<'db>>,
+    ) -> bool {
+        let exprs = body.exprs(self.db);
+        let operand = match &exprs.get(rhs).kind {
+            ExprKind::BinOp { lhs, .. } => *lhs,
+            ExprKind::UnaryOp { expr, .. } => *expr,
+            _ => return false,
+        };
+        matches!(
+            &exprs.get(operand).kind,
+            ExprKind::Ident(read) if read.span(self.db) == target.span(self.db)
+        )
     }
 
     fn resolve_ident(&mut self, name: &SpannedElem<'db, Ident<'db>>) -> Resolution<'db> {
