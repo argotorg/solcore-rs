@@ -145,6 +145,7 @@ impl<'db> InferCtx<'db> {
                 if !self.infer_storage_assign(body, *lhs, *rhs)
                     && !self.infer_memory_array_index_assign(body, *lhs, *rhs)
                     && !self.reject_calldata_array_index_assign(body, *lhs, *rhs)
+                    && !self.infer_user_collection_index_assign(body, *lhs, *rhs)
                 {
                     let lhs_ty = self.infer_expr(body, *lhs);
                     let rhs_ty = self.infer_expr_expected(body, *rhs, Some(lhs_ty.clone()));

@@ -410,6 +410,12 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
             {
                 self.memory_array_index_store(*lhs, *rhs, span)?
             }
+            StmtKind::Assign { op, lhs, rhs }
+                if *op == hir::ast::function::AssignOp::Plain
+                    && self.user_collection_index_target(*lhs).is_some() =>
+            {
+                self.user_collection_index_store(*lhs, *rhs, span)?
+            }
             StmtKind::Assign { op, lhs, rhs } => MonoStmtKind::Assign {
                 op: *op,
                 lhs: self.expr(*lhs)?,
@@ -2569,6 +2575,135 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
         ]))
     }
 
+    /// The assignment target `expr` when inference typed it through the std
+    /// `LValueIdxAccess` instance of a user-defined collection.
+    fn user_collection_index_target(
+        &self,
+        expr: Id<Expr<'db>>,
+    ) -> Option<UserCollectionIndexTarget<'db>> {
+        let db = self.driver.db;
+        match &self.body.exprs(db).get(expr).kind {
+            ExprKind::Index { base, index } => {
+                let bindings = self
+                    .index
+                    .class_method_value_bindings
+                    .get(&(self.body, expr))?;
+                let ref_ty = bindings.iter().find_map(|(pred, _)| match pred.kind(db) {
+                    PredKind::InClass {
+                        class: ClassId::User(class),
+                        args,
+                        ..
+                    } if is_canonical_std_def_named(db, *class, "LValueIdxAccess") => {
+                        args.first().copied()
+                    }
+                    _ => None,
+                })?;
+                Some(UserCollectionIndexTarget {
+                    place: expr,
+                    base: *base,
+                    index: *index,
+                    ref_ty,
+                })
+            }
+            ExprKind::TypeAnnot { expr, .. } => self.user_collection_index_target(*expr),
+            _ => None,
+        }
+    }
+
+    /// `c[i] = v` on a user-defined collection lowers to
+    /// `assignRef(lidx(c, i), v)`: the std `LValueIdxAccess` instance for
+    /// `(c, i)` yields the reference that takes `v`.
+    ///
+    /// The parser represents `c[i] op= v` as `c[i] = c[i] op v`. `c` and then
+    /// `i` are evaluated once and saved, and the generated read goes through
+    /// the saved values.
+    fn user_collection_index_store(
+        &mut self,
+        lhs: Id<Expr<'db>>,
+        rhs: Id<Expr<'db>>,
+        span: Span<'db>,
+    ) -> Option<MonoStmtKind<'db>> {
+        let UserCollectionIndexTarget {
+            place,
+            base,
+            index,
+            ref_ty,
+        } = self.user_collection_index_target(lhs)?;
+        let ref_ty = self.normalize_body_ty(self.subst.apply_ty(self.driver.db, ref_ty));
+        let base = self.expr(base)?;
+        let index = self.expr(index)?;
+        let unit = Ty::unit(self.driver.db);
+        if !self.is_compound_assign_rhs(lhs, rhs) {
+            let cell = self.synthetic_std_call("lidx", vec![base, index], ref_ty, span)?;
+            let value = self.expr(rhs)?;
+            let store = self.synthetic_std_call("assignRef", vec![cell, value], unit, span)?;
+            return Some(MonoStmtKind::Expr(store));
+        }
+        let exprs = self.body.exprs(self.driver.db);
+        let place_span = exprs.get(place).span;
+        let (ExprKind::BinOp { lhs: read, .. } | ExprKind::UnaryOp { expr: read, .. }) =
+            &exprs.get(rhs).kind
+        else {
+            unreachable!("a compound assignment has an operator expression on its right");
+        };
+        let read_ty = self.expr_ty(*read)?;
+        let read_ty = self.normalize_body_ty(self.subst.apply_ty(self.driver.db, read_ty));
+        let saved = |name: &str, value: &MonoExpr<'db>| {
+            let id = MonoId {
+                name: format!("$index_{name}_{}", span.begin().as_u32()),
+                ty: value.ty,
+                span: place_span,
+            };
+            let var = MonoExpr {
+                span: place_span,
+                ty: value.ty,
+                kind: MonoExprKind::Var(id.clone()),
+            };
+            (id, var)
+        };
+        let (base_id, base_var) = saved("base", &base);
+        let (index_id, index_var) = saved("key", &index);
+        let cell = self.synthetic_std_call(
+            "lidx",
+            vec![base_var.clone(), index_var.clone()],
+            ref_ty,
+            span,
+        )?;
+        let mut value = self.expr(rhs)?;
+        // The generated read lowered to `ridx(c, i)` with a second copy of
+        // `c` and `i`; read from the saved ones instead.
+        let loaded =
+            self.synthetic_std_call("ridx", vec![base_var, index_var], read_ty, place_span)?;
+        let db = self.driver.db;
+        replace_desugared_read_at_span(&mut value, place_span, loaded.ty, &loaded, |kind| {
+            matches!(
+                kind,
+                MonoExprKind::Call {
+                    origin: MonoCallOrigin::Source(def),
+                    ..
+                } if is_canonical_std_def_named(db, *def, "ridx")
+            )
+        });
+        let store = self.synthetic_std_call("assignRef", vec![cell, value], unit, span)?;
+        let bind = |id: MonoId<'db>, init: MonoExpr<'db>| MonoStmt {
+            span,
+            kind: MonoStmtKind::Let {
+                mode: LetMode::Runtime,
+                ty: Some(id.ty),
+                id,
+                init: Some(init),
+            },
+        };
+        Some(MonoStmtKind::Block(vec![
+            bind(base_id, base),
+            bind(index_id, index),
+            MonoStmt {
+                span,
+                kind: MonoStmtKind::Expr(store),
+            },
+        ]))
+    }
+
     /// Whether `rhs` is the operator expression the parser builds for the
     /// compound assignment `lhs op= v`: its first operand is the copy of `lhs`
     /// that keeps the source span of `lhs`.
@@ -3090,8 +3225,18 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
     }
 }
 
-/// Reuses the storage or memory element reference, or the struct snapshot,
-/// saved for a compound assignment.
+/// An assignment target `c[i]` on a user-defined collection.
+struct UserCollectionIndexTarget<'db> {
+    /// The `c[i]` expression, without the type annotations around it.
+    place: Id<Expr<'db>>,
+    base: Id<Expr<'db>>,
+    index: Id<Expr<'db>>,
+    /// The reference type that the `LValueIdxAccess` instance yields.
+    ref_ty: Ty<'db>,
+}
+
+/// Reuses the storage or memory element reference, the struct snapshot, or
+/// the read through the collection and index saved for a compound assignment.
 ///
 /// The parser represents `lhs op= rhs` as `lhs = lhs op rhs` and preserves the
 /// source span on the cloned `lhs`. Matching that span keeps the optimization
