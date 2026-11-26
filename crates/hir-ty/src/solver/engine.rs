@@ -1,15 +1,17 @@
 use std::{
+    cell::Cell,
     collections::VecDeque,
     convert::Infallible,
     hash::{Hash, Hasher},
+    rc::Rc,
 };
 
 use super::evidence::{BranchOrigin, BranchRoot};
 
 use tablesolve::{
     AnswerlessMode, CallbackOutcome, Canonical as TabledCanonical, CanonicalizeResult,
-    ClausesResult, Completion, Config as TabledConfig, ContextTransition, Limits, ReportOptions,
-    ResolutionContext, Scheduling, Transition,
+    ClausesResult, Completion, Config as TabledConfig, ContextTransition, Event, Limits, Observer,
+    ReportOptions, ResolutionContext, Scheduling, Transition,
 };
 
 use super::*;
@@ -20,6 +22,25 @@ use super::*;
 // stay far below this bound; the separate cap keeps pathological growth cheap
 // without charging rigid-head-prefiltered clauses against useful solver fuel.
 const MAX_TABLE_ENTRIES: usize = 1_024;
+
+// Fuel bounds the number of resolution steps, not their cost: a step rebuilds
+// the terms it touches, so it slows down as goals and answers grow. Tabling
+// terminates only while they stay bounded, which the two caps below enforce.
+// Reaching either one stops resolution as exhausted, like running out of fuel.
+//
+// A table's answer set is infinite when a recursive clause wraps the table's
+// own answers again (`t`, `Box<t>`, `Box<Box<t>>`, ...), as an impl exempted
+// from the coverage condition can. Each answer is larger than the last, so
+// the fuel would last for minutes. Real programs admit at most a few answers
+// per table: a second one already makes a goal ambiguous unless priorities
+// separate them.
+pub(crate) const MAX_TABLE_ANSWERS: usize = 64;
+
+// Types are interned and share subterms, but the solver rebuilds them as
+// trees: a clause that duplicates a variable (`C(a) => C((a, a))`, allowed
+// without the Patterson condition) doubles the work of each following step.
+// Real subgoals and answer substitutions stay far below this many type nodes.
+pub(crate) const MAX_TERM_SIZE: usize = 16_384;
 
 /// Solcore's language adapter for the shared tabled-resolution engine.
 pub(super) struct TabledEngine<'db> {
@@ -32,6 +53,9 @@ pub(super) struct TabledEngine<'db> {
     fuel: usize,
     discovery: Option<ProofDiscovery<'db>>,
     preferred: ProofPreference<'db>,
+    /// Raised by the current pass's [`AnswerQuota`] and polled at work-item
+    /// boundaries, where it stops resolution as exhausted.
+    answer_quota_exceeded: Rc<Cell<bool>>,
 }
 
 impl<'db> TabledEngine<'db> {
@@ -53,6 +77,7 @@ impl<'db> TabledEngine<'db> {
             fuel,
             discovery: Some(ProofDiscovery::default()),
             preferred: ProofPreference::default(),
+            answer_quota_exceeded: Rc::default(),
         }
     }
 
@@ -110,8 +135,19 @@ impl<'db> TabledEngine<'db> {
             },
         };
         let report_options = ReportOptions::new().with_answerless(AnswerlessMode::Omit);
-        let report = tablesolve::solve_with_options(self, root, config, report_options)
-            .unwrap_or_else(|error: Infallible| match error {});
+        self.answer_quota_exceeded.set(false);
+        let mut quota = AnswerQuota {
+            admitted: Vec::new(),
+            exceeded: Rc::clone(&self.answer_quota_exceeded),
+        };
+        let report = tablesolve::solve_with_observer_and_options(
+            self,
+            root,
+            config,
+            report_options,
+            &mut quota,
+        )
+        .unwrap_or_else(|error: Infallible| match error {});
         let stats = SolverStats {
             table_size: report.stats.tables_created,
             generator_steps: report.stats.clauses_tried,
@@ -135,6 +171,13 @@ impl<'db> TabledEngine<'db> {
     /// projection's condition is a `givens_only` goal, which admits only local
     /// givens and further projections.
     fn applicable_clauses(&self, key: &TableKey<'db>) -> Vec<ProgramClause<'db>> {
+        // A predicate that failed to lower names no class or type, so no
+        // clause can prove it. Matching it against other failed predicates
+        // would let an impl with an unresolved head prove every unresolved
+        // condition, its own included, and wrap its answers forever.
+        if matches!(key.pred.kind(self.db), PredKind::Error) {
+            return Vec::new();
+        }
         // This is a one-way prefilter. Variables and their correlations are
         // deliberately ignored, so impossible clauses may remain but an
         // applicable clause is never discarded.
@@ -233,6 +276,9 @@ impl<'db> TabledEngine<'db> {
         let condition = state
             .subst
             .apply_pred(self.db, state.clause.conditions[state.next_condition]);
+        if pred_exceeds_term_size(self.db, condition) {
+            return Transition::Stop(());
+        }
         let goal = SolverGoal {
             pred: condition,
             allowed_vars: state.condition_vars.clone(),
@@ -268,6 +314,9 @@ impl<'db> TabledEngine<'db> {
             },
             origin: clause.origin.clone(),
         };
+        if subst_exceeds_term_size(self.db, &answer.candidate.subst) {
+            return Transition::Stop(());
+        }
         let logical_key = self.logical_answer_key(key, &answer);
         let branch = (!prerequisites.is_empty())
             .then(|| ProofBranch::new(self.db, key, &answer.candidate.evidence));
@@ -507,6 +556,77 @@ impl<'db> ResolutionContext for TabledEngine<'db> {
                 }),
             )
         }
+    }
+
+    fn check_stop(&mut self) -> Option<Self::StopReason> {
+        self.answer_quota_exceeded.get().then_some(())
+    }
+}
+
+/// Counts the distinct answers the engine admits to each table of one pass
+/// and raises `exceeded` once a table holds more than [`MAX_TABLE_ANSWERS`].
+/// Only the engine knows which answers are new; it reports them here.
+struct AnswerQuota {
+    admitted: Vec<usize>,
+    exceeded: Rc<Cell<bool>>,
+}
+
+impl<'db> Observer<TabledEngine<'db>> for AnswerQuota {
+    fn observe(&mut self, event: Event<'_, TabledEngine<'db>>) {
+        let Event::AnswerAdded { table_id, .. } = event else {
+            return;
+        };
+        let index = table_id.index();
+        if self.admitted.len() <= index {
+            self.admitted.resize(index + 1, 0);
+        }
+        self.admitted[index] += 1;
+        if self.admitted[index] > MAX_TABLE_ANSWERS {
+            self.exceeded.set(true);
+        }
+    }
+}
+
+fn pred_exceeds_term_size<'db>(db: &'db dyn Db, pred: Pred<'db>) -> bool {
+    let mut budget = MAX_TERM_SIZE;
+    match pred.kind(db) {
+        PredKind::InClass { main, args, .. } => std::iter::once(main)
+            .chain(args)
+            .any(|ty| ty_exhausts_budget(db, *ty, &mut budget)),
+        PredKind::Eq { lhs, rhs } => {
+            ty_exhausts_budget(db, *lhs, &mut budget) || ty_exhausts_budget(db, *rhs, &mut budget)
+        }
+        PredKind::Error => false,
+    }
+}
+
+fn subst_exceeds_term_size<'db>(db: &'db dyn Db, subst: &Substitution<'db>) -> bool {
+    let mut budget = MAX_TERM_SIZE;
+    subst
+        .values
+        .iter()
+        .any(|(_, ty)| ty_exhausts_budget(db, *ty, &mut budget))
+}
+
+/// Charges one unit of `budget` per type node of `ty`, counting a shared
+/// subterm once per occurrence, and stops as soon as the budget runs out.
+fn ty_exhausts_budget<'db>(db: &'db dyn Db, ty: Ty<'db>, budget: &mut usize) -> bool {
+    let Some(rest) = budget.checked_sub(1) else {
+        return true;
+    };
+    *budget = rest;
+    match ty.kind(db) {
+        TyKind::Named { args, .. } | TyKind::Tuple(args) => {
+            args.iter().any(|arg| ty_exhausts_budget(db, *arg, budget))
+        }
+        TyKind::Function { params, ret } => {
+            params
+                .iter()
+                .any(|param| ty_exhausts_budget(db, *param, budget))
+                || ty_exhausts_budget(db, *ret, budget)
+        }
+        TyKind::Comptime(inner) => ty_exhausts_budget(db, *inner, budget),
+        TyKind::BoundVar(_) | TyKind::Error | TyKind::Unknown => false,
     }
 }
 

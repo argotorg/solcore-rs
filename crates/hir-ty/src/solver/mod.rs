@@ -33,7 +33,9 @@
 //! entry. A `DEFAULT_SOLVER_FUEL` bound is retained purely as a backstop for
 //! constraint spaces that keep generating strictly larger types (which tabling
 //! alone does not bound); cyclic and diamond goals terminate without consuming
-//! it to exhaustion.
+//! it to exhaustion. Because fuel counts steps rather than their cost, the
+//! engine also caps the answers of each table and the size of subgoals and
+//! answer substitutions; reaching a cap is reported as fuel exhaustion.
 //!
 //! The tabling strategy follows Selsam, Ullrich & de Moura, "Tabled Typeclass
 //! Resolution" (<https://arxiv.org/abs/2001.04301>).
@@ -116,6 +118,8 @@ use derived_storage::{
 };
 use display::{display_scheme_source, display_vars};
 use engine::{Answer, TabledEngine};
+#[cfg(test)]
+pub(crate) use engine::{MAX_TABLE_ANSWERS, MAX_TERM_SIZE};
 pub use env::{
     direct_superclass_predicates, trait_env_for_module, trait_env_from_module_resolution,
     trait_env_from_module_resolution_and_imports, trait_env_with_givens,

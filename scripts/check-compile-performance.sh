@@ -116,6 +116,53 @@ for style, depth in [("sequential", 32), ("inline", 24)]:
     (directory / f"nested-adt-{style}.sol").write_text("\n".join(lines) + "\n")
 PY
 
+# A subtrait call in a free function, with a recursive user impl of the std
+# superclass (issue #170). The backend's frontend desugar plan solves the call
+# in a trait environment built without imports, where every clause naming
+# `StorageSize` lowers to an error predicate. Error predicates once proved
+# each other, so the recursive impl wrapped its own answers without end.
+subtrait_recursive_impl="$work_dir/subtrait-recursive-impl.sol"
+cat > "$subtrait_recursive_impl" <<'SOLCORE'
+pragma solcore;
+import * from std;
+import * from std.dispatch;
+
+enum Foo {
+    Foo
+}
+
+enum Wrap<a> {
+    Wrap(a)
+}
+
+impl<a> StorageSize<Wrap<a>> where a: StorageSize {
+    function size(x: Proxy<Wrap<a>>) returns (word) {
+        let p: Proxy<a> = Proxy;
+        return primAddWord(StorageSize.size(p), 100);
+    }
+}
+
+trait R<t> where t: StorageSize {
+    function r(x: t) returns (word);
+}
+
+impl<a> R<Wrap<a>> where a: StorageSize {
+    function r(x: Wrap<a>) returns (word) {
+        return 7;
+    }
+}
+
+function site() returns (word) {
+    return R.r(Wrap(Foo.Foo));
+}
+
+contract C {
+    function run() public returns (uint256) {
+        return uint256(site());
+    }
+}
+SOLCORE
+
 run_with_limits() {
   local name="$1"
   shift
@@ -191,6 +238,13 @@ for style in sequential inline; do
     "--emit-sonatina=$work_dir/nested-adt-$style.snt" \
     "$work_dir/nested-adt-$style.sol"
 done
+
+run_with_limits \
+  subtrait-recursive-impl \
+  "${common_args[@]}" \
+  "--std-root=$repo_root/std" \
+  "--emit-hull=$work_dir/subtrait-recursive-impl.hull" \
+  "$subtrait_recursive_impl"
 
 run_with_limits \
   incremental-diagnostics \
