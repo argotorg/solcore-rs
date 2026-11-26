@@ -1,9 +1,9 @@
 # Local releases
 
 All release commands run on a maintainer's computer. No GitHub Actions runner,
-CI artifact, or server-side build is used. The validation workflow runs only for
-pull requests or manual dispatch, so branch and release-tag pushes do not start
-hosted CI.
+CI artifact, or server-side build is used. The validation workflow runs for pull
+requests, pushes to `main` and manual dispatch. Release-tag pushes and pushes to
+other branches do not start hosted CI.
 
 The pipeline follows a versioned Rust application release: review versions and
 notes, commit, run locked builds and tests, package native executables and std,

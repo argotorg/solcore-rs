@@ -1,9 +1,13 @@
 name: CI
 
-# Pull requests are validated here. Releases are validated locally, so branch
-# and tag pushes must not start hosted CI.
+# Pull requests and pushes to `main`, which include merges, are validated here.
+# Releases are validated locally, so tag pushes and pushes to other branches
+# must not start hosted CI.
 on:
   pull_request:
+  push:
+    branches:
+      - main
   workflow_dispatch:
 
 permissions:
