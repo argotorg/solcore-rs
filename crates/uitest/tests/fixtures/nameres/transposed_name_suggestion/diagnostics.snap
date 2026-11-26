@@ -1,0 +1,36 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/nameres/transposed_name_suggestion/main.sol
+---
+error[SC0101]: undefined name: onwer
+ --> /main/main.sol:4:13
+  |
+3 | function main(owner: word, form: word) returns (word) {
+4 |     let a = onwer;
+  |             ^^^^^ unknown name
+5 |     let b = from;
+  |
+  = help: did you mean `owner`?
+---
+
+error[SC0101]: undefined name: from
+ --> /main/main.sol:5:13
+  |
+4 |     let a = onwer;
+5 |     let b = from;
+  |             ^^^^ unknown name
+6 |     return revert;
+  |
+  = help: did you mean `form`?
+---
+
+error[SC0101]: undefined name: revert
+ --> /main/main.sol:6:12
+  |
+5 |     let b = from;
+6 |     return revert;
+  |            ^^^^^^ unknown name
+7 | }
+  |
+  = help: to revert with a message, call `revertWithError("...")` from `std`
