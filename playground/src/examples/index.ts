@@ -18,6 +18,9 @@ import extensionsCapped from "./extensions/capped.sol?raw";
 import extensionsOwnable from "./extensions/ownable.sol?raw";
 import reentrancyVault from "./reentrancy/Vault.sol?raw";
 import reentrancyReentrancy from "./reentrancy/reentrancy.sol?raw";
+import ruleChainsLedgers from "./rule-chains/Ledgers.sol?raw";
+import ruleChainsUpdates from "./rule-chains/updates.sol?raw";
+import ruleChainsRules from "./rule-chains/rules.sol?raw";
 import comptimeAnswer from "./comptime/Answer.sol?raw";
 import workshop1Token from "./workshop-1/Token.sol?raw";
 import workshop1DoneToken from "./workshop-1-done/Token.sol?raw";
@@ -171,6 +174,17 @@ export const examples: PlaygroundExample[] = [
     files: [
       { path: "Vault.sol", content: reentrancyVault },
       { path: "reentrancy.sol", content: reentrancyReentrancy },
+    ],
+  },
+  {
+    id: "rule-chains",
+    name: "Rule chains",
+    description: "Rules as closures: each rule wraps the next step in a function that checks the update first. A token and a membership pass, with different storage, reuse the same rules.",
+    entry: "Ledgers.sol",
+    files: [
+      { path: "Ledgers.sol", content: ruleChainsLedgers },
+      { path: "updates.sol", content: ruleChainsUpdates },
+      { path: "rules.sol", content: ruleChainsRules },
     ],
   },
   {

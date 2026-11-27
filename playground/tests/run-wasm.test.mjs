@@ -210,6 +210,7 @@ for (const [directory, entry, helpers, count] of [
   ['pattern-matching', 'Escrow.sol', [], 6],
   ['invariants', 'Amm.sol', ['pool.sol'], 5],
   ['comptime', 'Answer.sol', [], 1],
+  ['rule-chains', 'Ledgers.sol', ['updates.sol', 'rules.sol'], 13],
   ['workshop-1-done', 'Token.sol', [], 5],
   ['workshop-2-done', 'Token.sol', [], 8],
   ['workshop-3-done', 'Token.sol', ['ownable.sol'], 11],
